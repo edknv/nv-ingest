@@ -17,6 +17,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 import logging
 import os
 import uuid
@@ -26,7 +27,7 @@ from typing import Tuple
 
 import numpy as np
 import pypdfium2 as pdfium
-import tritonclient.grpc as grpcclient
+import tritonclient.grpc.aio as grpcclient
 
 from nv_ingest.extraction_workflows.pdf import eclair_utils
 from nv_ingest.schemas.metadata_schema import AccessLevelEnum
@@ -48,8 +49,10 @@ from nv_ingest.util.pdf.pdfium import pdfium_pages_to_numpy
 
 logger = logging.getLogger(__name__)
 
+lock = asyncio.Lock()
+
 ECLAIR_GRPC_TRITON = os.environ.get("ECLAIR_GRPC_TRITON", "triton:8001")
-DEFAULT_BATCH_SIZE = 16
+DEFAULT_BATCH_SIZE = 32
 ACCEPTED_CLASSES = set(
     [
         "Text",
@@ -160,109 +163,106 @@ def eclair(pdf_stream, extract_text: bool, extract_images: bool, extract_tables:
     accumulated_tables = []
     accumulated_images = []
 
-    triton_client = grpcclient.InferenceServerClient(url=eclair_triton_url)
+    responses = asyncio.get_event_loop().run_until_complete(async_batch_query(eclair_triton_url, batches, batch_page_offsets))
 
-    for batch, batch_page_offset in zip(batches, batch_page_offsets):
-        responses = preprocess_and_send_requests(triton_client, batch, batch_page_offset)
+    for page_idx, raw_text, bbox_offset in responses:
+        page_image = None
 
-        for page_idx, raw_text, bbox_offset in responses:
-            page_image = None
+        classes, bboxes, texts = eclair_utils.extract_classes_bboxes(raw_text)
 
-            classes, bboxes, texts = eclair_utils.extract_classes_bboxes(raw_text)
+        page_nearby_blocks = {
+            "text": {"content": [], "bbox": []},
+            "images": {"content": [], "bbox": []},
+            "structured": {"content": [], "bbox": []},
+        }
 
-            page_nearby_blocks = {
-                "text": {"content": [], "bbox": []},
-                "images": {"content": [], "bbox": []},
-                "structured": {"content": [], "bbox": []},
-            }
+        for cls, bbox, txt in zip(classes, bboxes, texts):
+            if cls in IGNORED_CLASSES:
+                continue
 
-            for cls, bbox, txt in zip(classes, bboxes, texts):
-                if cls in IGNORED_CLASSES:
-                    continue
+            elif extract_tables and (cls == "Table"):
+                try:
+                    txt = txt.encode().decode("unicode_escape")  # remove double backlashes
+                except UnicodeDecodeError:
+                    pass
+                bbox = eclair_utils.reverse_transform_bbox(bbox, bbox_offset)
+                table = LatexTable(latex=txt, bbox=bbox)
+                accumulated_tables.append(table)
 
-                elif extract_tables and (cls == "Table"):
-                    try:
-                        txt = txt.encode().decode("unicode_escape")  # remove double backlashes
-                    except UnicodeDecodeError:
-                        pass
+            elif extract_images and (cls == "Picture"):
+                if page_image is None:
+                    scale_tuple = (eclair_utils.DEFAULT_MAX_WIDTH, eclair_utils.DEFAULT_MAX_HEIGHT)
+                    padding_tuple = (eclair_utils.DEFAULT_MAX_WIDTH, eclair_utils.DEFAULT_MAX_HEIGHT)
+                    page_image, *_ = pdfium_pages_to_numpy(
+                        [pages[page_idx]], scale_tuple=scale_tuple, padding_tuple=padding_tuple
+                    )
+                    page_image = page_image[0]
+
+                img_numpy = crop_image(page_image, bbox)
+                if img_numpy is not None:
+                    base64_img = numpy_to_base64(img_numpy)
                     bbox = eclair_utils.reverse_transform_bbox(bbox, bbox_offset)
-                    table = LatexTable(latex=txt, bbox=bbox)
-                    accumulated_tables.append(table)
-
-                elif extract_images and (cls == "Picture"):
-                    if page_image is None:
-                        scale_tuple = (eclair_utils.DEFAULT_MAX_WIDTH, eclair_utils.DEFAULT_MAX_HEIGHT)
-                        padding_tuple = (eclair_utils.DEFAULT_MAX_WIDTH, eclair_utils.DEFAULT_MAX_HEIGHT)
-                        page_image, *_ = pdfium_pages_to_numpy(
-                            [pages[page_idx]], scale_tuple=scale_tuple, padding_tuple=padding_tuple
-                        )
-                        page_image = page_image[0]
-
-                    img_numpy = crop_image(page_image, bbox)
-                    if img_numpy is not None:
-                        base64_img = numpy_to_base64(img_numpy)
-                        bbox = eclair_utils.reverse_transform_bbox(bbox, bbox_offset)
-                        image = Base64Image(
-                            image=base64_img, bbox=bbox, width=img_numpy.shape[1], height=img_numpy.shape[0]
-                        )
-                        accumulated_images.append(image)
-
-                elif extract_text and (cls in ACCEPTED_CLASSES):
-                    txt = txt.replace("<tbc>", "").strip()  # remove <tbc> tokens (continued paragraphs)
-                    txt = eclair_utils.convert_mmd_to_plain_text_ours(txt)
-
-                    if extract_images and identify_nearby_objects:
-                        bbox = eclair_utils.reverse_transform_bbox(bbox, bbox_offset)
-                        page_nearby_blocks["text"]["content"].append(txt)
-                        page_nearby_blocks["text"]["bbox"].append(bbox)
-
-                    accumulated_text.append(txt)
-
-            # Construct tables
-            if extract_tables:
-                for table in accumulated_tables:
-                    extracted_data.append(
-                        _construct_table_metadata(
-                            table,
-                            page_idx,
-                            pdf_metadata.page_count,
-                            source_metadata,
-                            base_unified_metadata,
-                        )
+                    image = Base64Image(
+                        image=base64_img, bbox=bbox, width=img_numpy.shape[1], height=img_numpy.shape[0]
                     )
-                accumulated_tables = []
+                    accumulated_images.append(image)
 
-            # Construct images
-            if extract_images:
-                for image in accumulated_images:
-                    extracted_data.append(
-                        construct_image_metadata(
-                            image,
-                            page_idx,
-                            pdf_metadata.page_count,
-                            source_metadata,
-                            base_unified_metadata,
-                        )
-                    )
-                accumulated_images = []
+            elif extract_text and (cls in ACCEPTED_CLASSES):
+                txt = txt.replace("<tbc>", "").strip()  # remove <tbc> tokens (continued paragraphs)
+                txt = eclair_utils.convert_mmd_to_plain_text_ours(txt)
 
-            # Construct text - page
-            if (extract_text) and (text_depth == TextTypeEnum.PAGE):
+                if extract_images and identify_nearby_objects:
+                    bbox = eclair_utils.reverse_transform_bbox(bbox, bbox_offset)
+                    page_nearby_blocks["text"]["content"].append(txt)
+                    page_nearby_blocks["text"]["bbox"].append(bbox)
+
+                accumulated_text.append(txt)
+
+        # Construct tables
+        if extract_tables:
+            for table in accumulated_tables:
                 extracted_data.append(
-                    construct_text_metadata(
-                        accumulated_text,
-                        pdf_metadata.keywords,
+                    _construct_table_metadata(
+                        table,
                         page_idx,
-                        -1,
-                        -1,
-                        -1,
                         pdf_metadata.page_count,
-                        text_depth,
                         source_metadata,
                         base_unified_metadata,
                     )
                 )
-                accumulated_text = []
+            accumulated_tables = []
+
+        # Construct images
+        if extract_images:
+            for image in accumulated_images:
+                extracted_data.append(
+                    construct_image_metadata(
+                        image,
+                        page_idx,
+                        pdf_metadata.page_count,
+                        source_metadata,
+                        base_unified_metadata,
+                    )
+                )
+            accumulated_images = []
+
+        # Construct text - page
+        if (extract_text) and (text_depth == TextTypeEnum.PAGE):
+            extracted_data.append(
+                construct_text_metadata(
+                    accumulated_text,
+                    pdf_metadata.keywords,
+                    page_idx,
+                    -1,
+                    -1,
+                    -1,
+                    pdf_metadata.page_count,
+                    text_depth,
+                    source_metadata,
+                    base_unified_metadata,
+                )
+            )
+            accumulated_text = []
 
     # Construct text - document
     if (extract_text) and (text_depth == TextTypeEnum.DOCUMENT):
@@ -282,15 +282,14 @@ def eclair(pdf_stream, extract_text: bool, extract_images: bool, extract_tables:
         if len(text_extraction) > 0:
             extracted_data.append(text_extraction)
 
-    triton_client.close()
-
     return extracted_data
 
 
-def preprocess_and_send_requests(
+async def async_preprocess_and_send_requests(
     triton_client,
     batch: List[pdfium.PdfPage],
     batch_offset: int,
+    max_retries: int = 3,
 ) -> List[Tuple[int, str]]:
     if not batch:
         return []
@@ -311,19 +310,55 @@ def preprocess_and_send_requests(
 
     outputs = [grpcclient.InferRequestedOutput("text")]
 
-    query_response = triton_client.infer(
-        model_name="eclair",
-        inputs=input_tensors,
-        outputs=outputs,
-    )
+    async with lock:
+        query_response = await triton_client.infer(
+            model_name="eclair",
+            inputs=input_tensors,
+            outputs=outputs,
+        )
 
     text = query_response.as_numpy("text").tolist()
     text = [t.decode() for t in text]
 
     if len(text) != len(batch):
-        return []
+        raise RuntimeError(
+            "Number of requests does not match number of responses"
+        )
 
     return list(zip(page_numbers, text, bbox_offsets))
+
+
+async def async_batch_query(
+    endpoint: str,
+    batches: List[pdfium.PdfPage],
+    batch_offsets: List[int],
+    concurrency: int = 8,
+):
+    triton_client = grpcclient.InferenceServerClient(url=endpoint)
+
+    tasks = set()
+    responses = []
+    i = 0
+    while i < len(batches):
+        if len(tasks) >= concurrency:
+            # Wait for some tasks to finish before adding a new one
+            # This is to limit the memory usage from large PDFs with many pages.
+            done, tasks = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for r in done:
+                responses.extend(r.result())
+        batch = batches[i]
+        batch_offset = batch_offsets[i]
+        tasks.add(asyncio.get_event_loop().create_task(async_preprocess_and_send_requests(triton_client, batch, batch_offset)))
+        i += 1
+
+    # Wait for the remaining tasks to finish
+    done, _ = await asyncio.wait(tasks)
+    for r in done:
+        responses.extend(r.result())
+
+    await triton_client.close()
+
+    return responses
 
 
 @pdfium_exception_handler(descriptor="eclair")
