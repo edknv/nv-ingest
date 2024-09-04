@@ -32,6 +32,15 @@ A service that:
 - Runs a static pipeline or fixed set of operations on every submitted document.
 - Acts as a wrapper for any specific document parsing library.
 
+## Prerequisites
+
+### Software
+
+- Linux operating systems (Ubuntu 20.04 or later recommended)
+- [Docker](https://docs.docker.com/engine/install/)
+- [Docker Compose](https://docs.docker.com/compose/install/)
+- [CUDA Toolkit](https://developer.nvidia.com/cuda-downloads) (NVIDIA Driver >= 535)
+- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
 
 ## Quickstart
 
