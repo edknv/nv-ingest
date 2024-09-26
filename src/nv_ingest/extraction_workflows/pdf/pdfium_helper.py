@@ -269,15 +269,15 @@ def process_inference_results(
 
     for annotation_dict in annotation_dicts:
         new_dict = {}
-        if 'table' in annotation_dict:
-            new_dict['table'] = [bb for bb in annotation_dict["table"] if bb[4] >= final_thresh]
-        if 'chart' in annotation_dict:
-            new_dict['chart'] = [bb for bb in annotation_dict["chart"] if bb[4] >= final_thresh]
-        if 'title' in annotation_dict:
-            new_dict['title'] = annotation_dict["title"]
+        if "table" in annotation_dict:
+            new_dict["table"] = [bb for bb in annotation_dict["table"] if bb[4] >= final_thresh]
+        if "chart" in annotation_dict:
+            new_dict["chart"] = [bb for bb in annotation_dict["chart"] if bb[4] >= final_thresh]
+        if "title" in annotation_dict:
+            new_dict["title"] = annotation_dict["title"]
         inference_results.append(new_dict)
 
-    return inference_results 
+    return inference_results
 
 
 # Handle individual table/chart extraction and model inference
@@ -463,6 +463,7 @@ def pdfium(pdf_stream, extract_text: bool, extract_images: bool, extract_tables:
                         extracted_image_data = construct_image_metadata(
                             image_data,
                             page_idx,
+                            -1,
                             pdf_metadata.page_count,
                             source_metadata,
                             base_unified_metadata,
@@ -497,7 +498,12 @@ def pdfium(pdf_stream, extract_text: bool, extract_images: bool, extract_tables:
         for page_idx, table_and_charts in extract_tables_and_charts_using_image_ensemble(pages, pdfium_config):
             extracted_data.append(
                 construct_table_and_chart_metadata(
-                    table_and_charts, page_idx, pdf_metadata.page_count, source_metadata, base_unified_metadata
+                    table_and_charts,
+                    page_idx,
+                    -1,
+                    pdf_metadata.page_count,
+                    source_metadata,
+                    base_unified_metadata,
                 )
             )
 

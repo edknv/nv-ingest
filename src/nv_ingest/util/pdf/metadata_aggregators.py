@@ -147,6 +147,7 @@ def construct_text_metadata(
     text_depth,
     source_metadata,
     base_unified_metadata,
+    bbox = (-1, -1, -1, -1),
 ):
     extracted_text = " ".join(accumulated_text)
 
@@ -164,9 +165,6 @@ def construct_text_metadata(
     }
 
     language = detect_language(extracted_text)
-
-    # TODO(Devin) - Implement bounding box logic for text
-    bbox = (-1, -1, -1, -1)
 
     text_metadata = {
         "text_type": text_depth,
@@ -195,6 +193,7 @@ def construct_text_metadata(
 def construct_image_metadata(
     image_base64: Base64Image,
     page_idx: int,
+    block_idx: int,
     page_count: int,
     source_metadata: Dict[str, Any],
     base_unified_metadata: Dict[str, Any],
@@ -238,7 +237,7 @@ def construct_image_metadata(
         "hierarchy": {
             "page_count": page_count,
             "page": page_idx,
-            "block": -1,
+            "block": block_idx,
             "line": -1,
             "span": -1,
             "nearby_objects": [],
@@ -277,6 +276,7 @@ def construct_image_metadata(
 def construct_table_and_chart_metadata(
     table: Union[DataFrameTable, ImageTable, ImageChart],
     page_idx: int,
+    block_idx: int,
     page_count: int,
     source_metadata: Dict,
     base_unified_metadata: Dict,
@@ -323,6 +323,13 @@ def construct_table_and_chart_metadata(
         subtype = ContentSubtypeEnum.TABLE
         description = StdContentDescEnum.PDF_TABLE
 
+    elif isinstance(table, LatexTable):
+        content = table.latex
+        structured_content_text = content
+        table_format = TableFormatEnum.LATEX
+        subtype = ContentSubtypeEnum.TABLE
+        description = StdContentDescEnum.PDF_TABLE
+
     elif isinstance(table, ImageChart):
         content = table.image
         structured_content_text = table.content
@@ -340,6 +347,7 @@ def construct_table_and_chart_metadata(
         "hierarchy": {
             "page_count": page_count,
             "page": page_idx,
+            "block": block_idx,
             "line": -1,
             "span": -1,
         },
