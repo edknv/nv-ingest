@@ -22,6 +22,7 @@ from typing import List
 from typing import Optional
 from typing import Tuple
 
+import cv2
 import numpy as np
 import pypdfium2 as libpdfium
 import tritonclient.grpc as grpcclient
@@ -368,13 +369,45 @@ def handle_table_chart_extraction(
                     min_width=PADDLE_MIN_WIDTH,
                     min_height=PADDLE_MIN_HEIGHT,
                 )
+                if cropped is None:
+                    continue
+
                 base64_img = numpy_to_base64(cropped)
 
-                table_content = call_image_inference_model(paddle_client, "paddle", cropped, trace_info=trace_info)
+                # TODO: move this
+                height, width, channels = cropped.shape
+
+                image = cropped
+                mean = np.array([0.485, 0.456, 0.406]).reshape((1, 1, channels)).astype(np.float32)
+                std = np.array([0.229, 0.224, 0.225]).reshape((1, 1, channels)).astype(np.float32)
+                normalized = (image.astype("float32") / 255.0 - mean) / std
+
+                image = normalized
+                new_height = (height + 31) // 32 * 32
+                new_width = (width + 31) // 32 * 32
+                new_channel = image.shape[2]
+                padded = np.zeros((new_height, new_width, new_channel))
+                padded[: height, : width, :] = image
+
+                transposed = padded.transpose((2, 0, 1))
+                logger.info('*' * 20)
+                logger.info(transposed.shape)
+                logger.info('*' * 20)
+
+                table_content = call_image_inference_model(paddle_client, "paddle", transposed, trace_info=trace_info)
+                if table_content.strip() in {"", "nan"}:
+                    continue
+                logger.info('#' * 80)
+                logger.info(table_content)
+                logger.info('#' * 80)
+                #table_content = call_image_inference_model(paddle_client, "paddle", cropped, trace_info=trace_info)
                 table_data = ImageTable(table_content, base64_img, (w1, h1, w2, h2))
                 tables_and_charts.append((page_idx, table_data))
             elif extract_charts and label == "chart":
                 cropped = crop_image(original_image, (h1, w1, h2, w2))
+                if cropped is None:
+                    continue
+
                 base64_img = numpy_to_base64(cropped)
 
                 deplot_result = call_image_inference_model(
