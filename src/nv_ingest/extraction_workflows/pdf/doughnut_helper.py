@@ -179,7 +179,7 @@ def doughnut(pdf_stream, extract_text: bool, extract_images: bool, extract_table
 
                         accumulated_text = []
 
-                elif extract_tables and (cls == "Table"):
+                if extract_tables and (cls == "Table"):
                     try:
                         txt = txt.encode().decode("unicode_escape")  # remove double backlashes
                     except UnicodeDecodeError:
@@ -197,7 +197,7 @@ def doughnut(pdf_stream, extract_text: bool, extract_images: bool, extract_table
                         )
                     )
 
-                elif extract_images and (cls == "Picture"):
+                if extract_images and (cls == "Picture"):
                     if page_image is None:
                         scale_tuple = (doughnut_utils.DEFAULT_MAX_WIDTH, doughnut_utils.DEFAULT_MAX_HEIGHT)
                         padding_tuple = (doughnut_utils.DEFAULT_MAX_WIDTH, doughnut_utils.DEFAULT_MAX_HEIGHT)
@@ -299,6 +299,8 @@ def preprocess_and_send_requests(
     text = [t.decode() for t in text]
 
     if len(text) != len(batch):
-        return []
+        raise RuntimeError(
+            f"Response mismatch: The request expected {len(batch)} data points, but the response returned {len(text)}."
+        )
 
     return list(zip(page_numbers, text, bbox_offsets))
