@@ -167,7 +167,7 @@ def doughnut(pdf_stream, extract_text: bool, extract_images: bool, extract_table
 
                     accumulated_text.append(txt)
 
-                elif extract_tables and (cls == "Table"):
+                if extract_tables and (cls == "Table"):
                     try:
                         txt = txt.encode().decode("unicode_escape")  # remove double backlashes
                     except UnicodeDecodeError:
@@ -176,7 +176,7 @@ def doughnut(pdf_stream, extract_text: bool, extract_images: bool, extract_table
                     table = LatexTable(latex=txt, bbox=bbox)
                     accumulated_tables.append(table)
 
-                elif extract_images and (cls == "Picture"):
+                if extract_images and (cls == "Picture"):
                     if page_image is None:
                         scale_tuple = (doughnut_utils.DEFAULT_MAX_WIDTH, doughnut_utils.DEFAULT_MAX_HEIGHT)
                         padding_tuple = (doughnut_utils.DEFAULT_MAX_WIDTH, doughnut_utils.DEFAULT_MAX_HEIGHT)
