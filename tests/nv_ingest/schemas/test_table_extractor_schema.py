@@ -5,15 +5,6 @@ from nv_ingest.schemas.table_extractor_schema import TableExtractorConfigSchema,
 
 
 # Test cases for TableExtractorConfigSchema
-def test_valid_config_with_grpc_only():
-    config = TableExtractorConfigSchema(
-        auth_token="valid_token",
-        paddle_endpoints=("grpc://paddle_service", None)
-    )
-    assert config.auth_token == "valid_token"
-    assert config.paddle_endpoints == ("grpc://paddle_service", None)
-
-
 def test_valid_config_with_http_only():
     config = TableExtractorConfigSchema(
         auth_token="valid_token",
@@ -40,11 +31,19 @@ def test_invalid_config_empty_endpoints():
     assert "Both gRPC and HTTP services cannot be empty for paddle_endpoints" in str(exc_info.value)
 
 
+def test_invalid_config_empty_paddle_endpoints():
+    with pytest.raises(ValidationError) as exc_info:
+        TableExtractorConfigSchema(
+            paddle_endpoints=("grpc://paddle_service", None)
+        )
+    assert "HTTP service cannot be empty for paddle_endpoints" in str(exc_info.value)
+
+
 def test_invalid_extra_fields():
     with pytest.raises(ValidationError) as exc_info:
         TableExtractorConfigSchema(
             auth_token="valid_token",
-            paddle_endpoints=("grpc://paddle_service", None),
+            paddle_endpoints=("grpc://paddle_service", "http://paddle_service"),
             extra_field="invalid"
         )
     assert "extra fields not permitted" in str(exc_info.value)
@@ -55,11 +54,6 @@ def test_cleaning_empty_strings_in_endpoints():
         paddle_endpoints=("   ", "http://paddle_service")
     )
     assert config.paddle_endpoints == (None, "http://paddle_service")
-
-    config = TableExtractorConfigSchema(
-        paddle_endpoints=("grpc://paddle_service", "")
-    )
-    assert config.paddle_endpoints == ("grpc://paddle_service", None)
 
 
 def test_auth_token_is_none_by_default():

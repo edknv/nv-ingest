@@ -79,6 +79,10 @@ class TableExtractorConfigSchema(BaseModel):
         if not grpc_service and not http_service:
             raise ValueError("Both gRPC and HTTP services cannot be empty for paddle_endpoints.")
 
+        # For paddle, http endpoint is required for getting version info from /metadata.
+        if not http_service:
+            raise ValueError("HTTP service cannot be empty for paddle_endpoints.")
+
         values["paddle_endpoints"] = (grpc_service, http_service)
 
         return values
@@ -110,7 +114,7 @@ class TableExtractorSchema(BaseModel):
     n_workers: int = 2
     raise_on_failure: bool = False
 
-    @validator('max_queue_size', 'n_workers', pre=True, always=True)
+    @validator("max_queue_size", "n_workers", pre=True, always=True)
     def check_positive(cls, v, field):
         if v <= 0:
             raise ValueError(f"{field.name} must be greater than 10.")

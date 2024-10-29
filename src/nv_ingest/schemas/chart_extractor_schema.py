@@ -97,6 +97,10 @@ class ChartExtractorConfigSchema(BaseModel):
             if not grpc_service and not http_service:
                 raise ValueError(f"Both gRPC and HTTP services cannot be empty for {endpoint_name}.")
 
+            # For paddle, http endpoint is required for getting version info from /metadata.
+            if endpoint_name == "paddle_endpoints" and not http_service:
+                raise ValueError("HTTP service cannot be empty for paddle_endpoints.")
+
             values[endpoint_name] = (grpc_service, http_service)
 
         return values
@@ -130,7 +134,7 @@ class ChartExtractorSchema(BaseModel):
 
     stage_config: Optional[ChartExtractorConfigSchema] = None
 
-    @validator('max_queue_size', 'n_workers', pre=True, always=True)
+    @validator("max_queue_size", "n_workers", pre=True, always=True)
     def check_positive(cls, v, field):
         if v <= 0:
             raise ValueError(f"{field.name} must be greater than 10.")

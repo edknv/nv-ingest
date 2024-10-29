@@ -8,12 +8,12 @@ def test_valid_config_with_grpc_only():
         auth_token="valid_token",
         cached_endpoints=("grpc://cached_service", None),
         deplot_endpoints=("grpc://deplot_service", None),
-        paddle_endpoints=("grpc://paddle_service", None)
+        paddle_endpoints=("grpc://paddle_service", "http://paddle_service")
     )
     assert config.auth_token == "valid_token"
     assert config.cached_endpoints == ("grpc://cached_service", None)
     assert config.deplot_endpoints == ("grpc://deplot_service", None)
-    assert config.paddle_endpoints == ("grpc://paddle_service", None)
+    assert config.paddle_endpoints == ("grpc://paddle_service", "http://paddle_service")
 
 def test_valid_config_with_http_only():
     config = ChartExtractorConfigSchema(
@@ -52,7 +52,7 @@ def test_invalid_auth_token_none():
     config = ChartExtractorConfigSchema(
         cached_endpoints=("grpc://cached_service", None),
         deplot_endpoints=("grpc://deplot_service", None),
-        paddle_endpoints=("grpc://paddle_service", None)
+        paddle_endpoints=("grpc://paddle_service", "http://paddle_service")
     )
     assert config.auth_token is None
 
