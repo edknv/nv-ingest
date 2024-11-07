@@ -19,8 +19,6 @@
 
 import logging
 import os
-import uuid
-from typing import Dict
 from typing import List
 from typing import Tuple
 
@@ -30,18 +28,13 @@ import tritonclient.grpc as grpcclient
 
 from nv_ingest.extraction_workflows.pdf import doughnut_utils
 from nv_ingest.schemas.metadata_schema import AccessLevelEnum
-from nv_ingest.schemas.metadata_schema import ContentSubtypeEnum
-from nv_ingest.schemas.metadata_schema import ContentTypeEnum
-from nv_ingest.schemas.metadata_schema import StdContentDescEnum
-from nv_ingest.schemas.metadata_schema import TableFormatEnum
 from nv_ingest.schemas.metadata_schema import TextTypeEnum
-from nv_ingest.schemas.metadata_schema import validate_metadata
-from nv_ingest.util.exception_handlers.pdf import pdfium_exception_handler
 from nv_ingest.util.image_processing.transforms import crop_image
 from nv_ingest.util.image_processing.transforms import numpy_to_base64
 from nv_ingest.util.pdf.metadata_aggregators import Base64Image
-from nv_ingest.util.pdf.metadata_aggregators import LatexTable
+from nv_ingest.util.pdf.metadata_aggregators import CroppedImageWithContent
 from nv_ingest.util.pdf.metadata_aggregators import construct_image_metadata
+from nv_ingest.util.pdf.metadata_aggregators import construct_table_and_chart_metadata
 from nv_ingest.util.pdf.metadata_aggregators import construct_text_metadata
 from nv_ingest.util.pdf.metadata_aggregators import extract_pdf_metadata
 from nv_ingest.util.pdf.pdfium import pdfium_pages_to_numpy
@@ -140,8 +133,6 @@ def doughnut(pdf_stream, extract_text: bool, extract_images: bool, extract_table
         i += batch_size
 
     accumulated_text = []
-    accumulated_tables = []
-    accumulated_images = []
 
     triton_client = grpcclient.InferenceServerClient(url=doughnut_triton_url)
 
@@ -155,32 +146,29 @@ def doughnut(pdf_stream, extract_text: bool, extract_images: bool, extract_table
             classes, bboxes, texts = doughnut_utils.extract_classes_bboxes(raw_text)
 
             page_nearby_blocks = {
-                "text": {"content": [], "bbox": []},
+                "text": {"content": [], "bbox": [], "type": []},
                 "images": {"content": [], "bbox": []},
                 "structured": {"content": [], "bbox": []},
             }
 
-            for cls, bbox, txt in zip(classes, bboxes, texts):
-                if extract_text:
-                    txt = doughnut_utils.postprocess_text(txt, cls)
+            for block_idx, (cls, bbox, txt) in enumerate(zip(classes, bboxes, texts)):
+                transformed_bbox = doughnut_utils.reverse_transform_bbox(bbox, bbox_offset)
 
-                    if extract_images and identify_nearby_objects:
-                        bbox = doughnut_utils.reverse_transform_bbox(bbox, bbox_offset)
+                if extract_text and (cls in doughnut_utils.ACCEPTED_TEXT_CLASSES):
+                    txt = doughnut_utils.postprocess_text(txt, cls)
+                    if not txt:
+                        continue
+
+                    if identify_nearby_objects:
                         page_nearby_blocks["text"]["content"].append(txt)
-                        page_nearby_blocks["text"]["bbox"].append(bbox)
+                        page_nearby_blocks["text"]["bbox"].append(transformed_bbox)
+                        page_nearby_blocks["text"]["type"].append(cls)
 
                     accumulated_text.append(txt)
 
-                elif extract_tables and (cls == "Table"):
-                    try:
-                        txt = txt.encode().decode("unicode_escape")  # remove double backlashes
-                    except UnicodeDecodeError:
-                        pass
-                    bbox = doughnut_utils.reverse_transform_bbox(bbox, bbox_offset)
-                    table = LatexTable(latex=txt, bbox=bbox, max_width=page_width, max_height=page_height)
-                    accumulated_tables.append(table)
-
-                elif extract_images and (cls == "Picture"):
+                if (extract_tables and (cls in doughnut_utils.ACCEPTED_TABLE_CLASSES)) or (
+                    extract_images and (cls in doughnut_utils.ACCEPTED_IMAGE_CLASSES)
+                ):
                     if page_image is None:
                         scale_tuple = (doughnut_utils.DEFAULT_MAX_WIDTH, doughnut_utils.DEFAULT_MAX_HEIGHT)
                         padding_tuple = (doughnut_utils.DEFAULT_MAX_WIDTH, doughnut_utils.DEFAULT_MAX_HEIGHT)
@@ -192,44 +180,43 @@ def doughnut(pdf_stream, extract_text: bool, extract_images: bool, extract_table
                     img_numpy = crop_image(page_image, bbox)
                     if img_numpy is not None:
                         base64_img = numpy_to_base64(img_numpy)
-                        bbox = doughnut_utils.reverse_transform_bbox(bbox, bbox_offset)
+
+                    if extract_tables:
+                        table = CroppedImageWithContent(
+                            content=txt,
+                            image=base64_img,
+                            bbox=transformed_bbox,
+                            max_width=doughnut_utils.DEFAULT_MAX_WIDTH,
+                            max_height=doughnut_utils.DEFAULT_MAX_HEIGHT,
+                            type_string="latex_table",
+                        )
+                        extracted_data.append(
+                            construct_table_and_chart_metadata(
+                                table,
+                                page_idx,
+                                pdf_metadata.page_count,
+                                source_metadata,
+                                base_unified_metadata,
+                            )
+                        )
+                    if extract_images:
                         image = Base64Image(
                             image=base64_img,
-                            bbox=bbox,
+                            bbox=transformed_bbox,
                             width=img_numpy.shape[1],
                             height=img_numpy.shape[0],
-                            max_width=page_width,
-                            max_height=page_height,
+                            max_width=doughnut_utils.DEFAULT_MAX_WIDTH,
+                            max_height=doughnut_utils.DEFAULT_MAX_HEIGHT,
                         )
-                        accumulated_images.append(image)
-
-            # Construct tables
-            if extract_tables:
-                for table in accumulated_tables:
-                    extracted_data.append(
-                        _construct_table_metadata(
-                            table,
-                            page_idx,
-                            pdf_metadata.page_count,
-                            source_metadata,
-                            base_unified_metadata,
+                        extracted_data.append(
+                            construct_image_metadata(
+                                image,
+                                page_idx,
+                                pdf_metadata.page_count,
+                                source_metadata,
+                                base_unified_metadata,
+                            )
                         )
-                    )
-                accumulated_tables = []
-
-            # Construct images
-            if extract_images:
-                for image in accumulated_images:
-                    extracted_data.append(
-                        construct_image_metadata(
-                            image,
-                            page_idx,
-                            pdf_metadata.page_count,
-                            source_metadata,
-                            base_unified_metadata,
-                        )
-                    )
-                accumulated_images = []
 
             # Construct text - page
             if (extract_text) and (text_depth == TextTypeEnum.PAGE):
@@ -245,6 +232,8 @@ def doughnut(pdf_stream, extract_text: bool, extract_images: bool, extract_table
                         text_depth,
                         source_metadata,
                         base_unified_metadata,
+                        bbox_max_dimensions=(doughnut_utils.DEFAULT_MAX_WIDTH, doughnut_utils.DEFAULT_MAX_HEIGHT),
+                        nearby_objects=page_nearby_blocks,
                     )
                 )
                 accumulated_text = []
@@ -309,49 +298,3 @@ def preprocess_and_send_requests(
         return []
 
     return list(zip(page_numbers, text, bbox_offsets))
-
-
-@pdfium_exception_handler(descriptor="doughnut")
-def _construct_table_metadata(
-    table: LatexTable,
-    page_idx: int,
-    page_count: int,
-    source_metadata: Dict,
-    base_unified_metadata: Dict,
-):
-    content = table.latex
-    table_format = TableFormatEnum.LATEX
-    subtype = ContentSubtypeEnum.TABLE
-    description = StdContentDescEnum.PDF_TABLE
-
-    content_metadata = {
-        "type": ContentTypeEnum.STRUCTURED,
-        "description": description,
-        "page_number": page_idx,
-        "hierarchy": {
-            "page_count": page_count,
-            "page": page_idx,
-            "line": -1,
-            "span": -1,
-        },
-        "subtype": subtype,
-    }
-    table_metadata = {
-        "caption": "",
-        "table_format": table_format,
-        "table_location": table.bbox,
-    }
-    ext_unified_metadata = base_unified_metadata.copy()
-
-    ext_unified_metadata.update(
-        {
-            "content": content,
-            "source_metadata": source_metadata,
-            "content_metadata": content_metadata,
-            "table_metadata": table_metadata,
-        }
-    )
-
-    validated_unified_metadata = validate_metadata(ext_unified_metadata)
-
-    return [ContentTypeEnum.STRUCTURED, validated_unified_metadata.dict(), str(uuid.uuid4())]

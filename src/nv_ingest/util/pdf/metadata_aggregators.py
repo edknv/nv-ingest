@@ -10,6 +10,7 @@ from typing import Any
 from typing import Dict
 from typing import List
 from typing import Tuple
+from typing import Optional
 
 import pandas as pd
 import pypdfium2 as pdfium
@@ -34,14 +35,6 @@ class CroppedImageWithContent:
     max_width: int
     max_height: int
     type_string: str
-
-
-@dataclass
-class LatexTable:
-    latex: pd.DataFrame
-    bbox: Tuple[int, int, int, int]
-    max_width: int
-    max_height: int
 
 
 @dataclass
@@ -131,16 +124,19 @@ def extract_pdf_metadata(doc: pdfium.PdfDocument, source_id: str) -> PDFMetadata
 
 
 def construct_text_metadata(
-        accumulated_text,
-        keywords,
-        page_idx,
-        block_idx,
-        line_idx,
-        span_idx,
-        page_count,
-        text_depth,
-        source_metadata,
-        base_unified_metadata,
+    accumulated_text,
+    keywords,
+    page_idx,
+    block_idx,
+    line_idx,
+    span_idx,
+    page_count,
+    text_depth,
+    source_metadata,
+    base_unified_metadata,
+    bbox: Tuple[int, int, int, int] = (-1, -1, -1, -1),
+    bbox_max_dimensions=(-1, -1),
+    nearby_objects: Optional[Dict[str, Any]] = None,
 ):
     extracted_text = " ".join(accumulated_text)
 
@@ -154,13 +150,11 @@ def construct_text_metadata(
             "block": -1,
             "line": -1,
             "span": -1,
+            "nearby_objects": nearby_objects or [],
         },
     }
 
     language = detect_language(extracted_text)
-
-    # TODO(Devin) - Implement bounding box logic for text
-    bbox = (-1, -1, -1, -1)
 
     text_metadata = {
         "text_type": text_depth,
@@ -168,6 +162,7 @@ def construct_text_metadata(
         "keywords": keywords,
         "language": language,
         "text_location": bbox,
+        "text_location_max_dimensions": bbox_max_dimensions,
     }
 
     ext_unified_metadata = base_unified_metadata.copy()
@@ -187,11 +182,11 @@ def construct_text_metadata(
 
 
 def construct_image_metadata(
-        image_base64: Base64Image,
-        page_idx: int,
-        page_count: int,
-        source_metadata: Dict[str, Any],
-        base_unified_metadata: Dict[str, Any],
+    image_base64: Base64Image,
+    page_idx: int,
+    page_count: int,
+    source_metadata: Dict[str, Any],
+    base_unified_metadata: Dict[str, Any],
 ) -> List[Any]:
     """
     Extracts image data from a PdfImage object, converts it to a base64-encoded string,
@@ -246,7 +241,7 @@ def construct_image_metadata(
         "caption": "",
         "text": "",
         "image_location": image_base64.bbox,
-        "image_location_max_dimensions": (max(image_base64.max_width,0), max(image_base64.max_height,0)),
+        "image_location_max_dimensions": (max(image_base64.max_width, 0), max(image_base64.max_height, 0)),
         "height": image_base64.height,
     }
 
@@ -269,11 +264,11 @@ def construct_image_metadata(
 # TODO(Devin): Disambiguate tables and charts, create two distinct processing methods
 @pdfium_exception_handler(descriptor="pdfium")
 def construct_table_and_chart_metadata(
-        structured_image: CroppedImageWithContent,
-        page_idx: int,
-        page_count: int,
-        source_metadata: Dict,
-        base_unified_metadata: Dict,
+    structured_image: CroppedImageWithContent,
+    page_idx: int,
+    page_count: int,
+    source_metadata: Dict,
+    base_unified_metadata: Dict,
 ):
     """
     +--------------------------------+--------------------------+------------+---+
@@ -303,7 +298,7 @@ def construct_table_and_chart_metadata(
     +--------------------------------+--------------------------+------------+---+
     """
 
-    if (structured_image.type_string in ("table",)):
+    if structured_image.type_string in ("table", "latex_table"):
         content = structured_image.image
         structured_content_text = structured_image.content
         table_format = TableFormatEnum.IMAGE
@@ -311,7 +306,7 @@ def construct_table_and_chart_metadata(
         description = StdContentDescEnum.PDF_TABLE
         meta_name = "table_metadata"
 
-    elif (structured_image.type_string in ("chart",)):
+    elif structured_image.type_string in ("chart",):
         content = structured_image.image
         structured_content_text = structured_image.content
         table_format = TableFormatEnum.IMAGE
