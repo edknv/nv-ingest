@@ -155,32 +155,38 @@ def doughnut(pdf_stream, extract_text: bool, extract_images: bool, extract_table
             classes, bboxes, texts = doughnut_utils.extract_classes_bboxes(raw_text)
 
             page_nearby_blocks = {
-                "text": {"content": [], "bbox": []},
+                "text": {"content": [], "bbox": [], "type": []},
                 "images": {"content": [], "bbox": []},
                 "structured": {"content": [], "bbox": []},
             }
 
             for cls, bbox, txt in zip(classes, bboxes, texts):
-                if extract_text:
+                transformed_bbox = doughnut_utils.reverse_transform_bbox(bbox, bbox_offset)
+
+                if extract_text and (cls in doughnut_utils.ACCEPTED_CLASSES):
                     txt = doughnut_utils.postprocess_text(txt, cls)
 
-                    if extract_images and identify_nearby_objects:
-                        bbox = doughnut_utils.reverse_transform_bbox(bbox, bbox_offset)
+                    if identify_nearby_objects:
                         page_nearby_blocks["text"]["content"].append(txt)
-                        page_nearby_blocks["text"]["bbox"].append(bbox)
+                        page_nearby_blocks["text"]["bbox"].append(transformed_bbox)
+                        page_nearby_blocks["text"]["type"].append(cls)
 
                     accumulated_text.append(txt)
 
-                elif extract_tables and (cls == "Table"):
+                if extract_tables and (cls == "Table"):
                     try:
                         txt = txt.encode().decode("unicode_escape")  # remove double backlashes
                     except UnicodeDecodeError:
                         pass
-                    bbox = doughnut_utils.reverse_transform_bbox(bbox, bbox_offset)
-                    table = LatexTable(latex=txt, bbox=bbox, max_width=page_width, max_height=page_height)
+                    table = LatexTable(
+                        latex=txt,
+                        bbox=transformed_bbox,
+                        max_width=doughnut_utils.DEFAULT_MAX_WIDTH,
+                        max_height=doughnut_utils.DEFAULT_MAX_HEIGHT,
+                    )
                     accumulated_tables.append(table)
 
-                elif extract_images and (cls == "Picture"):
+                if extract_images and (cls == "Picture"):
                     if page_image is None:
                         scale_tuple = (doughnut_utils.DEFAULT_MAX_WIDTH, doughnut_utils.DEFAULT_MAX_HEIGHT)
                         padding_tuple = (doughnut_utils.DEFAULT_MAX_WIDTH, doughnut_utils.DEFAULT_MAX_HEIGHT)
@@ -192,14 +198,13 @@ def doughnut(pdf_stream, extract_text: bool, extract_images: bool, extract_table
                     img_numpy = crop_image(page_image, bbox)
                     if img_numpy is not None:
                         base64_img = numpy_to_base64(img_numpy)
-                        bbox = doughnut_utils.reverse_transform_bbox(bbox, bbox_offset)
                         image = Base64Image(
                             image=base64_img,
-                            bbox=bbox,
+                            bbox=transformed_bbox,
                             width=img_numpy.shape[1],
                             height=img_numpy.shape[0],
-                            max_width=page_width,
-                            max_height=page_height,
+                            max_width=doughnut_utils.DEFAULT_MAX_WIDTH,
+                            max_height=doughnut_utils.DEFAULT_MAX_HEIGHT,
                         )
                         accumulated_images.append(image)
 
@@ -245,6 +250,8 @@ def doughnut(pdf_stream, extract_text: bool, extract_images: bool, extract_table
                         text_depth,
                         source_metadata,
                         base_unified_metadata,
+                        bbox_max_dimensions=(doughnut_utils.DEFAULT_MAX_WIDTH, doughnut_utils.DEFAULT_MAX_HEIGHT),
+                        nearby_objects=page_nearby_blocks,
                     )
                 )
                 accumulated_text = []
