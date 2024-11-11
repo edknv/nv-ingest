@@ -129,6 +129,8 @@ def _call_image_inference_http_client(client, model_name: str, image_data):
 
     if model_name == "deplot":
         payload = _prepare_deplot_payload(base64_img)
+    elif model_name == "doughnut":
+        payload = _prepare_doughnut_payload(base64_img)
     elif model_name in {"paddle", "cached", "yolox"}:
         payload = _prepare_nim_payload(base64_img)
     else:
@@ -153,6 +155,8 @@ def _call_image_inference_http_client(client, model_name: str, image_data):
 
     if model_name == "deplot":
         result = _extract_content_from_deplot_response(json_response)
+    elif model_name == "doughnut":
+        result = _extract_content_from_doughnut_response(json_response)
     else:
         result = _extract_content_from_nim_response(json_response)
 
@@ -184,6 +188,24 @@ def _prepare_deplot_payload(
     return payload
 
 
+def _prepare_doughnut_payload(
+    base64_img: str,
+) -> Dict[str, Any]:
+    messages = [
+        {
+            "role": "user",
+            "content": "<s><output_markdown><predict_bbox><predict_classes>"
+            f'<img src="data:image/png;base64,{base64_img}" />',
+        }
+    ]
+    payload = {
+        "model": "nvidia/eclair",
+        "messages": messages,
+    }
+
+    return payload
+
+
 def _prepare_nim_payload(base64_img: str) -> Dict[str, Any]:
     image_url = f"data:image/png;base64,{base64_img}"
     image = {"type": "image_url", "image_url": {"url": image_url}}
@@ -202,6 +224,14 @@ def _extract_content_from_deplot_response(json_response):
     return json_response["choices"][0]["message"]["content"]
 
 
+def _extract_content_from_doughnut_response(json_response):
+    # Validate the response structure
+    if "choices" not in json_response or not json_response["choices"]:
+        raise RuntimeError("Unexpected response format: 'choices' key is missing or empty.")
+
+    return json_response["choices"][0]["message"]["content"]
+
+
 def _extract_content_from_nim_response(json_response):
     if "data" not in json_response or not json_response["data"]:
         raise RuntimeError("Unexpected response format: 'data' key is missing or empty.")
@@ -211,7 +241,9 @@ def _extract_content_from_nim_response(json_response):
 
 # Perform inference and return predictions
 @traceable_func(trace_name="pdf_content_extractor::{model_name}")
-def perform_model_inference(client, model_name: str, input_array: np.ndarray):
+def perform_model_inference(
+    client, model_name: str, input_array: np.ndarray, input_name="input", output_name="output", datatype="FP32"
+):
     """
     Perform inference using the provided model and input data.
 
@@ -237,14 +269,14 @@ def perform_model_inference(client, model_name: str, input_array: np.ndarray):
     >>> output.shape
     (2, 1000)
     """
-    input_tensors = [grpcclient.InferInput("input", input_array.shape, datatype="FP32")]
+    input_tensors = [grpcclient.InferInput(input_name, input_array.shape, datatype=datatype)]
     input_tensors[0].set_data_from_numpy(input_array)
 
-    outputs = [grpcclient.InferRequestedOutput("output")]
+    outputs = [grpcclient.InferRequestedOutput(output_name)]
     query_response = client.infer(model_name=model_name, inputs=input_tensors, outputs=outputs)
     logger.debug(query_response)
 
-    return query_response.as_numpy("output")
+    return query_response.as_numpy(output_name)
 
 
 def preprocess_image_for_paddle(array: np.ndarray, paddle_version: Optional[str] = None) -> np.ndarray:

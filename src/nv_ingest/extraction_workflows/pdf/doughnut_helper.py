@@ -18,7 +18,6 @@
 # limitations under the License.
 
 import logging
-import os
 import uuid
 from typing import Dict
 from typing import List
@@ -26,7 +25,6 @@ from typing import Tuple
 
 import numpy as np
 import pypdfium2 as pdfium
-import tritonclient.grpc as grpcclient
 
 from nv_ingest.extraction_workflows.pdf import doughnut_utils
 from nv_ingest.schemas.metadata_schema import AccessLevelEnum
@@ -39,6 +37,8 @@ from nv_ingest.schemas.metadata_schema import validate_metadata
 from nv_ingest.util.exception_handlers.pdf import pdfium_exception_handler
 from nv_ingest.util.image_processing.transforms import crop_image
 from nv_ingest.util.image_processing.transforms import numpy_to_base64
+from nv_ingest.util.nim.helpers import create_inference_client
+from nv_ingest.util.nim.helpers import perform_model_inference
 from nv_ingest.util.pdf.metadata_aggregators import Base64Image
 from nv_ingest.util.pdf.metadata_aggregators import LatexTable
 from nv_ingest.util.pdf.metadata_aggregators import construct_image_metadata
@@ -47,9 +47,6 @@ from nv_ingest.util.pdf.metadata_aggregators import extract_pdf_metadata
 from nv_ingest.util.pdf.pdfium import pdfium_pages_to_numpy
 
 logger = logging.getLogger(__name__)
-
-DOUGHNUT_GRPC_TRITON = os.environ.get("DOUGHNUT_GRPC_TRITON", "triton:8001")
-DEFAULT_BATCH_SIZE = 16
 
 
 # Define a helper function to use doughnut to extract text from a base64 encoded bytestram PDF
@@ -77,9 +74,10 @@ def doughnut(pdf_stream, extract_text: bool, extract_images: bool, extract_table
     """
     logger.debug("Extracting PDF with doughnut backend.")
 
-    doughnut_triton_url = kwargs.get("doughnut_grpc_triton", DOUGHNUT_GRPC_TRITON)
+    doughnut_config = kwargs.get("doughnut_config", {})
+    doughnut_config = doughnut_config if doughnut_config is not None else {}
 
-    batch_size = int(kwargs.get("doughnut_batch_size", DEFAULT_BATCH_SIZE))
+    batch_size = doughnut_config.doughnut_batch_size
 
     row_data = kwargs.get("row_data")
     # get source_id
@@ -143,10 +141,10 @@ def doughnut(pdf_stream, extract_text: bool, extract_images: bool, extract_table
     accumulated_tables = []
     accumulated_images = []
 
-    triton_client = grpcclient.InferenceServerClient(url=doughnut_triton_url)
+    doughnut_client = create_inference_client(doughnut_config.doughnut_endpoints, doughnut_config.auth_token)
 
     for batch, batch_page_offset in zip(batches, batch_page_offsets):
-        responses = preprocess_and_send_requests(triton_client, batch, batch_page_offset)
+        responses = preprocess_and_send_requests(doughnut_client, batch, batch_page_offset)
 
         for page_idx, raw_text, bbox_offset in responses:
             page_image = None
@@ -267,13 +265,13 @@ def doughnut(pdf_stream, extract_text: bool, extract_images: bool, extract_table
         if len(text_extraction) > 0:
             extracted_data.append(text_extraction)
 
-    triton_client.close()
+    doughnut_client.close()
 
     return extracted_data
 
 
 def preprocess_and_send_requests(
-    triton_client,
+    doughnut_client,
     batch: List[pdfium.PdfPage],
     batch_offset: int,
 ) -> List[Tuple[int, str]]:
@@ -291,18 +289,16 @@ def preprocess_and_send_requests(
 
     batch = np.array(page_images)
 
-    input_tensors = [grpcclient.InferInput("image", batch.shape, datatype="UINT8")]
-    input_tensors[0].set_data_from_numpy(batch)
-
-    outputs = [grpcclient.InferRequestedOutput("text")]
-
-    query_response = triton_client.infer(
-        model_name="doughnut",
-        inputs=input_tensors,
-        outputs=outputs,
+    output_array = perform_model_inference(
+        doughnut_client,
+        "doughnut",
+        batch,
+        input_name="image",
+        output_name="text",
+        datatype="UINT8",
     )
 
-    text = query_response.as_numpy("text").tolist()
+    text = output_array.tolist()
     text = [t.decode() for t in text]
 
     if len(text) != len(batch):
