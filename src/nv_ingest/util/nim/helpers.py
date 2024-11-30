@@ -306,7 +306,7 @@ def preprocess_image_for_paddle(array: np.ndarray, paddle_version: Optional[str]
       a requirement for PaddleOCR.
     - The normalized pixel values are scaled between 0 and 1 before padding and transposing the image.
     """
-    if (not paddle_version) or (packaging.version.parse(paddle_version) < packaging.version.parse("0.2.0-rc1")):
+    if paddle_version and (packaging.version.parse(paddle_version) < packaging.version.parse("0.2.0-rc1")):
         return array
 
     height, width = array.shape[:2]
@@ -370,99 +370,106 @@ def generate_url(url) -> str:
 
 
 def is_ready(http_endpoint, ready_endpoint) -> bool:
-    # IF the url is empty or None that means the service was not configured
-    # and is therefore automatically marked as "ready"
-    if http_endpoint is None or http_endpoint == "":
-        return True
-
-    # If the url is for build.nvidia.com, it is automatically assumed "ready"
-    if "ai.api.nvidia.com" in http_endpoint:
-        return True
-
-    url = generate_url(http_endpoint)
-    url = remove_url_endpoints(url)
-
-    if not ready_endpoint.startswith("/") and not url.endswith("/"):
-        ready_endpoint = "/" + ready_endpoint
-
-    url = url + ready_endpoint
-
-    # Call the ready endpoint of the NIM
-    try:
-        # Use a short timeout to prevent long hanging calls. 5 seconds seems resonable
-        resp = requests.get(url, timeout=5)
-        if resp.status_code == 200:
-            # The NIM is saying it is ready to serve
-            return True
-        elif resp.status_code == 503:
-            # NIM is explicitly saying it is not ready.
-            return False
-        else:
-            # Any other code is confusing. We should log it with a warning
-            # as it could be something that might hold up ready state
-            logger.warning(f"'{url}' HTTP Status: {resp.status_code} - Response Payload: {resp.json()}")
-            return False
-    except requests.HTTPError as http_err:
-        logger.warning(f"'{url}' produced a HTTP error: {http_err}")
-        return False
-    except requests.Timeout:
-        logger.warning(f"'{url}' request timed out")
-        return False
-    except ConnectionError:
-        logger.warning(f"A connection error for '{url}' occurred")
-        return False
-    except requests.RequestException as err:
-        logger.warning(f"An error occurred: {err} for '{url}'")
-        return False
-    except Exception as ex:
-        # Don't let anything squeeze by
-        logger.warning(f"Exception: {ex}")
-        return False
+    return True
 
 
-@backoff.on_predicate(backoff.expo, max_time=30)
-@multiprocessing_cache(max_calls=100)
+#def is_ready(http_endpoint, ready_endpoint) -> bool:
+#    # IF the url is empty or None that means the service was not configured
+#    # and is therefore automatically marked as "ready"
+#    if http_endpoint is None or http_endpoint == "":
+#        return True
+#
+#    # If the url is for build.nvidia.com, it is automatically assumed "ready"
+#    if "ai.api.nvidia.com" in http_endpoint:
+#        return True
+#
+#    url = generate_url(http_endpoint)
+#    url = remove_url_endpoints(url)
+#
+#    if not ready_endpoint.startswith("/") and not url.endswith("/"):
+#        ready_endpoint = "/" + ready_endpoint
+#
+#    url = url + ready_endpoint
+#
+#    # Call the ready endpoint of the NIM
+#    try:
+#        # Use a short timeout to prevent long hanging calls. 5 seconds seems resonable
+#        resp = requests.get(url, timeout=5)
+#        if resp.status_code == 200:
+#            # The NIM is saying it is ready to serve
+#            return True
+#        elif resp.status_code == 503:
+#            # NIM is explicitly saying it is not ready.
+#            return False
+#        else:
+#            # Any other code is confusing. We should log it with a warning
+#            # as it could be something that might hold up ready state
+#            logger.warning(f"'{url}' HTTP Status: {resp.status_code} - Response Payload: {resp.json()}")
+#            return False
+#    except requests.HTTPError as http_err:
+#        logger.warning(f"'{url}' produced a HTTP error: {http_err}")
+#        return False
+#    except requests.Timeout:
+#        logger.warning(f"'{url}' request timed out")
+#        return False
+#    except ConnectionError:
+#        logger.warning(f"A connection error for '{url}' occurred")
+#        return False
+#    except requests.RequestException as err:
+#        logger.warning(f"An error occurred: {err} for '{url}'")
+#        return False
+#    except Exception as ex:
+#        # Don't let anything squeeze by
+#        logger.warning(f"Exception: {ex}")
+#        return False
+
+
 def get_version(http_endpoint, metadata_endpoint="/v1/metadata", version_field="version") -> str:
-    if http_endpoint is None or http_endpoint == "":
-        return ""
+    return "0.2.1-rc2"
 
-    url = generate_url(http_endpoint)
-    url = remove_url_endpoints(url)
-
-    if not metadata_endpoint.startswith("/") and not url.endswith("/"):
-        metadata_endpoint = "/" + metadata_endpoint
-
-    url = url + metadata_endpoint
-
-    # Call the metadata endpoint of the NIM
-    try:
-        # Use a short timeout to prevent long hanging calls. 5 seconds seems reasonable
-        resp = requests.get(url, timeout=5)
-        if resp.status_code == 200:
-            version = resp.json().get(version_field, "")
-            if version:
-                return version
-            else:
-                # If version field is empty, retry
-                logger.warning(f"No version field in response from '{url}'. Retrying.")
-                return ""
-        else:
-            # Any other code is confusing. We should log it with a warning
-            logger.warning(f"'{url}' HTTP Status: {resp.status_code} - Response Payload: {resp.text}")
-            return ""
-    except requests.HTTPError as http_err:
-        logger.warning(f"'{url}' produced a HTTP error: {http_err}")
-        return ""
-    except requests.Timeout:
-        logger.warning(f"'{url}' request timed out")
-        return ""
-    except ConnectionError:
-        logger.warning(f"A connection error for '{url}' occurred")
-        return ""
-    except requests.RequestException as err:
-        logger.warning(f"An error occurred: {err} for '{url}'")
-        return ""
-    except Exception as ex:
-        # Don't let anything squeeze by
-        logger.warning(f"Exception: {ex}")
-        return ""
+#@backoff.on_predicate(backoff.expo, max_time=30)
+#@multiprocessing_cache(max_calls=100)
+#def get_version(http_endpoint, metadata_endpoint="/v1/metadata", version_field="version") -> str:
+#    if http_endpoint is None or http_endpoint == "":
+#        return ""
+#
+#    url = generate_url(http_endpoint)
+#    url = remove_url_endpoints(url)
+#
+#    if not metadata_endpoint.startswith("/") and not url.endswith("/"):
+#        metadata_endpoint = "/" + metadata_endpoint
+#
+#    url = url + metadata_endpoint
+#
+#    # Call the metadata endpoint of the NIM
+#    try:
+#        # Use a short timeout to prevent long hanging calls. 5 seconds seems reasonable
+#        resp = requests.get(url, timeout=5)
+#        if resp.status_code == 200:
+#            version = resp.json().get(version_field, "")
+#            if version:
+#                return version
+#            else:
+#                # If version field is empty, retry
+#                logger.warning(f"No version field in response from '{url}'. Retrying.")
+#                return ""
+#        else:
+#            # Any other code is confusing. We should log it with a warning
+#            logger.warning(f"'{url}' HTTP Status: {resp.status_code} - Response Payload: {resp.text}")
+#            return ""
+#    except requests.HTTPError as http_err:
+#        logger.warning(f"'{url}' produced a HTTP error: {http_err}")
+#        return ""
+#    except requests.Timeout:
+#        logger.warning(f"'{url}' request timed out")
+#        return ""
+#    except ConnectionError:
+#        logger.warning(f"A connection error for '{url}' occurred")
+#        return ""
+#    except requests.RequestException as err:
+#        logger.warning(f"An error occurred: {err} for '{url}'")
+#        return ""
+#    except Exception as ex:
+#        # Don't let anything squeeze by
+#        logger.warning(f"Exception: {ex}")
+#        return ""

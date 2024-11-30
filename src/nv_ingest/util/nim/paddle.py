@@ -1,6 +1,7 @@
 from typing import Dict, Any, Optional
 import numpy as np
 import logging
+import json
 
 from nv_ingest.util.image_processing.transforms import base64_to_numpy
 from nv_ingest.util.nim.helpers import ModelInterface, preprocess_image_for_paddle
@@ -17,6 +18,9 @@ class PaddleOCRModelInterface(ModelInterface):
         base64_image = data['base64_image']
         image_array = base64_to_numpy(base64_image)
         data['image_array'] = image_array
+
+        self._width, self._height = image_array.shape[:2]
+
         return data
 
     def format_input(self, data, protocol: str, **kwargs):
@@ -44,10 +48,42 @@ class PaddleOCRModelInterface(ModelInterface):
             # Convert bytes output to string
             if isinstance(response, np.ndarray):
                 if response.dtype.type is np.object_ or response.dtype.type is np.bytes_:
-                    output_strings = [
-                        output[0].decode('utf-8') if isinstance(output, bytes) else str(output) for output in response
-                    ]
-                    return " ".join(output_strings)
+                    #output_strings = [
+                    #    output[0].decode('utf-8') if isinstance(output, bytes) else str(output) for output in response
+                    #]
+
+                    bboxes, texts, scores = response
+                    bboxes = json.loads(bboxes.decode("utf8"))[0]
+                    texts = json.loads(texts.decode("utf8"))[0]
+
+                    # coordinates are normlized. convert them back to integers for dbscan.
+                    bboxes = [[[point[0] * self._width, point[1] * self._height] for point in box] for box in bboxes]
+                    bboxes = np.array(bboxes).astype(int)
+
+                    bboxes = bboxes.reshape(-1, 8)[:, [0, 1, 2, -1]]
+
+                    from sklearn.cluster import DBSCAN
+                    import pandas as pd
+
+                    preds_df = pd.DataFrame({"x0": bboxes[:, 0], "y0": bboxes[:, 1], "x1": bboxes[:, 2], "y1": bboxes[:, 3], "text": texts})
+                    preds_df = preds_df.sort_values("y0")
+
+                    dbscan = DBSCAN(eps=10, min_samples=1)
+                    dbscan.fit(preds_df["y0"].values[:, None])
+                    logger.info('*' * 80)
+                    logger.info(dbscan.labels_)
+                    logger.info('*' * 80)
+                    preds_df['cluster'] = dbscan.labels_
+
+                    preds_df = preds_df.sort_values(['cluster', 'x0'])
+
+                    results = ""
+                    for _, dfg in preds_df.groupby('cluster'):
+                        results += "| " + " | ".join(dfg["text"].values.tolist()) + " |\n" 
+
+                    #return " ".join(output_strings)
+
+                    return results
                 else:
                     output_bytes = response.tobytes()
                     output_str = output_bytes.decode('utf-8')
