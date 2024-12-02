@@ -75,7 +75,14 @@ def _update_metadata(row: pd.Series, paddle_client: Any, paddle_version: Any, tr
             if (isinstance(paddle_client, grpcclient.InferenceServerClient)):
                 image_array = preprocess_image_for_paddle(image_array, paddle_version=paddle_version)
 
-            paddle_result = call_image_inference_model(paddle_client, "paddle", image_array, trace_info=trace_info)
+            paddle_result = call_image_inference_model(
+                paddle_client,
+                "paddle",
+                image_array,
+                model_versions={"paddle": paddle_version},
+                table_content_format=table_metadata.get("table_content_format"),
+                trace_info=trace_info,
+            )
 
         table_metadata["table_content"] = paddle_result
     except Exception as e:

@@ -2,6 +2,7 @@
 # All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 import logging
 import re
 from typing import Any
@@ -13,9 +14,12 @@ import backoff
 import cv2
 import numpy as np
 import packaging
+import pandas as pd
 import requests
 import tritonclient.grpc as grpcclient
+from sklearn.cluster import DBSCAN
 
+from nv_ingest.schemas.metadata_schema import TableFormatEnum
 from nv_ingest.util.image_processing.transforms import normalize_image
 from nv_ingest.util.image_processing.transforms import numpy_to_base64
 from nv_ingest.util.image_processing.transforms import pad_image
@@ -74,7 +78,9 @@ def create_inference_client(
 
 
 @traceable_func(trace_name="pdf_content_extractor::{model_name}")
-def call_image_inference_model(client, model_name: str, image_data):
+def call_image_inference_model(
+    client, model_name: str, image_data: np.ndarray, model_versions: Optional[Dict] = None, **kwargs
+):
     """
     Calls an image inference model using the provided client.
 
@@ -88,6 +94,11 @@ def call_image_inference_model(client, model_name: str, image_data):
         The name of the model to be used for inference.
     image_data : np.ndarray
         The image data to be used for inference. Should be a NumPy array.
+    model_versions : Optional[Dict], optional
+        A dictionary specifying version information for models, used for customized processing
+        based on model version (e.g., for "paddle").
+    **kwargs
+        Additional parameters for customization, such as content formatting or configuration options.
 
     Returns
     -------
@@ -100,14 +111,18 @@ def call_image_inference_model(client, model_name: str, image_data):
         If the HTTP request fails or if the response format is not as expected.
     """
     if isinstance(client, grpcclient.InferenceServerClient):
-        response = _call_image_inference_grpc_client(client, model_name, image_data)
+        response = _call_image_inference_grpc_client(
+            client, model_name, image_data, model_versions=model_versions, **kwargs
+        )
     else:
-        response = _call_image_inference_http_client(client, model_name, image_data)
+        response = _call_image_inference_http_client(client, model_name, image_data, **kwargs)
 
     return response
 
 
-def _call_image_inference_grpc_client(client, model_name: str, image_data):
+def _call_image_inference_grpc_client(
+    client, model_name: str, image_data: np.ndarray, model_versions: Optional[Dict] = None, **kwargs
+):
     if image_data.ndim == 3:
         image_data = np.expand_dims(image_data, axis=0)
     inputs = [grpcclient.InferInput("input", image_data.shape, "FP32")]
@@ -116,15 +131,88 @@ def _call_image_inference_grpc_client(client, model_name: str, image_data):
     outputs = [grpcclient.InferRequestedOutput("output")]
 
     try:
-        result = client.infer(model_name=model_name, inputs=inputs, outputs=outputs)
-        return " ".join([output[0].decode("utf-8") for output in result.as_numpy("output")])
+        triton_output = client.infer(model_name=model_name, inputs=inputs, outputs=outputs)
     except Exception as e:
         err_msg = f"Inference failed for model {model_name}: {str(e)}"
         logger.error(err_msg)
         raise RuntimeError(err_msg)
 
+    output_array = triton_output.as_numpy("output")
 
-def _call_image_inference_http_client(client, model_name: str, image_data):
+    if model_name == "paddle":
+        paddle_version = model_versions.get("paddle")
+        table_content_format = kwargs.get("table_content_format")
+        result = _extract_content_from_paddle_grpc_output(
+            output_array,
+            image_data,
+            paddle_version=paddle_version,
+            table_content_format=table_content_format,
+        )
+    else:
+        result = _extract_content_from_nim_grpc_output(output_array)
+
+    return result
+
+
+def _extract_content_from_paddle_grpc_output(output_array, image_data, paddle_version=None, table_content_format=None):
+    if (not paddle_version) or (packaging.version.parse(paddle_version) < packaging.version.parse("0.2.1-rc2")):
+        return " ".join([output[0].decode("utf-8") for output in output_array])
+
+    bboxes_bytestr, texts_bytestr, _ = output_array
+    bboxes_list = json.loads(bboxes_bytestr.decode("utf8"))[0]
+    texts_list = json.loads(texts_bytestr.decode("utf8"))[0]
+
+    if table_content_format == TableFormatEnum.SIMPLE:
+        return " ".join(texts_list)
+
+    if image_data.ndim == 4:
+        width, height = image_data.shape[1:3]
+    else:
+        raise ValueError(f"Unexpected dimension `image_data`: {image_data.ndim}")
+
+    # The coordinates from Paddle are normlized. Convert them back to integers for DBSCAN.
+    bboxes = []
+    texts = []
+    for box, txt in zip(bboxes_list, texts_list):
+        if box == "nan":
+            continue
+        points = []
+        for point in box:
+            points.append([point[0] * width, point[1] * height])
+        bboxes.append(points)
+        texts.append(txt)
+
+    if (not bboxes) or (not texts):
+        return ""
+
+    bboxes = np.array(bboxes).astype(int)
+
+    bboxes = bboxes.reshape(-1, 8)[:, [0, 1, 2, -1]]
+
+    preds_df = pd.DataFrame(
+        {"x0": bboxes[:, 0], "y0": bboxes[:, 1], "x1": bboxes[:, 2], "y1": bboxes[:, 3], "text": texts}
+    )
+    preds_df = preds_df.sort_values("y0")
+
+    dbscan = DBSCAN(eps=10, min_samples=1)
+    dbscan.fit(preds_df["y0"].values[:, None])
+
+    preds_df["cluster"] = dbscan.labels_
+
+    preds_df = preds_df.sort_values(["cluster", "x0"])
+
+    results = ""
+    for _, dfg in preds_df.groupby("cluster"):
+        results += "| " + " | ".join(dfg["text"].values.tolist()) + " |\n"
+
+    return results
+
+
+def _extract_content_from_nim_grpc_output(output_array):
+    return " ".join([output[0].decode("utf-8") for output in output_array])
+
+
+def _call_image_inference_http_client(client, model_name: str, image_data, **kwargs):
     base64_img = numpy_to_base64(image_data)
 
     if model_name == "deplot":
@@ -394,7 +482,7 @@ def is_ready(http_endpoint, ready_endpoint) -> bool:
         return False
 
 
-@backoff.on_predicate(backoff.expo, max_value=5)
+@backoff.on_predicate(backoff.expo, max_time=30)
 @multiprocessing_cache(max_calls=100)
 def get_version(http_endpoint, metadata_endpoint="/v1/metadata", version_field="version") -> str:
     if http_endpoint is None or http_endpoint == "":

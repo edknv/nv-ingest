@@ -18,7 +18,6 @@
 
 import logging
 import traceback
-
 from math import log
 from typing import List
 from typing import Optional
@@ -27,9 +26,10 @@ from typing import Tuple
 import numpy as np
 import pypdfium2 as libpdfium
 import tritonclient.grpc as grpcclient
-import nv_ingest.util.nim.yolox as yolox_utils
 
+import nv_ingest.util.nim.yolox as yolox_utils
 from nv_ingest.schemas.metadata_schema import AccessLevelEnum
+from nv_ingest.schemas.metadata_schema import TableFormatEnum
 from nv_ingest.schemas.metadata_schema import TextTypeEnum
 from nv_ingest.schemas.pdf_extractor_schema import PDFiumConfigSchema
 from nv_ingest.util.image_processing.transforms import crop_image
@@ -38,10 +38,10 @@ from nv_ingest.util.nim.helpers import create_inference_client
 from nv_ingest.util.nim.helpers import perform_model_inference
 from nv_ingest.util.nim.yolox import prepare_images_for_inference
 from nv_ingest.util.pdf.metadata_aggregators import Base64Image
+from nv_ingest.util.pdf.metadata_aggregators import CroppedImageWithContent
 from nv_ingest.util.pdf.metadata_aggregators import construct_image_metadata_from_pdf_image
 from nv_ingest.util.pdf.metadata_aggregators import construct_table_and_chart_metadata
 from nv_ingest.util.pdf.metadata_aggregators import construct_text_metadata
-from nv_ingest.util.pdf.metadata_aggregators import CroppedImageWithContent
 from nv_ingest.util.pdf.metadata_aggregators import extract_pdf_metadata
 from nv_ingest.util.pdf.pdfium import PDFIUM_PAGEOBJ_MAPPING
 from nv_ingest.util.pdf.pdfium import pdfium_pages_to_numpy
@@ -347,6 +347,8 @@ def pdfium_extractor(
     source_id = row_data["source_id"]
     text_depth = kwargs.get("text_depth", "page")
     text_depth = TextTypeEnum[text_depth.upper()]
+    table_content_format = kwargs.get("table_content_format", "pseudo_markdown")
+    table_content_format = TableFormatEnum[table_content_format.upper()]
 
     # get base metadata
     metadata_col = kwargs.get("metadata_column", "metadata")
@@ -471,6 +473,8 @@ def pdfium_extractor(
                 pdfium_config,
                 trace_info=trace_info,
         ):
+            table_and_charts.content_format = table_content_format
+
             if (extract_tables and (table_and_charts.type_string == "table")) or (
                 extract_charts and (table_and_charts.type_string == "chart")
             ):
