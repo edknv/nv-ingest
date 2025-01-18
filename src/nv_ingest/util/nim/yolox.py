@@ -195,6 +195,7 @@ class YoloxBaseModelInterface(ModelInterface):
                 if new_size != original_size:
                     logger.warning(f"Image was scaled from {original_size} to {new_size} to meet size constraints.")
 
+                # Add to content_list
                 content = {"type": "image_url", "url": f"data:image/png;base64,{scaled_image_b64}"}
 
                 content_list.append(content)

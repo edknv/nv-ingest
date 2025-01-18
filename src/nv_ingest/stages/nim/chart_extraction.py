@@ -68,6 +68,7 @@ def _update_metadata(row: pd.Series, yolox_client: NimClient, paddle_client: Nim
         (content_metadata.get("type") != "structured")
         or (content_metadata.get("subtype") != "chart")
         or (chart_metadata is None)
+        or (base64_image in [None, ""])
     ):
         return metadata
 

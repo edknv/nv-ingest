@@ -67,7 +67,8 @@ def _update_metadata(row: pd.Series, paddle_client: NimClient, trace_info: Dict)
     if (
         (content_metadata.get("type") != "structured")
         or (content_metadata.get("subtype") != "table")
-        or (not table_metadata)
+        or (table_metadata is None)
+        or (base64_image in [None, ""])
     ):
         return metadata
 
