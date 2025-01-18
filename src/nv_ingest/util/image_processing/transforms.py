@@ -180,7 +180,7 @@ def pad_image(
     canvas = background_color * np.ones((final_height, final_width, array.shape[2]), dtype=dtype)
     canvas[pad_height : pad_height + height, pad_width : pad_width + width] = array  # noqa: E203
 
-    return canvas, (pad_width, pad_height)
+    return canvas, (pad_height, pad_width)
 
 
 def check_numpy_image_size(image: np.ndarray, min_height: int, min_width: int) -> bool:
