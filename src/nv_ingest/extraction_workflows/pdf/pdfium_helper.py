@@ -249,7 +249,9 @@ def _extract_tables_and_charts(
     page_count: int,
     source_metadata: dict,
     base_unified_metadata: dict,
-    paddle_output_format,
+    paddle_output_format: str,
+    extract_tables: bool = True,
+    extract_charts: bool = True,
     trace_info=None,
 ) -> list:
     """
@@ -262,19 +264,23 @@ def _extract_tables_and_charts(
 
     # Build metadata for each
     for page_idx, table_or_chart in table_chart_results:
-        # If we want all tables and charts, we assume the caller wouldn't call
-        # this function unless we truly want them.
-        if table_or_chart.type_string == "table":
-            table_or_chart.content_format = paddle_output_format
+        # Only proceed if the item matches the extraction flags set for tables/charts.
+        if (extract_tables and (table_or_chart.type_string == "table")) or (
+            extract_charts and (table_or_chart.type_string == "chart")
+        ):
+            # If we want all tables and charts, we assume the caller wouldn't call
+            # this function unless we truly want them.
+            if table_or_chart.type_string == "table":
+                table_or_chart.content_format = paddle_output_format
 
-        table_chart_meta = construct_table_and_chart_metadata(
-            table_or_chart,
-            page_idx,
-            page_count,
-            source_metadata,
-            base_unified_metadata,
-        )
-        extracted_table_chart.append(table_chart_meta)
+            table_chart_meta = construct_table_and_chart_metadata(
+                table_or_chart,
+                page_idx,
+                page_count,
+                source_metadata,
+                base_unified_metadata,
+            )
+            extracted_table_chart.append(table_chart_meta)
 
     return extracted_table_chart
 
@@ -404,6 +410,8 @@ def pdfium_extractor(
                         source_metadata,
                         base_unified_metadata,
                         paddle_output_format,
+                        extract_tables=extract_tables,
+                        extract_charts=extract_charts,
                         trace_info=trace_info,
                     )
                     futures.append(future)

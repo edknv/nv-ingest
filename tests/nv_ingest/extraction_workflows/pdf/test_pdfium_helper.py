@@ -8,9 +8,13 @@ from io import StringIO
 
 import pandas as pd
 import pytest
+from unittest.mock import patch, MagicMock
 
 from nv_ingest.extraction_workflows.pdf.pdfium_helper import pdfium_extractor
+from nv_ingest.extraction_workflows.pdf.pdfium_helper import _extract_tables_and_charts
 from nv_ingest.schemas.metadata_schema import TextTypeEnum
+
+MODULE_UNDER_TEST = "nv_ingest.extraction_workflows.pdf.pdfium_helper"
 
 
 @pytest.fixture
@@ -215,3 +219,98 @@ def test_pdfium_extractor_table_extraction_on_pdf_with_tables(pdf_stream_embedde
     # Access data in the cloud table
     assert list(dfs[7].columns) == ["Dependency", "Minimum Version", "Notes"]
     assert dfs[7]["Dependency"].to_list() == ["fsspec", "gcsfs", "pandas-gbq", "s3fs"]
+
+
+@patch(f"{MODULE_UNDER_TEST}.extract_tables_and_charts_using_image_ensemble")
+@patch(f"{MODULE_UNDER_TEST}.construct_table_and_chart_metadata")
+def test_only_table_extracted_when_extract_chart_flag_is_false(
+    mock_construct_metadata,
+    mock_extract_ensemble,
+):
+    class MockChart:
+        type_string = "chart"
+
+    class MockTable:
+        type_string = "table"
+
+    mock_chart = MockChart()
+    mock_table = MockTable()
+
+    mock_source_metadata = {"source": "test_source"}
+    mock_pdfium_config = MagicMock(spec={})
+    mock_base_unified_metadata = {"unified": "test_unified"}
+
+    # We have both table and chart but only table should be in the result
+    # since extract_charts=False.
+    mock_extract_ensemble.return_value = [(0, mock_table), (1, mock_chart)]
+    mock_construct_metadata.return_value = {"key": "val"}
+
+    result = _extract_tables_and_charts(
+        pages=[],
+        pdfium_config=mock_pdfium_config,
+        page_count=1,
+        source_metadata=mock_source_metadata,
+        base_unified_metadata=mock_base_unified_metadata,
+        paddle_output_format="simple",
+        extract_tables=True,  # we want to extract tables
+        extract_charts=False,  # no charts
+    )
+
+    assert len(result) == 1
+    assert mock_table.content_format == "simple"
+
+    mock_extract_ensemble.assert_called_once()
+    mock_construct_metadata.assert_called_once_with(
+        mock_table,
+        0,
+        1,
+        mock_source_metadata,
+        mock_base_unified_metadata,
+    )
+
+
+@patch(f"{MODULE_UNDER_TEST}.extract_tables_and_charts_using_image_ensemble")
+@patch(f"{MODULE_UNDER_TEST}.construct_table_and_chart_metadata")
+def test_chart_extracted_when_flag_true(
+    mock_construct_metadata,
+    mock_extract_ensemble,
+):
+    class MockChart:
+        type_string = "chart"
+
+    class MockTable:
+        type_string = "table"
+
+    mock_chart = MockChart()
+    mock_table = MockTable()
+
+    mock_source_metadata = {"source": "test_source"}
+    mock_pdfium_config = MagicMock(spec={})
+    mock_base_unified_metadata = {"unified": "test_unified"}
+
+    # We have both table and chart but only table should be in the result
+    # since extract_tables=False.
+    mock_extract_ensemble.return_value = [(0, mock_table), (1, mock_chart)]
+    mock_construct_metadata.return_value = {"key": "val"}
+
+    result = _extract_tables_and_charts(
+        pages=[],
+        pdfium_config=mock_pdfium_config,
+        page_count=2,
+        source_metadata=mock_source_metadata,
+        base_unified_metadata=mock_base_unified_metadata,
+        paddle_output_format="simple",
+        extract_tables=False,  # no tables
+        extract_charts=True,  # only charts
+    )
+
+    assert len(result) == 1
+    assert not hasattr(mock_chart, "content_format")
+    mock_extract_ensemble.assert_called_once()
+    mock_construct_metadata.assert_called_once_with(
+        mock_chart,
+        1,
+        2,
+        mock_source_metadata,
+        mock_base_unified_metadata,
+    )
