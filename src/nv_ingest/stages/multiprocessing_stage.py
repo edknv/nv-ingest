@@ -169,7 +169,7 @@ class MultiProcessingBaseStage(SinglePortStage):
         self._pe_count = pe_count
         self._process_fn = process_fn
         self._max_queue_size = 1
-        self._mp_context = mp.get_context("fork")
+        self._mp_context = mp.get_context("spawn")
         self._cancellation_token = self._mp_context.Value(ctypes.c_int8, False)
         self._pass_thru_recv_queue = queue.Queue(maxsize=c.edge_buffer_size)
         self._my_threads = {}

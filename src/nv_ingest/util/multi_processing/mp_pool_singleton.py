@@ -106,6 +106,36 @@ class SimpleFuture:
         return self._result.value
 
 
+def _worker(task_queue: mp.Queue) -> None:
+    """
+    The worker process function that executes tasks from the queue.
+
+    Parameters
+    ----------
+    task_queue : multiprocessing.Queue
+        The queue from which tasks are retrieved.
+
+    Returns
+    -------
+    None
+    """
+    logger.debug(f"Worker process started: PID {os.getpid()}")
+    while True:
+        task = task_queue.get()
+        if task is None:  # Stop signal
+            logger.debug(f"Worker process {os.getpid()} received stop signal.")
+            break
+
+        future, process_fn, args = task
+        args, *kwargs = args
+        try:
+            result = process_fn(*args, **{k: v for kwarg in kwargs for k, v in kwarg.items()})
+            future.set_result(result)
+        except Exception as e:
+            logger.error(f"Future result failure - {e}\n")
+            future.set_exception(e)
+
+
 class ProcessWorkerPoolSingleton:
     """
     A singleton process worker pool for managing a fixed number of worker processes.
@@ -172,49 +202,17 @@ class ProcessWorkerPoolSingleton:
         None
         """
         self._total_max_workers = total_max_workers
-        self._context = mp.get_context("fork")
+        self._context = mp.get_context("spawn")
         self._task_queue = self._context.Queue()
         self._manager = mp.Manager()
         self._processes = []
         logger.debug(f"Initializing ProcessWorkerPoolSingleton with {total_max_workers} workers.")
         for i in range(total_max_workers):
-            p = self._context.Process(target=self._worker, args=(self._task_queue, self._manager))
+            p = self._context.Process(target=_worker, args=(self._task_queue,))
             p.start()
             self._processes.append(p)
             logger.debug(f"Started worker process {i + 1}/{total_max_workers}: PID {p.pid}")
         logger.debug(f"Initialized with max workers: {total_max_workers}")
-
-    @staticmethod
-    def _worker(task_queue: mp.Queue, manager: mp.Manager) -> None:
-        """
-        The worker process function that executes tasks from the queue.
-
-        Parameters
-        ----------
-        task_queue : multiprocessing.Queue
-            The queue from which tasks are retrieved.
-        manager : multiprocessing.Manager
-            The manager providing shared memory for inter-process communication.
-
-        Returns
-        -------
-        None
-        """
-        logger.debug(f"Worker process started: PID {os.getpid()}")
-        while True:
-            task = task_queue.get()
-            if task is None:  # Stop signal
-                logger.debug(f"Worker process {os.getpid()} received stop signal.")
-                break
-
-            future, process_fn, args = task
-            args, *kwargs = args
-            try:
-                result = process_fn(*args, **{k: v for kwarg in kwargs for k, v in kwarg.items()})
-                future.set_result(result)
-            except Exception as e:
-                logger.error(f"Future result failure - {e}\n")
-                future.set_exception(e)
 
     def submit_task(self, process_fn: Callable, *args: Any) -> SimpleFuture:
         """
