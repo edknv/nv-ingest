@@ -10,27 +10,15 @@ on:
   push:
     branches:
       - main
-      - ci/library-mode  # remove this
+      - ci/library-mode  # remove later.
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Create env file
-        run: |
-          touch .env
-          echo PADDLE_HTTP_ENDPOINT=${{ secrets.PADDLE_HTTP_ENDPOINT }} >> .env
-          echo YOLOX_HTTP_ENDPOINT=${{ secrets.YOLOX_HTTP_ENDPOINT }} >> .env
-          echo YOLOX_GRAPHIC_ELEMENTS_HTTP_ENDPOINT=${{ secrets.YOLOX_GRAPHIC_ELEMENTS_HTTP_ENDPOINT }} >> .env
-          echo YOLOX_TABLE_STRUCTURE_HTTP_ENDPOINT=${{ secrets.YOLOX_TABLE_STRUCUTRE_HTTP_ENDPOINT }} >> .env
-          echo EMBEDDING_NIM_ENDPOINT=${{ secrets.EMBEDDING_NIM_ENDPOINT }} >> .env
-          echo EMBEDDING_NIM_MODEL_NAME=${{ secrets.EMBEDDING_NIM_MODEL_NAME }} >> .env
-          echo VLM_CAPTION_ENDPOINT=${{ secrets.VLM_CAPTION_ENDPOINT }} >> .env
-          echo VLM_CAPTION_MODEL_NAME=${{ secrets.VLM_CAPTION_MODEL_NAME }} >> .env
 
       - uses: conda-incubator/setup-miniconda@v3
         with:
@@ -38,11 +26,22 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install Conda and run script
+        env:
+          EMBEDDING_NIM_ENDPOINT: ${{ secrets.EMBEDDING_NIM_ENDPOINT }}
+          EMBEDDING_NIM_MODEL_NAME: ${{ secrets.EMBEDDING_NIM_MODEL_NAME }}
+          NVIDIA_BUILD_API_KEY: ${{ secrets.NVIDIA_BUILD_API_KEY }}
+          PADDLE_HTTP_ENDPOINT: ${{ secrets.PADDLE_HTTP_ENDPOINT }}
+          VLM_CAPTION_ENDPOINT: ${{ secrets.VLM_CAPTION_ENDPOINT }}
+          VLM_CAPTION_MODEL_NAME: ${{ secrets.VLM_CAPTION_MODEL_NAME }}
+          YOLOX_GRAPHIC_ELEMENTS_HTTP_ENDPOINT: ${{ secrets.YOLOX_GRAPHIC_ELEMENTS_HTTP_ENDPOINT }}
+          YOLOX_HTTP_ENDPOINT: ${{ secrets.YOLOX_HTTP_ENDPOINT }}
+          YOLOX_TABLE_STRUCTURE_HTTP_ENDPOINT: ${{ secrets.YOLOX_TABLE_STRUCTURE_HTTP_ENDPOINT }}
         shell: bash -el {0}
         run: |
           conda create -y --name nvingest python=3.10
           conda activate nvingest
           conda install -y -c rapidsai -c rapidsai-nightly -c conda-forge -c nvidia nvidia/label/dev::nv_ingest nvidia/label/dev::nv_ingest_client nvidia/label/dev::nv_ingest_api
-          pip install opencv-python llama-index-embeddings-nvidia pymilvus 'pymilvus[bulk_writer, model]' milvus-lite dotenv nvidia-riva-client
+          $CONDA/envs/nvingest/bin/python -m pip install opencv-python llama-index-embeddings-nvidia pymilvus 'pymilvus[bulk_writer, model]' milvus-lite dotenv nvidia-riva-client
+          $CONDA/envs/nvingest/bin/python -m pip install .
           echo 'Running script: examples/library_mode.py'
-          python examples/library_mode.py
+          $CONDA/envs/nvingest/bin/python examples/library_mode_example.py
