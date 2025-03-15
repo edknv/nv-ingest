@@ -10,7 +10,7 @@ on:
   push:
     branches:
       - main
-      - ci/library-mode  # remove later.
+      - ci/library-mode-fail  # remove later.
 
 jobs:
   build:
@@ -34,7 +34,7 @@ jobs:
           VLM_CAPTION_ENDPOINT: ${{ secrets.VLM_CAPTION_ENDPOINT }}
           VLM_CAPTION_MODEL_NAME: ${{ secrets.VLM_CAPTION_MODEL_NAME }}
           YOLOX_GRAPHIC_ELEMENTS_HTTP_ENDPOINT: ${{ secrets.YOLOX_GRAPHIC_ELEMENTS_HTTP_ENDPOINT }}
-          YOLOX_HTTP_ENDPOINT: ${{ secrets.YOLOX_HTTP_ENDPOINT }}
+          YOLOX_HTTP_ENDPOINT:
           YOLOX_TABLE_STRUCTURE_HTTP_ENDPOINT: ${{ secrets.YOLOX_TABLE_STRUCTURE_HTTP_ENDPOINT }}
         shell: bash -el {0}
         run: |
