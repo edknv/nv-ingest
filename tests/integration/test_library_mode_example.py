@@ -1,7 +1,7 @@
 import subprocess
 
 
-def test_library_mode_extract_pdf():
+def test_script_library_mode_example():
     process = subprocess.run(["python", "examples/library_mode_example.py"], capture_output=True, text=True)
 
     try:
