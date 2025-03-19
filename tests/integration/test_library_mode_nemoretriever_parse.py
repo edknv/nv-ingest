@@ -48,7 +48,9 @@ def test_library_mode_extract_pdf():
     results = ingestor.ingest()
 
     assert len(results) == 1
-    assert "A sample document with headings and placeholder text" in results[0]["metadata"]["content"]
+    texts = [x for x in results[0] if x["metadata"]["content_metadata"]["type"] == "text"]
+    text_contents = [x["metadata"]["content"] for x in texts]
+    assert any("A sample document with headings and placeholder text" in x for x in text_contents)
     # table in markdown
     tables = [x for x in results[0] if x["metadata"]["table_metadata"]["subtype"] == "table"]
     table_contents = [x["metadata"]["table_metadata"]["table_content"] for x in tables]
