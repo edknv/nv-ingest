@@ -747,7 +747,7 @@ def get_model_name(
         The model name of the server, or an empty string if unavailable.
     """
     if "ai.api.nvidia.com" in http_endpoint or "api.nvcf.nvidia.com" in http_endpoint:
-        return http_endpoint.strip("/").strip("/chat/completions").split("/")[-1]
+        return default_model_name
 
     model_info = _query_metadata(
         http_endpoint,
