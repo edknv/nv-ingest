@@ -52,10 +52,10 @@ def test_library_mode_extract_pdf():
     text_contents = [x["metadata"]["content"] for x in texts]
     assert any("A sample document with headings and placeholder text" in x for x in text_contents)
     # table in markdown
-    tables = [x for x in results[0] if x["metadata"]["table_metadata"]["subtype"] == "table"]
+    tables = [x for x in results[0] if x["metadata"].get("table_metadata", {}).get("subtype") == "table"]
     table_contents = [x["metadata"]["table_metadata"]["table_content"] for x in tables]
     assert any("| Dog | Chasing a squirrel | In the front yard |" in x for x in table_contents)
     # chart labels
-    charts = [x for x in results[0] if x["metadata"]["table_metadata"]["subtype"] == "charts"]
+    charts = [x for x in results[0] if x["metadata"].get("table_metadata", {}).get("subtype") == "charts"]
     charts_contents = [x["metadata"]["table_metadata"]["table_content"] for x in charts]
     assert any("Tweeter - Midrange - Midwoofer - Subwoofer" in x for x in table_contents)
