@@ -44,6 +44,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
+      - name: Check access debug
+        run: |
+          echo ${{ github.event.pull_request.labels }}
+
       - name: Check access
       #  #if: ${{ github.event.pull_request.author_association != 'COLLABORATOR' && github.event.pull_request.author_association != 'OWNER' && !contains(github.event.pull_request.labels.*.name, 'ok-to-test') }}
         if: ${{ !contains(github.event.pull_request.labels.*.name, 'ok-to-test') }}
