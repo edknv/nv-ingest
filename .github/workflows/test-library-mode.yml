@@ -17,7 +17,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
-          run-id: 14029496675  #${{ github.event.workflow_run.id }}
+          run-id: ${{ github.event.workflow_run.id }}
 
       - uses: conda-incubator/setup-miniconda@v3
         with:
