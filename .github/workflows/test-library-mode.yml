@@ -26,7 +26,6 @@ jobs:
       - name: Install Conda
         shell: bash -el {0}
         run: |
-          ls -R
           conda create -y --name nvingest python=3.10
           conda activate nvingest
           conda install -y -c ./test_artifacts/conda/output_conda_channel -c rapidsai -c conda-forge -c nvidia nv_ingest nv_ingest_api nv_ingest_client
@@ -48,4 +47,4 @@ jobs:
         shell: bash -el {0}
         run: |
           echo 'Running tests...'
-          $CONDA/envs/nvingest/bin/python -m pytest -rsx tests/integration
+          $CONDA/envs/nvingest/bin/python -m pytest -rsx test_artifacts/tests/integration

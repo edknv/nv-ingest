@@ -42,14 +42,14 @@ def run_ingestor():
             extract_infographics=True,
             text_depth="page",
         )
-        .embed()
-        .caption()
-        .vdb_upload(
-            collection_name="test",
-            milvus_uri="milvus.db",
-            sparse=False,
-            dense_dim=2048,
-        )
+        #.embed()
+        #.caption()
+        #.vdb_upload(
+        #    collection_name="test",
+        #    milvus_uri="milvus.db",
+        #    sparse=False,
+        #    dense_dim=2048,
+        #)
     )
 
     try:
