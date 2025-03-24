@@ -11,10 +11,6 @@ on:
       # workflow when the 'ok-to-test' label is added.
       # Reference: https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#pull_request_target
       - labeled
-  push:
-    branches:
-      - main
-  workflow_dispatch:
 
 jobs:
   build:
