@@ -18,7 +18,6 @@ jobs:
         with:
           github-token: ${{ github.token }}
           run-id: 14029100226  #${{ github.event.workflow_run.id }}
-          path: artifacts
 
       - uses: conda-incubator/setup-miniconda@v3
         with:
@@ -30,7 +29,7 @@ jobs:
           ls -R
           conda create -y --name nvingest python=3.10
           conda activate nvingest
-          conda install -y -c ./artifacts/conda/output_conda_channel/linux-64 -c rapidsai -c conda-forge -c nvidia nv_ingest nv_ingest_api nv_ingest_client
+          conda install -y -c ./test_artifacts/conda/output_conda_channel -c rapidsai -c conda-forge -c nvidia nv_ingest nv_ingest_api nv_ingest_client
           $CONDA/envs/nvingest/bin/python -m pip install opencv-python llama-index-embeddings-nvidia pymilvus 'pymilvus[bulk_writer, model]' milvus-lite nvidia-riva-client unstructured-client
 
       - name: Run integration test
