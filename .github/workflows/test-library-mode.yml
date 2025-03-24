@@ -1,23 +1,58 @@
 name: Test Nv-Ingest Library Mode
 
 on:
-  workflow_run:
-    workflows:
-      - Build Conda Packages
+  pull_request_target:
     types:
-      - completed
+      - opened
+      - synchronize
+      - reopened
+      # Adding 'labeled' to the list of activity types that trigger this event
+      # (default: opened, synchronize, reopened) so that we can run this
+      # workflow when the 'ok-to-test' label is added.
+      # Reference: https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#pull_request_target
+      - labeled
+    branches:
+      - main
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
+  build:
+    #runs-on: linux-large-disk
+    #container:
+    #  image: rapidsai/ci-conda:cuda12.5.1-ubuntu22.04-py3.10
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      #  - name: Build Conda Packages
+      #    run: |
+      #      ./conda/build_conda_packages.sh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: test_artifacts
+          path: |
+            ./conda/output_conda_channel
+            ./tests/integration
+          retention-days: 1
+
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
+      - name: Check access
+        if: ${{ github.event.pull_request.author_association != 'COLLABORATOR' && github.event.pull_request.author_association != 'OWNER' && contains(github.event.pull_request.labels.*.name, 'ok-to-test') }}
+        run: |
+          echo "Event not triggered by a collaborator."
+          exit 1
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
-        with:
-          github-token: ${{ github.token }}
-          run-id: ${{ github.event.workflow_run.id }}
 
       - uses: conda-incubator/setup-miniconda@v3
         with:
