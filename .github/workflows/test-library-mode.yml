@@ -1,19 +1,20 @@
 name: Test Nv-Ingest Library Mode
 
 on:
-  #pull_request_target:
-  #  types:
-  #    - opened
-  #    - synchronize
-  #    - reopened
-  #    # Adding 'labeled' to the list of activity types that trigger this event
-  #    # (default: opened, synchronize, reopened) so that we can run this
-  #    # workflow when the 'ok-to-test' label is added.
-  #    # Reference: https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#pull_request_target
-  #    - labeled
+  pull_request_target:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      # Adding 'labeled' to the list of activity types that trigger this event
+      # (default: opened, synchronize, reopened) so that we can run this
+      # workflow when the 'ok-to-test' label is added.
+      # Reference: https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#pull_request_target
+      - labeled
   push:
     branches:
       - main
+      - edwardk/ci-integ-libmode-2
   workflow_dispatch:
 
 jobs:
