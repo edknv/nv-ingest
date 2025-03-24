@@ -45,6 +45,7 @@ jobs:
     steps:
       - name: Check access debug
         run: |
+          echo ${{ github.event.pull_request.author_association}}
           echo ${{ github.event.pull_request.labels }}
 
       - name: Check access
