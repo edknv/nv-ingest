@@ -40,6 +40,7 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    needs: build
     timeout-minutes: 60
     steps:
       - name: Check access debug
@@ -50,7 +51,7 @@ jobs:
         #if: ${{ github.event.pull_request.author_association != 'COLLABORATOR' && github.event.pull_request.author_association != 'OWNER' && !contains(github.event.pull_request.labels.*.name, 'ok-to-test') }}
         if: ${{ !contains(github.event.pull_request.labels.*.name, 'ok-to-test') }}
         run: |
-          echo "Event not triggered by a collaborator."
+          echo "Event not triggered by a collaborator. Add 'ok-to-test' label to trigger tests."
           exit 1
 
       - name: Download artifacts
