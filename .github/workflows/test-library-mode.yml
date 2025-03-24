@@ -46,7 +46,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Check access
-        if: ${{ github.event.pull_request.author_association != 'COLLABORATOR' && github.event.pull_request.author_association != 'OWNER' && contains(github.event.pull_request.labels.*.name, 'ok-to-test') }}
+        #if: ${{ github.event.pull_request.author_association != 'COLLABORATOR' && github.event.pull_request.author_association != 'OWNER' && !contains(github.event.pull_request.labels.*.name, 'ok-to-test') }}
+        if: ${{ !contains(github.event.pull_request.labels.*.name, 'ok-to-test') }}
         run: |
           echo "Event not triggered by a collaborator."
           exit 1
