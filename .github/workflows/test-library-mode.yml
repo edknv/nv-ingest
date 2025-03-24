@@ -1,11 +1,11 @@
 name: Test Nv-Ingest Library Mode
 
 on:
-  #workflow_run:
-  #  workflows:
-  #    - Build Conda Packages
-  #  types:
-  #    - completed
+  workflow_run:
+    workflows:
+      - Build Conda Packages
+    types:
+      - completed
   workflow_dispatch:
 
 jobs:
