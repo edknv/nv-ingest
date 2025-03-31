@@ -10,6 +10,8 @@ from nv_ingest.framework.orchestration.morpheus.util.pipeline.pipeline_runners i
 @pytest.fixture
 def pipeline_process():
     config = PipelineCreationSchema()
+    print(config)
+
     process = start_pipeline_subprocess(
         config,
         stdout=sys.stdout,
