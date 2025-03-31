@@ -423,9 +423,10 @@ def get_audio_retrieval_service(env_var_prefix):
         "",
     )
 
-    logger.info(f"{prefix}_GRPC_TRITON: {grpc_endpoint}")
-    logger.info(f"{prefix}_HTTP_TRITON: {http_endpoint}")
+    logger.info(f"{prefix}_GRPC_ENDPOINT: {grpc_endpoint}")
+    logger.info(f"{prefix}_HTTP_ENDPOINT: {http_endpoint}")
     logger.info(f"{prefix}_INFER_PROTOCOL: {infer_protocol}")
+    logger.info(f"{prefix}_FUNCTION_ID: {function_id}")
 
     return grpc_endpoint, http_endpoint, auth_token, infer_protocol, function_id
 
