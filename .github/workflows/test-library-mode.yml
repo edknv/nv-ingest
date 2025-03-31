@@ -73,6 +73,11 @@ jobs:
       - name: Install ffmpeg
         run: sudo apt-get install -y ffmpeg
 
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{  github.event.pull_request.head.sha }}
+
       - uses: conda-incubator/setup-miniconda@v3
         with:
           auto-update-conda: true
@@ -101,4 +106,5 @@ jobs:
         shell: bash -el {0}
         run: |
           echo 'Running tests...'
-          cd test_artifacts/ && $CONDA/envs/nvingest/bin/python -m pytest -rsx tests/integration
+          #cd test_artifacts/ && $CONDA/envs/nvingest/bin/python -m pytest -rsx tests/integration
+          $CONDA/envs/nvingest/bin/python -m pytest -rsx tests/integration
