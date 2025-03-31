@@ -70,9 +70,6 @@ jobs:
 
           #- name: Download artifacts
           #  uses: actions/download-artifact@v4
-      - name: Install ffmpeg
-        run: sudo apt-get install -y ffmpeg
-
       - name: Checkout code
         uses: actions/checkout@v4
         with:
@@ -89,6 +86,7 @@ jobs:
           conda activate nvingest
           #conda install -y -c ./test_artifacts/conda/output_conda_channel -c rapidsai -c conda-forge -c nvidia nv_ingest nv_ingest_api nv_ingest_client
           conda install -y -c rapidsai -c conda-forge -c nvidia nv_ingest=25.3.0 nv_ingest_client=25.3.0 nv_ingest_api=25.3.0
+          conda install -y -c conda-forge librosa
           $CONDA/envs/nvingest/bin/python -m pip install opencv-python llama-index-embeddings-nvidia pymilvus 'pymilvus[bulk_writer, model]' milvus-lite nvidia-riva-client unstructured-client librosa
       - name: Run integration test
         env:
@@ -107,4 +105,7 @@ jobs:
         run: |
           echo 'Running tests...'
           #cd test_artifacts/ && $CONDA/envs/nvingest/bin/python -m pytest -rsx tests/integration
+          $CONDA/envs/nvingest/bin/python -m pip install .
+          $CONDA/envs/nvingest/bin/python -m pip install api/
+          $CONDA/envs/nvingest/bin/python -m pip install client/
           $CONDA/envs/nvingest/bin/python -m pytest -rsx tests/integration
