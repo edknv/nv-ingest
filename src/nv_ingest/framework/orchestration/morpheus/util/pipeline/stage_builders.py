@@ -439,7 +439,7 @@ def add_audio_extractor_stage(pipe, morpheus_pipeline_config, ingest_config, def
             "audio_extraction_config": {
                 "audio_endpoints": (audio_grpc, audio_http),
                 "audio_infer_protocol": audio_infer_protocol,
-                "audio_function_id": audio_function_id,
+                "function_id": audio_function_id,
                 "auth_token": audio_auth,
                 # All auth tokens are the same for the moment
             }
