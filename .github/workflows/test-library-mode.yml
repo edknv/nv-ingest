@@ -108,5 +108,4 @@ jobs:
           $CONDA/envs/nvingest/bin/python -m pip install .
           $CONDA/envs/nvingest/bin/python -m pip install api/
           $CONDA/envs/nvingest/bin/python -m pip install client/
-          #$CONDA/envs/nvingest/bin/python -m pytest -rsx tests/integration
-          $CONDA/envs/nvingest/bin/python -m pytest -rsx tests/integration/test_extract_audio.py
+          $CONDA/envs/nvingest/bin/python -m pytest -rsx tests/integration
