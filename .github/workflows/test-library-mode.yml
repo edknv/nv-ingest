@@ -16,41 +16,41 @@ on:
       - main
 
 jobs:
-  build:
-    #runs-on: linux-large-disk
-    #container:
-    #  image: rapidsai/ci-conda:cuda12.5.1-ubuntu22.04-py3.10
-    #steps:
-    #  - name: Check access
-    #    if:
-    #      ${{
-    #        github.event.pull_request.author_association != 'COLLABORATOR' &&
-    #        github.event.pull_request.author_association != 'OWNER' &&
-    #        !contains(github.event.pull_request.labels.*.name, 'ok-to-test')
-    #      }}
-    #    run: |
-    #      echo "Event not triggered by a collaborator. Add 'ok-to-test' label to trigger tests."
-    #      exit 1
+  #build:
+  #  runs-on: linux-large-disk
+  #  container:
+  #    image: rapidsai/ci-conda:cuda12.5.1-ubuntu22.04-py3.10
+  #  steps:
+  #    - name: Check access
+  #      if:
+  #        ${{
+  #          github.event.pull_request.author_association != 'COLLABORATOR' &&
+  #          github.event.pull_request.author_association != 'OWNER' &&
+  #          !contains(github.event.pull_request.labels.*.name, 'ok-to-test')
+  #        }}
+  #      run: |
+  #        echo "Event not triggered by a collaborator. Add 'ok-to-test' label to trigger tests."
+  #        exit 1
 
-    #  - name: Checkout code
-    #    uses: actions/checkout@v4
-    #    with:
-    #      ref: ${{  github.event.pull_request.head.sha }}
+  #    - name: Checkout code
+  #      uses: actions/checkout@v4
+  #      with:
+  #        ref: ${{  github.event.pull_request.head.sha }}
 
-    #  - name: Build Conda Packages
-    #    run: |
-    #      ./conda/build_conda_packages.sh
+  #    - name: Build Conda Packages
+  #      run: |
+  #        ./conda/build_conda_packages.sh
 
-    #  - name: Upload artifacts
-    #    uses: actions/upload-artifact@v4
-    #    with:
-    #      name: test_artifacts
-    #      path: |
-    #        ./conda/output_conda_channel
-    #        ./data
-    #        ./examples
-    #        ./tests/integration
-    #      retention-days: 1
+  #    - name: Upload artifacts
+  #      uses: actions/upload-artifact@v4
+  #      with:
+  #        name: test_artifacts
+  #        path: |
+  #          ./conda/output_conda_channel
+  #          ./data
+  #          ./examples
+  #          ./tests/integration
+  #        retention-days: 1
 
   test:
     runs-on: ubuntu-latest
