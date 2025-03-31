@@ -16,41 +16,41 @@ on:
       - main
 
 jobs:
-  build:
-    #runs-on: linux-large-disk
-    #container:
-    #  image: rapidsai/ci-conda:cuda12.5.1-ubuntu22.04-py3.10
-    #steps:
-    #  - name: Check access
-    #    if:
-    #      ${{
-    #        github.event.pull_request.author_association != 'COLLABORATOR' &&
-    #        github.event.pull_request.author_association != 'OWNER' &&
-    #        !contains(github.event.pull_request.labels.*.name, 'ok-to-test')
-    #      }}
-    #    run: |
-    #      echo "Event not triggered by a collaborator. Add 'ok-to-test' label to trigger tests."
-    #      exit 1
+  #build:
+  #  runs-on: linux-large-disk
+  #  container:
+  #    image: rapidsai/ci-conda:cuda12.5.1-ubuntu22.04-py3.10
+  #  steps:
+  #    - name: Check access
+  #      if:
+  #        ${{
+  #          github.event.pull_request.author_association != 'COLLABORATOR' &&
+  #          github.event.pull_request.author_association != 'OWNER' &&
+  #          !contains(github.event.pull_request.labels.*.name, 'ok-to-test')
+  #        }}
+  #      run: |
+  #        echo "Event not triggered by a collaborator. Add 'ok-to-test' label to trigger tests."
+  #        exit 1
 
-    #  - name: Checkout code
-    #    uses: actions/checkout@v4
-    #    with:
-    #      ref: ${{  github.event.pull_request.head.sha }}
+  #    - name: Checkout code
+  #      uses: actions/checkout@v4
+  #      with:
+  #        ref: ${{  github.event.pull_request.head.sha }}
 
-    #  - name: Build Conda Packages
-    #    run: |
-    #      ./conda/build_conda_packages.sh
+  #    - name: Build Conda Packages
+  #      run: |
+  #        ./conda/build_conda_packages.sh
 
-    #  - name: Upload artifacts
-    #    uses: actions/upload-artifact@v4
-    #    with:
-    #      name: test_artifacts
-    #      path: |
-    #        ./conda/output_conda_channel
-    #        ./data
-    #        ./examples
-    #        ./tests/integration
-    #      retention-days: 1
+  #    - name: Upload artifacts
+  #      uses: actions/upload-artifact@v4
+  #      with:
+  #        name: test_artifacts
+  #        path: |
+  #          ./conda/output_conda_channel
+  #          ./data
+  #          ./examples
+  #          ./tests/integration
+  #        retention-days: 1
 
   test:
     runs-on: ubuntu-latest
@@ -84,7 +84,7 @@ jobs:
           conda activate nvingest
           #conda install -y -c ./test_artifacts/conda/output_conda_channel -c rapidsai -c conda-forge -c nvidia nv_ingest nv_ingest_api nv_ingest_client
           conda install -y -c rapidsai -c conda-forge -c nvidia nv_ingest=25.3.0 nv_ingest_client=25.3.0 nv_ingest_api=25.3.0
-          $CONDA/envs/nvingest/bin/python -m pip install opencv-python llama-index-embeddings-nvidia pymilvus 'pymilvus[bulk_writer, model]' milvus-lite nvidia-riva-client unstructured-client
+          $CONDA/envs/nvingest/bin/python -m pip install opencv-python llama-index-embeddings-nvidia pymilvus 'pymilvus[bulk_writer, model]' milvus-lite nvidia-riva-client unstructured-client librosa
       - name: Run integration test
         env:
           AUDIO_FUNCTION_ID: ${{ secrets.AUDIO_FUNCTION_ID }}
