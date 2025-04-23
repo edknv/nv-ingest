@@ -166,14 +166,18 @@ class NimClient:
         """
         try:
             # 1. Retrieve or default to the model's maximum batch size.
-            batch_size = self._fetch_max_batch_size(model_name)
-            max_requested_batch_size = kwargs.get("max_batch_size", batch_size)
             force_requested_batch_size = kwargs.get("force_max_batch_size", False)
-            max_batch_size = (
-                min(batch_size, max_requested_batch_size)
-                if not force_requested_batch_size
-                else max_requested_batch_size
-            )
+
+            if force_requested_batch_size and ("max_batch_size" in kwargs):
+                max_batch_size = kwargs.get("max_batch_size")
+            else:
+                batch_size = self._fetch_max_batch_size(model_name)
+                max_requested_batch_size = kwargs.get("max_batch_size", batch_size)
+                max_batch_size = (
+                    min(batch_size, max_requested_batch_size)
+                    if not force_requested_batch_size
+                    else max_requested_batch_size
+                )
 
             # 2. Prepare data for inference.
             data = self.model_interface.prepare_data_for_inference(data)
@@ -276,6 +280,9 @@ class NimClient:
 
         while attempt < self.max_retries:
             try:
+                logger.info('*' * 80)
+                logger.info(len(formatted_input["input"]))
+                logger.info('*' * 80)
                 response = requests.post(
                     self.endpoint_url, json=formatted_input, headers=self.headers, timeout=self.timeout
                 )

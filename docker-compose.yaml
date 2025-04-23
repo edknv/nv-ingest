@@ -9,28 +9,12 @@ services:
       - "6379:6379"
 
   page-elements:
-    image: ${YOLOX_IMAGE:-nvcr.io/nim/nvidia/nemoretriever-page-elements-v2}:${YOLOX_TAG:-latest}
+    image: yolox-page-elements-server:latest
     ports:
       - "8000:8000"
-      - "8001:8001"
-      - "8002:8002"
     user: root
     environment:
-      - NIM_HTTP_API_PORT=8000
-      - NIM_TRITON_LOG_VERBOSE=1
-      - NGC_API_KEY=${NIM_NGC_API_KEY:-${NGC_API_KEY:-ngcapikey}}
       - CUDA_VISIBLE_DEVICES=0
-      - NIM_TRITON_MODEL_BATCH_SIZE=${PAGE_ELEMENTS_BATCH_SIZE:-1}
-      # NIM OpenTelemetry Settings
-      - NIM_ENABLE_OTEL=0
-      - NIM_OTEL_SERVICE_NAME=page-elements
-      - NIM_OTEL_TRACES_EXPORTER=otlp
-      - NIM_OTEL_METRICS_EXPORTER=console
-      - NIM_OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
-      - NIM_ENABLE_OTEL=true
-      # Triton OpenTelemetry Settings
-      - TRITON_OTEL_URL=http://otel-collector:4318/v1/traces
-      - TRITON_OTEL_RATE=1
     deploy:
       resources:
         reservations:
@@ -282,7 +266,7 @@ services:
       # Self-hosted redis endpoints.
       - YOLOX_GRPC_ENDPOINT=page-elements:8001
       - YOLOX_HTTP_ENDPOINT=http://page-elements:8000/v1/infer
-      - YOLOX_INFER_PROTOCOL=grpc
+      - YOLOX_INFER_PROTOCOL=http
       # build.nvidia.com hosted endpoints.
       #- YOLOX_HTTP_ENDPOINT=https://ai.api.nvidia.com/v1/cv/nvidia/nv-yolox-page-elements-v1
       #- YOLOX_INFER_PROTOCOL=http

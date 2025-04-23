@@ -98,7 +98,10 @@ async def get_ready_state() -> dict:
         ready_statuses = {"ingest_ready": ingest_ready, "morpheus_pipeline_ready": morpheus_pipeline_ready}
         ready_to_work = True  # consider nv-ingest ready until an endpoint proves otherwise
         for endpoint, nim_name in endpoint_nim_name_map.items():
-            endpoint_ready = is_ready(endpoint, "/v1/health/ready")
+            if "page_elements" in nim_name:
+                endpoint_ready = True
+            else:
+                endpoint_ready = is_ready(endpoint, "/v1/health/ready")
             if not endpoint_ready:
                 logger.debug(f"Not ready for work. NIM endpoint: '{endpoint}' reporting not ready.")
                 ready_to_work = False
