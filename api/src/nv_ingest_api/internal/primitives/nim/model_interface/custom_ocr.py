@@ -17,9 +17,9 @@ from nv_ingest_api.util.image_processing.transforms import base64_to_numpy
 logger = logging.getLogger(__name__)
 
 
-class PaddleOCRModelInterface(ModelInterface):
+class RTXTranslateModelInterface(ModelInterface):
     """
-    An interface for handling inference with a PaddleOCR model, supporting both gRPC and HTTP protocols.
+    An interface for handling inference with a RTXTranslate model, supporting both gRPC and HTTP protocols.
     """
 
     def name(self) -> str:
@@ -31,7 +31,7 @@ class PaddleOCRModelInterface(ModelInterface):
         str
             The name of the model interface.
         """
-        return "PaddleOCR"
+        return "RTXTranslate"
 
     def prepare_data_for_inference(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -127,7 +127,7 @@ class PaddleOCRModelInterface(ModelInterface):
         dims = data["image_dims"]
 
         if protocol == "grpc":
-            logger.debug("Formatting input for gRPC PaddleOCR model (batched).")
+            logger.debug("Formatting input for gRPC RTXTranslate model (batched).")
             processed: List[np.ndarray] = []
             for img in images:
                 arr, _dims = preprocess_image_for_paddle(img)
@@ -149,7 +149,7 @@ class PaddleOCRModelInterface(ModelInterface):
             return batches, batch_data_list
 
         elif protocol == "http":
-            logger.debug("Formatting input for HTTP PaddleOCR model (batched).")
+            logger.debug("Formatting input for HTTP RTXTranslate model (batched).")
             if "base64_images" in data:
                 base64_list = data["base64_images"]
             else:
@@ -187,7 +187,7 @@ class PaddleOCRModelInterface(ModelInterface):
         Parameters
         ----------
         response : Any
-            The raw response from the PaddleOCR model.
+            The raw response from the RTXTranslate model.
         protocol : str
             The protocol used for inference, "grpc" or "http".
         data : dict of str -> Any, optional
@@ -209,24 +209,24 @@ class PaddleOCRModelInterface(ModelInterface):
         dims: Optional[List[Tuple[int, int]]] = data.get("image_dims") if data else None
 
         if protocol == "grpc":
-            logger.debug("Parsing output from gRPC PaddleOCR model (batched).")
+            logger.debug("Parsing output from gRPC RTXTranslate model (batched).")
             return self._extract_content_from_paddle_grpc_response(response, dims)
 
         elif protocol == "http":
-            logger.debug("Parsing output from HTTP PaddleOCR model (batched).")
-            return self._extract_content_from_paddle_http_response(response, dims)
+            logger.debug("Parsing output from HTTP RTXTranslate model (batched).")
+            return self._extract_content_from_custom_ocr_http_response(response, dims)
 
         else:
             raise ValueError("Invalid protocol specified. Must be 'grpc' or 'http'.")
 
     def process_inference_results(self, output: Any, **kwargs: Any) -> Any:
         """
-        Process inference results for the PaddleOCR model.
+        Process inference results for the RTXTranslate model.
 
         Parameters
         ----------
         output : Any
-            The raw output parsed from the PaddleOCR model.
+            The raw output parsed from the RTXTranslate model.
         **kwargs : Any
             Additional keyword arguments for customization.
 
@@ -250,7 +250,7 @@ class PaddleOCRModelInterface(ModelInterface):
         Returns
         -------
         dict of str -> Any
-            The payload in either legacy or new format for PaddleOCR's HTTP endpoint.
+            The payload in either legacy or new format for RTXTranslate's HTTP endpoint.
         """
         image_url = f"data:image/png;base64,{base64_img}"
 
@@ -259,18 +259,18 @@ class PaddleOCRModelInterface(ModelInterface):
 
         return payload
 
-    def _extract_content_from_paddle_http_response(
+    def _extract_content_from_custom_ocr_http_response(
         self,
         json_response: Dict[str, Any],
         dimensions: List[Dict[str, Any]],
     ) -> List[Tuple[str, str]]:
         """
-        Extract content from the JSON response of a PaddleOCR HTTP API request.
+        Extract content from the JSON response of a RTXTranslate HTTP API request.
 
         Parameters
         ----------
         json_response : dict of str -> Any
-            The JSON response returned by the PaddleOCR endpoint.
+            The JSON response returned by the RTXTranslate endpoint.
         table_content_format : str or None
             The specified format for table content (e.g., 'simple' or 'pseudo_markdown').
         dimensions : list of dict, optional
@@ -288,24 +288,46 @@ class PaddleOCRModelInterface(ModelInterface):
         ValueError
             If the `table_content_format` is unrecognized.
         """
-        if "data" not in json_response or not json_response["data"]:
-            raise RuntimeError("Unexpected response format: 'data' key is missing or empty.")
+        #if "data" not in json_response or not json_response["data"]:
+        #    raise RuntimeError("Unexpected response format: 'data' key is missing or empty.")
 
         results: List[str] = []
-        for item_idx, item in enumerate(json_response["data"]):
-            text_detections = item.get("text_detections", [])
+        #for item_idx, item in enumerate(json_response["data"]):
+        #    text_detections = item.get("text_detections", [])
+        #    text_predictions = []
+        #    bounding_boxes = []
+        #    for td in text_detections:
+        #        text_predictions.append(td["text_prediction"]["text"])
+        #        bounding_boxes.append([[pt["x"], pt["y"]] for pt in td["bounding_box"]["points"]])
+
+        #    bounding_boxes, text_predictions = self._postprocess_paddle_response(
+        #        bounding_boxes,
+        #        text_predictions,
+        #        dimensions,
+        #        img_index=item_idx,
+        #    )
+
+        #    results.append([bounding_boxes, text_predictions])
+
+        for item_idx, item in enumerate(json_response):
+            regions = item.get("regions", [])
+
             text_predictions = []
             bounding_boxes = []
-            for td in text_detections:
-                text_predictions.append(td["text_prediction"]["text"])
-                bounding_boxes.append([[pt["x"], pt["y"]] for pt in td["bounding_box"]["points"]])
 
-            bounding_boxes, text_predictions = self._postprocess_paddle_response(
-                bounding_boxes,
-                text_predictions,
-                dimensions,
-                img_index=item_idx,
-            )
+            for region in regions:
+                is_valid = region.get("valid", True)
+                if not is_valid:
+                    continue
+                text_predictions.append(region["text"])
+                bounding_boxes.append(region["region"])
+
+            #bounding_boxes, text_predictions = self._postprocess_paddle_response(
+            #    bounding_boxes,
+            #    text_predictions,
+            #    dimensions,
+            #    img_index=item_idx,
+            #)
 
             results.append([bounding_boxes, text_predictions])
 
