@@ -1384,7 +1384,8 @@ def get_bbox_dict_yolox_table(preds, shape, class_labels, threshold=0.1, delta=0
 
 def get_yolox_model_name(yolox_http_endpoint, default_model_name="nemoretriever-page-elements-v2"):
     try:
-        yolox_model_name = get_model_name(yolox_http_endpoint, default_model_name)
+        #yolox_model_name = get_model_name(yolox_http_endpoint, default_model_name)
+        yolox_model_name = default_model_name
         if not yolox_model_name:
             logger.warning(
                 "Failed to obtain yolox-page-elements model name from the endpoint. "

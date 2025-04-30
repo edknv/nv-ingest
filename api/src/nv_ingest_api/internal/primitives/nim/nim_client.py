@@ -133,7 +133,15 @@ class NimClient:
             logger.debug("gRPC inference received response for a batch")
         elif self.protocol == "http":
             logger.debug("Performing HTTP inference for a batch...")
+
+            start_time = time.time()
+
             response = self._http_infer(batch_input)
+
+            duration = time.time() - start_time
+
+            logger.info(f"{model_name}, batch size: {len(batch_input['input'])}, duration: {duration}")
+
             logger.debug("HTTP inference received response for a batch")
         else:
             raise ValueError("Invalid protocol specified. Must be 'grpc' or 'http'.")
@@ -280,9 +288,6 @@ class NimClient:
 
         while attempt < self.max_retries:
             try:
-                logger.info('*' * 80)
-                logger.info(len(formatted_input["input"]))
-                logger.info('*' * 80)
                 response = requests.post(
                     self.endpoint_url, json=formatted_input, headers=self.headers, timeout=self.timeout
                 )

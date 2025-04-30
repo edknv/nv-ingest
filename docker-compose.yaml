@@ -10,6 +10,7 @@ services:
 
   page-elements:
     image: yolox-page-elements-server:latest
+    shm_size: 16g
     ports:
       - "8000:8000"
     user: root
@@ -94,6 +95,7 @@ services:
 
   custom-ocr:
     image: ${CUSTOM_OCR_IMAGE:-placeholder}:${CUSTOM_OCR_TAG:-latest}
+    shm_size: 16g
     ports:
       - "8009:8000"
       - "8010:8001"
@@ -109,7 +111,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["1"]
+              device_ids: ["0"]
               capabilities: [gpu]
     runtime: nvidia
 
