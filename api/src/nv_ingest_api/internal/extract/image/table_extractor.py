@@ -71,20 +71,18 @@ def _run_inference(
     Returns a tuple of (yolox_results, paddle_results).
     """
     data_paddle = {"base64_images": valid_images}
-    if enable_yolox:
-        data_yolox = {"images": valid_arrays}
+    data_yolox = {"images": valid_arrays}
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         future_yolox = None
-        if enable_yolox:
-            future_yolox = executor.submit(
-                yolox_client.infer,
-                data=data_yolox,
-                model_name="yolox",
-                stage_name="table_data_extraction",
-                max_batch_size=8,
-                trace_info=trace_info,
-            )
+        future_yolox = executor.submit(
+            yolox_client.infer,
+            data=data_yolox,
+            model_name="yolox",
+            stage_name="table_data_extraction",
+            max_batch_size=8,
+            trace_info=trace_info,
+        )
         future_paddle = executor.submit(
             paddle_client.infer,
             data=data_paddle,
@@ -94,14 +92,14 @@ def _run_inference(
             trace_info=trace_info,
         )
 
-        if enable_yolox:
-            try:
-                yolox_results = future_yolox.result()
-            except Exception as e:
+        try:
+            yolox_results = future_yolox.result()
+        except Exception as e:
+            if enable_yolox:
                 logger.error(f"Error calling yolox_client.infer: {e}", exc_info=True)
                 raise
-        else:
-            yolox_results = [None] * len(valid_images)
+            else:
+                yolox_results = [None] * len(valid_images)
 
         try:
             paddle_results = future_paddle.result()

@@ -88,7 +88,7 @@ services:
 
   paddle:
     image: ${PADDLE_IMAGE:-nvcr.io/nim/baidu/paddleocr}:${PADDLE_TAG:-latest}
-    shm_size: 2gb
+    shm_size: 16g
     ports:
       - "8009:8000"
       - "8010:8001"
@@ -99,6 +99,12 @@ services:
       - NIM_TRITON_LOG_VERBOSE=1
       - NGC_API_KEY=${NIM_NGC_API_KEY:-${NGC_API_KEY:-ngcapikey}}
       - CUDA_VISIBLE_DEVICES=0
+      - OMP_NUM_THREADS=1
+      - MKL_NUM_THREADS=1
+      - OPENBLAS_NUM_THREADS=1
+      - NUMEXPR_MAX_THREADS=1
+      - VECLIB_MAXIMUM_THREADS=1
+    cpuset: "0-3"
     deploy:
       resources:
         reservations:
@@ -122,6 +128,12 @@ services:
       - NGC_API_KEY=${NIM_NGC_API_KEY:-${NGC_API_KEY:-ngcapikey}}
       - CUDA_VISIBLE_DEVICES=0
       - NIM_TRITON_MAX_BATCH_SIZE=${EMBEDDER_BATCH_SIZE:-1}
+      - OMP_NUM_THREADS=1
+      - MKL_NUM_THREADS=1
+      - OPENBLAS_NUM_THREADS=1
+      - NUMEXPR_MAX_THREADS=1
+      - VECLIB_MAXIMUM_THREADS=1
+      - RAYON_NUM_THREADS=1
     deploy:
       resources:
         reservations:
@@ -313,6 +325,7 @@ services:
             - driver: nvidia
               device_ids: ["0"]
               capabilities: [gpu]
+    runtime: nvidia
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.91.0
