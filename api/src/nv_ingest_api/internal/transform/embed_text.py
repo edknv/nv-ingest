@@ -3,16 +3,23 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
+import re
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, Tuple, Optional, Iterable, List
+from typing import Any
+from typing import Dict
+from typing import Iterable
+from typing import List
+from typing import Optional
+from typing import Tuple
 
+import numpy as np
 import pandas as pd
-from openai import OpenAI
-
-from nv_ingest_api.internal.enums.common import ContentTypeEnum, StatusEnum, TaskTypeEnum
-from nv_ingest_api.internal.schemas.meta.metadata_schema import (
-    InfoMessageMetadataSchema,
-)
+from nv_ingest_api.internal.enums.common import ContentTypeEnum
+from nv_ingest_api.internal.enums.common import StatusEnum
+from nv_ingest_api.internal.enums.common import TaskTypeEnum
+from nv_ingest_api.internal.primitives.nim import NimClient
+from nv_ingest_api.internal.primitives.nim.model_interface.text_embedding import EmbeddingModelInterface
+from nv_ingest_api.internal.schemas.meta.metadata_schema import InfoMessageMetadataSchema
 from nv_ingest_api.internal.schemas.transform.transform_text_embedding_schema import TextEmbeddingSchema
 from nv_ingest_api.util.schema.schema_validator import validate_schema
 
@@ -27,9 +34,10 @@ logger = logging.getLogger(__name__)
 def _make_async_request(
     prompts: List[str],
     api_key: str,
-    embedding_nim_endpoint: str,
+    embedding_nim_endpoint: str,  # This is the base URL for NIM
     embedding_model: str,
-    encoding_format: str,
+    embedding_infer_protocol: str,
+    encoding_format: str,  # This parameter will be unused by NimClient directly
     input_type: str,
     truncate: str,
     filter_errors: bool,
@@ -48,7 +56,7 @@ def _make_async_request(
     embedding_model : str
         The model to use for generating embeddings.
     encoding_format : str
-        The desired encoding format.
+        The desired encoding format (unused by NimClient in this implementation).
     input_type : str
         The type of input data.
     truncate : str
@@ -59,7 +67,8 @@ def _make_async_request(
     Returns
     -------
     list
-        A dictionary with keys "embedding" (the embedding results) and "info_msg" (any error info).
+        A dictionary with keys "embedding" (the embedding results, List[List[float]] or List[None])
+        and "info_msg" (any error info).
 
     Raises
     ------
@@ -67,21 +76,44 @@ def _make_async_request(
         If an error occurs during the embedding request, with an info message attached.
     """
     response = {}
+    nim_client = None
 
     try:
-        client = OpenAI(
-            api_key=api_key,
-            base_url=embedding_nim_endpoint,
+        nim_client = NimClient(
+            model_interface=EmbeddingModelInterface(),
+            protocol=embedding_infer_protocol,
+            endpoints=(embedding_nim_endpoint, embedding_nim_endpoint),
+            auth_token=api_key,
         )
 
-        resp = client.embeddings.create(
-            input=prompts,
-            model=embedding_model,
-            encoding_format=encoding_format,
-            extra_body={"input_type": input_type, "truncate": truncate},
-        )
+        nim_input_data = {"prompts": prompts}
 
-        response["embedding"] = resp.data
+        if embedding_infer_protocol == "grpc":
+            model_name = re.sub(r"[^a-zA-Z0-9]", "_", embedding_model)
+            nim_embeddings = nim_client.infer(
+                data=nim_input_data,
+                model_name=model_name,
+                parameters={"input_type": input_type, "truncate": truncate},
+                outputs=["embeddings"],
+                dtype="BYTES",
+                input_name="text",
+                max_batch_size=8191,
+            )
+            if nim_embeddings and isinstance(nim_embeddings[0], np.ndarray):
+                nim_embeddings = [arr.tolist() for arr in nim_embeddings]
+        else:
+            nim_embeddings = nim_client.infer(
+                data=nim_input_data,
+                model_name=embedding_model,
+                input_type=input_type,
+                truncate=truncate,
+                max_batch_size=128,
+                force_max_batch_size=True,
+            )
+
+        # nim_embeddings is expected to be List[List[float]] or List[None]
+        # where each item corresponds to a prompt in the input.
+        response["embedding"] = nim_embeddings
         response["info_msg"] = None
 
     except Exception as err:
@@ -97,6 +129,12 @@ def _make_async_request(
         response["info_msg"] = validated_info_msg
 
         raise RuntimeError(f"Embedding error occurred. Info message: {validated_info_msg}") from err
+    finally:
+        if nim_client:
+            try:
+                nim_client.close()
+            except Exception as e:
+                logger.error(f"Error closing NimClient: {e}", exc_info=True)
 
     return response
 
@@ -106,6 +144,7 @@ def _async_request_handler(
     api_key: str,
     embedding_nim_endpoint: str,
     embedding_model: str,
+    embedding_infer_protocol: str,
     encoding_format: str,
     input_type: str,
     truncate: str,
@@ -146,6 +185,7 @@ def _async_request_handler(
                 api_key=api_key,
                 embedding_nim_endpoint=embedding_nim_endpoint,
                 embedding_model=embedding_model,
+                embedding_infer_protocol=embedding_infer_protocol,
                 encoding_format=encoding_format,
                 input_type=input_type,
                 truncate=truncate,
@@ -163,6 +203,7 @@ def _async_runner(
     api_key: str,
     embedding_nim_endpoint: str,
     embedding_model: str,
+    embedding_infer_protocol: str,
     encoding_format: str,
     input_type: str,
     truncate: str,
@@ -200,6 +241,7 @@ def _async_runner(
         api_key,
         embedding_nim_endpoint,
         embedding_model,
+        embedding_infer_protocol,
         encoding_format,
         input_type,
         truncate,
@@ -209,14 +251,20 @@ def _async_runner(
     flat_results = {"embeddings": [], "info_msgs": []}
     for batch_dict in results:
         info_msg = batch_dict["info_msg"]
-        for embedding in batch_dict["embedding"]:
-            if not isinstance(embedding, list):
-                if embedding is not None:
-                    flat_results["embeddings"].append(embedding.embedding)
+        # batch_dict["embedding"] is expected to be List[Union[List[float], None]]
+        for embedding_item in batch_dict["embedding"]:
+            if not isinstance(embedding_item, list):
+                # This path handles None or if embedding_item were an object with .embedding attribute
+                if embedding_item is not None:
+                    # This would be for an object like OpenAI's response object.
+                    # If NimClient returns raw vectors, this specific line might not be hit for actual embeddings.
+                    flat_results["embeddings"].append(embedding_item.embedding)
                 else:
-                    flat_results["embeddings"].append(embedding)
+                    # embedding_item is None
+                    flat_results["embeddings"].append(embedding_item)
             else:
-                flat_results["embeddings"].append(embedding)
+                # embedding_item is a list (the embedding vector itself)
+                flat_results["embeddings"].append(embedding_item)
             flat_results["info_msgs"].append(info_msg)
 
     return flat_results
@@ -440,8 +488,17 @@ def transform_create_text_embeddings_internal(
             - A dictionary with trace information.
     """
     api_key = task_config.get("api_key") or transform_config.api_key
-    endpoint_url = task_config.get("endpoint_url") or transform_config.embedding_nim_endpoint
-    model_name = task_config.get("model_name") or transform_config.embedding_model
+    # endpoint_url = task_config.get("endpoint_url") or transform_config.embedding_nim_endpoint
+    # model_name = task_config.get("model_name") or transform_config.embedding_model
+    # infer_protocol = task_config.get("infer_protocol") or transform_config.embedding_infer_protocol
+    endpoint_url = transform_config.embedding_nim_endpoint
+    model_name = transform_config.embedding_model
+    infer_protocol = transform_config.embedding_infer_protocol
+
+    endpoint_url = "embedding:8001"
+    # endpoint_url = "http://embedding:8000/v1/embeddings"
+    infer_protocol = "grpc"
+    # infer_protocol = "http"
 
     if execution_trace_log is None:
         execution_trace_log = {}
@@ -496,10 +553,11 @@ def transform_create_text_embeddings_internal(
                 api_key,
                 endpoint_url,
                 model_name,
+                infer_protocol,
                 transform_config.encoding_format,
                 transform_config.input_type,
                 transform_config.truncate,
-                False,
+                False,  # filter_errors: errors will raise RuntimeError from _make_async_request
             )
             # Build a simple row index -> embedding map
             embeddings_dict = dict(

@@ -15,8 +15,9 @@ logger = logging.getLogger(__name__)
 class TextEmbeddingSchema(BaseModel):
     api_key: str = "api_key"
     batch_size: int = 4
-    embedding_model: str = "nvidia/nv-embedqa-e5-v5"
+    embedding_model: str = "nvidia/llama-3.2-nv-embedqa-1b-v2"
     embedding_nim_endpoint: str = "http://embedding:8000/v1"
+    embedding_infer_protocol: str = "http"
     encoding_format: str = "float"
     httpx_log_level: LogLevel = LogLevel.WARNING
     input_type: str = "passage"
