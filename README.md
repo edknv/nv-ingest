@@ -4,7 +4,7 @@ All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# What is NeMo Retriever Extraction?
+# 1. What is NeMo Retriever Extraction?
 
 NeMo Retriever extraction is a scalable, performance-oriented document content and metadata extraction microservice. 
 NeMo Retriever extraction uses specialized NVIDIA NIM microservices 
