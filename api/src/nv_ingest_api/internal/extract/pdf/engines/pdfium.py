@@ -102,10 +102,13 @@ def _extract_page_elements_using_image_ensemble(
         # Perform inference using the NimClient.
         inference_results = yolox_client.infer(
             data,
-            model_name="yolox",
+            model_name="yolox_ensemble",
             max_batch_size=YOLOX_MAX_BATCH_SIZE,
             trace_info=execution_trace_log,
             stage_name="pdf_extraction",
+            input_name="INPUT_IMAGES",
+            dtype="BYTES",
+            output_name="OUTPUT",
         )
 
         # Process results: iterate over each image's inference output.
@@ -312,16 +315,7 @@ def _extract_page_elements(
     yolox_client = None
 
     try:
-        # Default model name
-        yolox_model_name = "yolox"
-
-        # Get the HTTP endpoint to determine the model name if needed
-        yolox_http_endpoint = yolox_endpoints[1]
-        if yolox_http_endpoint:
-            try:
-                yolox_model_name = get_yolox_model_name(yolox_http_endpoint)
-            except Exception as e:
-                logger.warning(f"Failed to get YOLOX model name from endpoint: {e}. Using default.")
+        yolox_model_name = "yolox_ensemble"
 
         # Create the model interface
         model_interface = YoloxPageElementsModelInterface(yolox_model_name=yolox_model_name)
@@ -528,8 +522,6 @@ def pdfium_extractor(
             if extract_tables or extract_charts or extract_infographics:
                 image, padding_offsets = pdfium_pages_to_numpy(
                     [page],
-                    scale_tuple=(YOLOX_PAGE_IMAGE_PREPROC_WIDTH, YOLOX_PAGE_IMAGE_PREPROC_HEIGHT),
-                    padding_tuple=(YOLOX_PAGE_IMAGE_PREPROC_WIDTH, YOLOX_PAGE_IMAGE_PREPROC_HEIGHT),
                     trace_info=execution_trace_log,
                 )
                 pages_for_tables.append((page_idx, image[0], padding_offsets[0]))

@@ -218,6 +218,7 @@ class YoloxModelInterfaceBase(ModelInterface):
             resized_images = [
                 resize_image(image, (self.image_preproc_width, self.image_preproc_height)) for image in data["images"]
             ]
+
             # Chunk the resized images, the original images, and their shapes.
             resized_chunks = chunk_list_geometrically(resized_images, max_batch_size)
             original_chunks = chunk_list_geometrically(data["images"], max_batch_size)
@@ -228,6 +229,7 @@ class YoloxModelInterfaceBase(ModelInterface):
             for r_chunk, orig_chunk, shapes in zip(resized_chunks, original_chunks, shape_chunks):
                 # Reorder axes from (B, H, W, C) to (B, C, H, W) as expected by the model.
                 input_array = np.einsum("bijk->bkij", r_chunk).astype(np.float32)
+                input_array = input_array.astype(np.object_)  # yolox_ensemble
                 batched_inputs.append(input_array)
                 formatted_batch_data.append({"images": orig_chunk, "original_image_shapes": shapes})
             return batched_inputs, formatted_batch_data
@@ -344,29 +346,29 @@ class YoloxModelInterfaceBase(ModelInterface):
         """
         original_image_shapes = kwargs.get("original_image_shapes", [])
 
-        if protocol == "http":
-            # For http, the output already has postprocessing applied. Skip to table/chart expansion.
-            results = output
+        #if protocol == "http":
+        #    # For http, the output already has postprocessing applied. Skip to table/chart expansion.
+        #    results = output
 
-        elif protocol == "grpc":
-            # For grpc, apply the same NIM postprocessing.
-            pred = postprocess_model_prediction(
-                output,
-                self.num_classes,
-                self.conf_threshold,
-                self.iou_threshold,
-                class_agnostic=False,
-            )
-            results = postprocess_results(
-                pred,
-                original_image_shapes,
-                self.image_preproc_width,
-                self.image_preproc_height,
-                self.class_labels,
-                min_score=self.min_score,
-            )
+        #elif protocol == "grpc":
+        #    # For grpc, apply the same NIM postprocessing.
+        #    pred = postprocess_model_prediction(
+        #        output,
+        #        self.num_classes,
+        #        self.conf_threshold,
+        #        self.iou_threshold,
+        #        class_agnostic=False,
+        #    )
+        #    results = postprocess_results(
+        #        pred,
+        #        original_image_shapes,
+        #        self.image_preproc_width,
+        #        self.image_preproc_height,
+        #        self.class_labels,
+        #        min_score=self.min_score,
+        #    )
 
-        inference_results = self.postprocess_annotations(results, **kwargs)
+        inference_results = self.postprocess_annotations(output, **kwargs)
 
         return inference_results
 

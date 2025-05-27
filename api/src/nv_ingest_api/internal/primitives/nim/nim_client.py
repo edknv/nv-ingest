@@ -244,13 +244,16 @@ class NimClient:
         input_name = kwargs.get("input_name", "input")
 
         input_tensors = grpcclient.InferInput(input_name, formatted_input.shape, datatype=dtype)
-        input_tensors.set_data_from_numpy(formatted_input)
+        input_tensors.set_data_from_numpy(formatted_input, binary_data=True if dtype in ("BYTES",) else False)
 
         outputs = [grpcclient.InferRequestedOutput(output_name) for output_name in output_names]
         response = self.client.infer(
             model_name=model_name, parameters=parameters, inputs=[input_tensors], outputs=outputs
         )
         logger.debug(f"gRPC inference response: {response}")
+
+        with open("/workspace/data/log", "a") as f:
+            f.write('\n' + str(response))
 
         if len(outputs) == 1:
             return response.as_numpy(outputs[0].name())
