@@ -11,6 +11,7 @@ from math import floor
 from typing import Optional
 from typing import Tuple
 
+import cv2
 import numpy as np
 from PIL import Image
 from PIL import UnidentifiedImageError
@@ -352,18 +353,9 @@ def numpy_to_base64(array: np.ndarray) -> str:
     if array.ndim == 3 and array.shape[2] == 1:
         array = np.squeeze(array, axis=2)
 
-    # Check if the array is valid and can be converted to an image
     try:
-        # Convert the NumPy array to a PIL image
-        pil_image = Image.fromarray(array.astype(np.uint8))
-    except Exception as e:
-        raise ValueError(f"Failed to convert NumPy array to image: {e}")
-
-    try:
-        # Convert the PIL image to a base64-encoded string
-        with BytesIO() as buffer:
-            pil_image.save(buffer, format="PNG")
-            base64_img = bytetools.base64frombytes(buffer.getvalue())
+        bytes_img = cv2.imencode(".jpg", array, [cv2.IMWRITE_JPEG_QUALITY, 100])[1]
+        base64_img = bytetools.base64frombytes(bytes_img)
     except Exception as e:
         raise RuntimeError(f"Failed to encode image to base64: {e}")
 

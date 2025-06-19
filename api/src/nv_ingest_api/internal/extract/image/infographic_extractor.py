@@ -101,7 +101,7 @@ def _update_infographic_metadata(
             data=data_ocr,
             model_name="scene_text",
             stage_name="infographic_extraction",
-            max_batch_size=1 if ocr_client.protocol == "grpc" else 2,
+            max_batch_size=1,
             trace_info=trace_info,
         )
     except Exception as e:
