@@ -2,6 +2,10 @@
 # All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import atexit
+import threading
+import hashlib
+import json
 import logging
 import threading
 import time
@@ -18,6 +22,7 @@ import tritonclient.grpc as grpcclient
 
 from nv_ingest_api.internal.primitives.tracing.tagging import traceable_func
 from nv_ingest_api.util.string_processing import generate_url
+
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +73,8 @@ class NimClient:
         ValueError
             If an invalid protocol is specified or if required endpoints are missing.
         """
+        with open("/workspace/data/log", "a") as f:
+            f.write(f"{model_interface}\n")
 
         self.client = None
         self.model_interface = model_interface
@@ -108,21 +115,6 @@ class NimClient:
             self._stop_event = threading.Event()
             self._batcher_thread = threading.Thread(target=self._batcher_loop, daemon=True)
 
-    def __enter__(self):
-        """
-        Enter the runtime context related to this object.
-        This will start the dynamic batching thread if enabled.
-        """
-        self.start()
-
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """
-        Exit the runtime context and gracefully close the client.
-        """
-        self.close()
-
     def start(self):
         """Starts the dynamic batching worker thread if enabled."""
         if self.dynamic_batching_enabled and not self._batcher_thread.is_alive():
@@ -145,13 +137,12 @@ class NimClient:
             if model_name in self._max_batch_sizes:
                 return self._max_batch_sizes[model_name]
 
-            if not self._grpc_endpoint:
+            if not self._grpc_endpoint or not self.client:
                 self._max_batch_sizes[model_name] = 1
                 return 1
 
             try:
-                client = self.client if self.client else grpcclient.InferenceServerClient(url=self._grpc_endpoint)
-                model_config = client.get_model_config(model_name=model_name, model_version=model_version)
+                model_config = self.client.get_model_config(model_name=model_name, model_version=model_version)
                 self._max_batch_sizes[model_name] = model_config.config.max_batch_size
                 logger.debug(f"Max batch size for model '{model_name}': {self._max_batch_sizes[model_name]}")
             except Exception as e:
@@ -581,6 +572,7 @@ class NimClient:
 
     def close(self):
         """Stops the dynamic batching worker and closes client connections."""
+
         if self.dynamic_batching_enabled:
             self._stop_event.set()
             # Unblock the queue in case the thread is waiting on get()
@@ -590,3 +582,96 @@ class NimClient:
 
         if self.client:
             self.client.close()
+
+
+class ClientManager:
+    """
+    A thread-safe, singleton manager for creating and sharing NimClient instances.
+
+    This manager ensures that only one NimClient is created per unique configuration,
+    and it handles the graceful shutdown of all clients on application exit.
+    """
+
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        # The standard thread-safe singleton pattern
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super(ClientManager, cls).__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        # Use a private attribute to ensure it's only initialized once
+        if not hasattr(self, "_initialized"):
+            with self._lock:
+                if not hasattr(self, "_initialized"):
+                    self._clients = {}  # Key: config_hash, Value: NimClient instance
+                    self._client_lock = threading.Lock()
+                    self._initialized = True
+
+    def _generate_config_key(self, **kwargs) -> str:
+        """Creates a stable, hashable key from client configuration."""
+        # We must sort the dictionary to ensure the hash is consistent
+        # regardless of kwarg order.
+        sorted_config = sorted(kwargs.items())
+        # Convert to a JSON string for hashing
+        config_str = json.dumps(sorted_config)
+        return hashlib.md5(config_str.encode("utf-8")).hexdigest()
+
+    def get_client(self, model_interface, **kwargs) -> "NimClient":
+        """
+        Gets or creates a NimClient for the given configuration.
+
+        This is the main entry point. It will reuse an existing client if one
+        with the exact same configuration already exists.
+        """
+        config_key = self._generate_config_key(model_interface_name=model_interface.name(), **kwargs)
+
+        # First, check if the client exists without locking for performance
+        if config_key in self._clients:
+            return self._clients[config_key]
+
+        # If it doesn't exist, acquire a lock to create it
+        with self._client_lock:
+            # Double-check in case another thread created it while we were waiting
+            if config_key in self._clients:
+                return self._clients[config_key]
+
+            logger.info(f"Creating new NimClient for config hash: {config_key}")
+
+            # Create the new client
+            new_client = NimClient(model_interface=model_interface, **kwargs)
+
+            # Start its background services if needed
+            if new_client.dynamic_batching_enabled:
+                new_client.start()
+
+            # Store it for future requests
+            self._clients[config_key] = new_client
+
+            return new_client
+
+    def shutdown(self):
+        """
+        Gracefully closes all managed NimClient instances.
+        This is called automatically on application exit by `atexit`.
+        """
+        logger.info(f"Shutting down ClientManager and {len(self._clients)} client(s)...")
+        with self._client_lock:
+            for config_key, client in self._clients.items():
+                logger.info(f"Closing client for config: {config_key}")
+                try:
+                    client.close()
+                except Exception as e:
+                    logger.error(f"Error closing client for config {config_key}: {e}")
+            self._clients.clear()
+        logger.info("ClientManager shutdown complete.")
+
+
+# A global helper function to make access even easier
+def get_client_manager(*args, **kwargs) -> ClientManager:
+    """Returns the singleton instance of the ClientManager."""
+    return ClientManager(*args, **kwargs)
