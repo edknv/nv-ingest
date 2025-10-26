@@ -247,10 +247,10 @@ def _create_ocr_client(
         model_interface=ocr_model_interface,
         auth_token=auth_token,
         infer_protocol=ocr_protocol,
-        enable_dynamic_batching=(
-            True if ocr_model_name in {"scene_text_ensemble", "scene_text_wrapper", "scene_text_python"} else False
-        ),
-        dynamic_batch_memory_budget_mb=32,
+        #enable_dynamic_batching=(
+        #    True if ocr_model_name in {"scene_text_ensemble", "scene_text_wrapper", "scene_text_python"} else False
+        #),
+        #dynamic_batch_memory_budget_mb=32,
     )
 
     return ocr_client

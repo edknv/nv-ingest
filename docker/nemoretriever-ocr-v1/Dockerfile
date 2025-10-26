@@ -31,6 +31,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 WORKDIR /app/nemoretriever-ocr-v1
 
+# Pre-cache the FOTSDetector backbone to prevent runtime downloads.
+RUN python -c "from nemo_retriever_ocr.inference.models.detector.fots_detector import FOTSDetector; print('Pre-caching FOTSDetector backbone...'); FOTSDetector(backbone='regnet_y_8gf'); print('Backbone cached successfully.')"
+
 # Copy our new server script into the container
 COPY server.py .
 

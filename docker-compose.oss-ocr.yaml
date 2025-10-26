@@ -4,20 +4,19 @@
 
 services:
   ocr:
+    image: "nemoretriever-ocr-v1"
     build:
       context: "docker/nemoretriever-ocr-v1"
       dockerfile: "Dockerfile"
       args:
         HF_TOKEN: ${HF_ACCESS_TOKEN:-hfaccesstoken}
-    shm_size: 16gb
-    ports:
-      - "8009:8000"
-      - "8010:8001"
-      - "8011:8002"
+    volumes:
+      - ${DATASET_ROOT:-./data}:/workspace/data
     user: root
     environment:
-      - OMP_NUM_THREADS=${OCR_OMP_NUM_THREADS:-1}
       - CUDA_VISIBLE_DEVICES=0
+      - MAX_CONCURRENT_TASKS=${OCR_MAX_CONCURRENT_TASKS:-24}
+      - OMP_NUM_THREADS=${OCR_OMP_NUM_THREADS:-24}
     deploy:
       resources:
         reservations:
