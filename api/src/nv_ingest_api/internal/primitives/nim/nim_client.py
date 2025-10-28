@@ -24,7 +24,7 @@ from nv_ingest_api.util.string_processing import generate_url
 
 
 CUDA_ERROR_REGEX = re.compile(
-    r"(illegal memory access|invalid argument|failed to (copy|load|perform) .*: .*|TritonModelException: failed to copy data: .*)",  # noqa: E501
+    r"(illegal memory access|illegal instruction|invalid argument|failed to (copy|load|perform) .*: .*|TritonModelException: failed to copy data: .*)",  # noqa: E501
     re.IGNORECASE,
 )
 
