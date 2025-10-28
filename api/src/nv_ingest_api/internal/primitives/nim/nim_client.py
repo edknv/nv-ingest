@@ -351,8 +351,10 @@ class NimClient:
             except grpcclient.InferenceServerException as e:
                 status = e.status()
                 if (
-                    status == "StatusCode.UNAVAILABLE" and "Exceeds maximum queue size".lower() in e.message().lower()
-                ) or CUDA_ERROR_REGEX.search(e.message()):
+                    (status == "StatusCode.UNAVAILABLE" and "Exceeds maximum queue size".lower() in e.message().lower())
+                    or CUDA_ERROR_REGEX.search(e.message())
+                    or ("AssertionError: <EMPTY MESSAGE>".lower() in e.message().lower())
+                ):
                     retries_429 += 1
                     logger.warning(
                         f"Received gRPC {status} for model '{model_name}'. "
