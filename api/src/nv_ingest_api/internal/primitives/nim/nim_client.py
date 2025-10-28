@@ -5,6 +5,7 @@
 import hashlib
 import json
 import logging
+import re
 import threading
 import time
 import queue
@@ -21,6 +22,11 @@ import tritonclient.grpc as grpcclient
 from nv_ingest_api.internal.primitives.tracing.tagging import traceable_func
 from nv_ingest_api.util.string_processing import generate_url
 
+
+CUDA_ERROR_REGEX = re.compile(
+    r"(illegal memory access|invalid argument|failed to (copy|load|perform) .*: .*|TritonModelException: failed to copy data: .*)",  # noqa: E501
+    re.IGNORECASE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -326,6 +332,7 @@ class NimClient:
         base_delay = 0.5
         attempt = 0
         retries_429 = 0
+        model_reload_triggered = False
         max_grpc_retries = self.max_429_retries
 
         while attempt < self.max_retries:
@@ -343,7 +350,9 @@ class NimClient:
 
             except grpcclient.InferenceServerException as e:
                 status = e.status()
-                if status == "StatusCode.UNAVAILABLE" and "Exceeds maximum queue size".lower() in e.message().lower():
+                if (
+                    status == "StatusCode.UNAVAILABLE" and "Exceeds maximum queue size".lower() in e.message().lower()
+                ) or CUDA_ERROR_REGEX.search(e.message()):
                     retries_429 += 1
                     logger.warning(
                         f"Received gRPC {status} for model '{model_name}'. "
@@ -356,6 +365,24 @@ class NimClient:
                     backoff_time = base_delay * (2**retries_429)
                     time.sleep(backoff_time)
                     continue
+
+                    if (not model_reload_triggered) and CUDA_ERROR_REGEX.search(e.message()):
+                        try:
+                            logger.info(f"Attempting to reload model '{model_name}' due to '{e.message()}'")
+                            model_index = grpcclient.get_model_repository_index()
+                            # Unload the models
+                            for model in model_index:
+                                grpcclient.unload_model(model["name"])
+                            logger.info(f"Model '{model_name}' unloaded successfully.")
+                            # Now load the models
+                            for model in model_index:
+                                grpcclient.load_model(model["name"])
+                            logger.info(f"Model '{model_name}' reloaded successfully.")
+                        except grpcclient.InferenceServerException as reload_e:
+                            logger.error(f"Failed to reload model '{model_name}': {reload_e}")
+                            raise
+
+                        model_reload_triggered = True
 
                 else:
                     # For other server-side errors (e.g., INVALID_ARGUMENT, NOT_FOUND),
