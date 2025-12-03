@@ -732,7 +732,6 @@ def scale_numpy_image(
     """
     # Apply scaling using OpenCV if specified
     # Using PIL for scaling as CV2 seems to lead to different results
-    # TODO: Remove when we move to YOLOX Ensemble Models
     if scale_tuple:
         image = Image.fromarray(img_arr)
         image.thumbnail(scale_tuple, interpolation)

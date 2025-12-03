@@ -27,8 +27,6 @@ import pypdfium2 as libpdfium
 from nv_ingest_api.internal.enums.common import ContentTypeEnum
 from nv_ingest_api.internal.primitives.nim.default_values import YOLOX_MAX_BATCH_SIZE
 from nv_ingest_api.internal.primitives.nim.model_interface.yolox import (
-    YOLOX_PAGE_IMAGE_PREPROC_WIDTH,
-    YOLOX_PAGE_IMAGE_PREPROC_HEIGHT,
     YoloxPageElementsModelInterface,
     YOLOX_PAGE_IMAGE_FORMAT,
 )
@@ -574,8 +572,6 @@ def pdfium_extractor(
             if extraction_needed_for_text or extraction_needed_for_structured:
                 image, padding_offsets = pdfium_pages_to_numpy(
                     [page],
-                    scale_tuple=(YOLOX_PAGE_IMAGE_PREPROC_WIDTH, YOLOX_PAGE_IMAGE_PREPROC_HEIGHT),
-                    padding_tuple=(YOLOX_PAGE_IMAGE_PREPROC_WIDTH, YOLOX_PAGE_IMAGE_PREPROC_HEIGHT),
                     trace_info=execution_trace_log,
                 )
                 pages_for_extractions.append((page_idx, image[0], padding_offsets[0]))
