@@ -317,25 +317,27 @@ def pad_image(
     """
     height, width = array.shape[:2]
 
-    # Determine final canvas size (may be equal to original if target is smaller)
-    final_height = max(height, target_height)
-    final_width = max(width, target_width)
-
-    # Create the canvas and place the original image on it
-    canvas = background_color * np.ones((final_height, final_width, array.shape[2]), dtype=dtype)
-
-    # Determine the padding needed, if any, while ensuring no padding is applied if the target is smaller
+    # Calculate padding amounts based on mode
     if how == "center":
-        pad_height = max((target_height - height) // 2, 0)
-        pad_width = max((target_width - width) // 2, 0)
-
-        canvas[pad_height : pad_height + height, pad_width : pad_width + width] = array  # noqa: E203
+        pad_top = max((target_height - height) // 2, 0)
+        pad_bottom = max(target_height - height - pad_top, 0)
+        pad_left = max((target_width - width) // 2, 0)
+        pad_right = max(target_width - width - pad_left, 0)
     elif how == "bottom_right":
-        pad_height, pad_width = 0, 0
+        pad_top = 0
+        pad_bottom = max(target_height - height, 0)
+        pad_left = 0
+        pad_right = max(target_width - width, 0)
 
-        canvas[:height, :width] = array  # noqa: E203
+    # Use np.pad for efficient padding
+    padded = np.pad(
+        array.astype(dtype),
+        ((pad_top, pad_bottom), (pad_left, pad_right), (0, 0)),
+        mode="constant",
+        constant_values=background_color,
+    )
 
-    return canvas, (pad_width, pad_height)
+    return padded, (pad_left, pad_top)
 
 
 def check_numpy_image_size(image: np.ndarray, min_height: int, min_width: int) -> bool:
