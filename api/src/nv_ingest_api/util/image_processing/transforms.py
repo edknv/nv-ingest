@@ -317,6 +317,10 @@ def pad_image(
     """
     height, width = array.shape[:2]
 
+    # Early return if no padding needed
+    if target_height <= height and target_width <= width:
+        return array.astype(dtype), (0, 0)
+
     # Calculate padding amounts based on mode
     if how == "center":
         pad_top = max((target_height - height) // 2, 0)
@@ -329,12 +333,15 @@ def pad_image(
         pad_left = 0
         pad_right = max(target_width - width, 0)
 
-    # Use np.pad for efficient padding
-    padded = np.pad(
+    # Use cv2.copyMakeBorder for optimized padding
+    padded = cv2.copyMakeBorder(
         array.astype(dtype),
-        ((pad_top, pad_bottom), (pad_left, pad_right), (0, 0)),
-        mode="constant",
-        constant_values=background_color,
+        pad_top,
+        pad_bottom,
+        pad_left,
+        pad_right,
+        cv2.BORDER_CONSTANT,
+        value=background_color,
     )
 
     return padded, (pad_left, pad_top)
