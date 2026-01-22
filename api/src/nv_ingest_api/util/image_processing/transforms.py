@@ -14,6 +14,13 @@ from io import BytesIO
 from PIL import Image
 
 from nv_ingest_api.util.converters import bytetools
+from nv_ingest_api.util.image_processing.gpu_utils import (
+    GPU_AVAILABLE,
+    pad_image_gpu,
+    resize_image_gpu,
+    convert_rgb_to_bgr_gpu,
+    rgba_to_rgb_gpu,
+)
 
 # Configure OpenCV to use a single thread for image processing
 cv2.setNumThreads(1)
@@ -30,7 +37,7 @@ def _resize_image_opencv(
     array: np.ndarray, target_size: Tuple[int, int], interpolation=cv2.INTER_LANCZOS4
 ) -> np.ndarray:
     """
-    Resizes a NumPy array representing an image using OpenCV.
+    Resizes a NumPy array representing an image using OpenCV or GPU acceleration.
 
     Parameters
     ----------
@@ -40,12 +47,16 @@ def _resize_image_opencv(
         The target size as (width, height).
     interpolation : int, optional
         OpenCV interpolation method. Defaults to cv2.INTER_LANCZOS4.
+        Note: When GPU acceleration is used, this parameter is ignored
+        and bilinear interpolation is used instead.
 
     Returns
     -------
     np.ndarray
         The resized image as a NumPy array.
     """
+    if GPU_AVAILABLE:
+        return resize_image_gpu(array, target_size)
     return cv2.resize(array, target_size, interpolation=interpolation)
 
 
@@ -56,6 +67,8 @@ def rgba_to_rgb_white_bg(rgba_image):
     This function properly handles transparency by alpha-blending transparent
     and semi-transparent pixels with a white background, producing visually
     accurate results that match how the image would appear when displayed.
+
+    Uses GPU acceleration when available.
 
     Parameters
     ----------
@@ -95,6 +108,11 @@ def rgba_to_rgb_white_bg(rgba_image):
     >>> rgb_float = rgba_to_rgb_white_bg(rgba_float)
     >>> print(rgb_float.dtype)  # uint8
     """
+    # Use GPU acceleration if available
+    if GPU_AVAILABLE:
+        return rgba_to_rgb_gpu(rgba_image, background_color=255)
+
+    # CPU fallback
     # Extract RGB and alpha channels
     rgb = rgba_image[:, :, :3]  # RGB channels (H, W, 3)
     alpha = rgba_image[:, :, 3:4]  # Alpha channel (H, W, 1)
@@ -317,25 +335,30 @@ def pad_image(
     """
     height, width = array.shape[:2]
 
-    # Determine final canvas size (may be equal to original if target is smaller)
-    final_height = max(height, target_height)
-    final_width = max(width, target_width)
+    # Only convert dtype if necessary
+    if array.dtype != dtype:
+        array = array.astype(dtype)
 
-    # Create the canvas and place the original image on it
-    canvas = background_color * np.ones((final_height, final_width, array.shape[2]), dtype=dtype)
+    # Early return if no padding needed
+    if target_height <= height and target_width <= width:
+        return array, (0, 0)
 
-    # Determine the padding needed, if any, while ensuring no padding is applied if the target is smaller
+    # Calculate padding amounts based on mode
     if how == "center":
-        pad_height = max((target_height - height) // 2, 0)
-        pad_width = max((target_width - width) // 2, 0)
-
-        canvas[pad_height : pad_height + height, pad_width : pad_width + width] = array  # noqa: E203
+        pad_top = max((target_height - height) // 2, 0)
+        pad_bottom = max(target_height - height - pad_top, 0)
+        pad_left = max((target_width - width) // 2, 0)
+        pad_right = max(target_width - width - pad_left, 0)
     elif how == "bottom_right":
-        pad_height, pad_width = 0, 0
+        pad_top = 0
+        pad_bottom = max(target_height - height, 0)
+        pad_left = 0
+        pad_right = max(target_width - width, 0)
 
-        canvas[:height, :width] = array  # noqa: E203
+    # Use GPU acceleration if available
+    padded = pad_image_gpu(array, pad_top, pad_bottom, pad_left, pad_right, background_color)
 
-    return canvas, (pad_width, pad_height)
+    return padded, (pad_left, pad_top)
 
 
 def check_numpy_image_size(image: np.ndarray, min_height: int, min_width: int) -> bool:
@@ -457,7 +480,7 @@ def normalize_image(
     return output_array
 
 
-def _preprocess_numpy_array(array: np.ndarray) -> np.ndarray:
+def _preprocess_numpy_array(array: np.ndarray, color_space: str = "RGB") -> np.ndarray:
     """
     Preprocesses a NumPy array for image encoding by ensuring proper format and data type.
     Also handles color space conversion for OpenCV encoding.
@@ -466,6 +489,9 @@ def _preprocess_numpy_array(array: np.ndarray) -> np.ndarray:
     ----------
     array : np.ndarray
         The input image as a NumPy array.
+    color_space : str, optional
+        The color space of the input array. Use "RGB" (default) if the array is in RGB format,
+        or "BGR" if already in BGR format to skip conversion.
 
     Returns
     -------
@@ -477,20 +503,22 @@ def _preprocess_numpy_array(array: np.ndarray) -> np.ndarray:
     ValueError
         If the input array cannot be converted into a valid image format.
     """
-    # Check if the array is valid and can be converted to an image
     try:
         # If the array represents a grayscale image, drop the redundant axis in
         # (h, w, 1). cv2 expects (h, w) for grayscale.
         if array.ndim == 3 and array.shape[2] == 1:
             array = np.squeeze(array, axis=2)
 
-        # Ensure uint8 data type
-        processed_array = array.astype(np.uint8)
+        # Only convert dtype if necessary to avoid unnecessary copy
+        if array.dtype != np.uint8:
+            processed_array = array.astype(np.uint8)
+        else:
+            processed_array = array
 
         # OpenCV uses BGR color order, so convert RGB to BGR if needed
-        if processed_array.ndim == 3 and processed_array.shape[2] == 3:
-            # Assume input is RGB and convert to BGR for OpenCV
-            processed_array = cv2.cvtColor(processed_array, cv2.COLOR_RGB2BGR)
+        if color_space == "RGB" and processed_array.ndim == 3 and processed_array.shape[2] == 3:
+            # Use GPU acceleration if available
+            processed_array = convert_rgb_to_bgr_gpu(processed_array)
 
         return processed_array
     except Exception as e:
@@ -583,7 +611,7 @@ def numpy_to_base64_jpeg(array: np.ndarray, quality: int = 100) -> str:
     return base64_img
 
 
-def numpy_to_base64(array: np.ndarray, format: str = "PNG", **kwargs) -> str:
+def numpy_to_base64(array: np.ndarray, format: str = "PNG", color_space: str = "RGB", **kwargs) -> str:
     """
     Converts a NumPy array representing an image to a base64-encoded string.
 
@@ -599,6 +627,9 @@ def numpy_to_base64(array: np.ndarray, format: str = "PNG", **kwargs) -> str:
     format : str, optional
         The image format to use for encoding. Supported formats are "PNG" and "JPEG".
         Defaults to "PNG".
+    color_space : str, optional
+        The color space of the input array. Use "RGB" (default) if the array is in RGB format,
+        or "BGR" if already in BGR format to skip color conversion.
     **kwargs
         Additional keyword arguments passed to the format-specific encoding function.
         For JPEG: quality (int, default=100) - JPEG quality (1-100).
@@ -627,7 +658,7 @@ def numpy_to_base64(array: np.ndarray, format: str = "PNG", **kwargs) -> str:
     True
     """
     # Centralized preprocessing of the numpy array
-    processed_array = _preprocess_numpy_array(array)
+    processed_array = _preprocess_numpy_array(array, color_space=color_space)
 
     # Quick format normalization
     format = format.upper().strip()

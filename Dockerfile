@@ -183,6 +183,19 @@ RUN --mount=type=cache,target=/opt/conda/pkgs\
     && pip install ./api/dist/*.whl \
     && pip install ./client/dist/*.whl
 
+# Install CUDA 12 toolkit components for CuPy JIT compilation
+# cuda-nvcc: compiler, cuda-nvrtc: runtime compilation
+# cuda-cudart-dev: runtime headers, cuda-cccl: C++ core libraries with cuda_fp16.h
+# Must match CUDA 12 for cupy-cuda12x compatibility
+RUN --mount=type=cache,target=/opt/conda/pkgs \
+    --mount=type=cache,target=/root/.cache/pip \
+    source activate nv_ingest_runtime \
+    && mamba install -y -c nvidia "cuda-nvcc>=12,<13" "cuda-nvrtc>=12,<13" "cuda-cudart-dev>=12,<13" "cuda-cccl>=12,<13" \
+    && pip uninstall -y cupy cupy-cuda11x cupy-cuda12x 2>/dev/null || true \
+    && conda uninstall -y cupy --force 2>/dev/null || true \
+    && pip install cupy-cuda12x>=13.0.0 \
+    && rm -rf /opt/conda/envs/nv_ingest_runtime/include \
+    && ln -s /opt/conda/envs/nv_ingest_runtime/targets/x86_64-linux/include /opt/conda/envs/nv_ingest_runtime/include
 
 RUN rm -rf src
 

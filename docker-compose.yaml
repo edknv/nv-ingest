@@ -19,7 +19,8 @@ services:
       - NIM_HTTP_API_PORT=8000
       - NIM_TRITON_LOG_VERBOSE=1
       - NIM_TRITON_RATE_LIMIT=3
-      - NGC_API_KEY=${NIM_NGC_API_KEY:-${NGC_API_KEY:-ngcapikey}}
+        #- NGC_API_KEY=${NIM_NGC_API_KEY:-${NGC_API_KEY:-ngcapikey}}
+      - NGC_API_KEY=${STAGING_NIM_NGC_API_KEY}
       - CUDA_VISIBLE_DEVICES=0
       - NIM_TRITON_MAX_BATCH_SIZE=${PAGE_ELEMENTS_BATCH_SIZE:-32}
       - NIM_TRITON_CUDA_MEMORY_POOL_MB=${PAGE_ELEMENTS_CUDA_MEMORY_POOL_MB:-2048}
@@ -56,7 +57,8 @@ services:
       - NIM_HTTP_API_PORT=8000
       - NIM_TRITON_LOG_VERBOSE=1
       - NIM_TRITON_RATE_LIMIT=3
-      - NGC_API_KEY=${NIM_NGC_API_KEY:-${NGC_API_KEY:-ngcapikey}}
+        #- NGC_API_KEY=${NIM_NGC_API_KEY:-${NGC_API_KEY:-ngcapikey}}
+      - NGC_API_KEY=${STAGING_NIM_NGC_API_KEY}
       - CUDA_VISIBLE_DEVICES=0
       - NIM_TRITON_MAX_BATCH_SIZE=${GRAPHIC_ELEMENTS_BATCH_SIZE:-32}
       - NIM_TRITON_CUDA_MEMORY_POOL_MB=${GRAPHIC_ELEMENTS_CUDA_MEMORY_POOL_MB:-2048}
@@ -81,7 +83,8 @@ services:
       - NIM_HTTP_API_PORT=8000
       - NIM_TRITON_LOG_VERBOSE=1
       - NIM_TRITON_RATE_LIMIT=3
-      - NGC_API_KEY=${NIM_NGC_API_KEY:-${NGC_API_KEY:-ngcapikey}}
+        #- NGC_API_KEY=${NIM_NGC_API_KEY:-${NGC_API_KEY:-ngcapikey}}
+      - NGC_API_KEY=${STAGING_NIM_NGC_API_KEY}
       - CUDA_VISIBLE_DEVICES=0
       - NIM_TRITON_MAX_BATCH_SIZE=${TABLE_STRUCTURE_BATCH_SIZE:-32}
       - NIM_TRITON_CUDA_MEMORY_POOL_MB=${TABLE_STRUCTURE_CUDA_MEMORY_POOL_MB:-2048}
@@ -131,16 +134,15 @@ services:
       - CUDA_VISIBLE_DEVICES=0
       - NIM_HTTP_API_PORT=8000
       - NIM_TRITON_LOG_VERBOSE=1
-      - NGC_API_KEY=${NIM_NGC_API_KEY:-${NGC_API_KEY:-ngcapikey}}
+        #- NGC_API_KEY=${NIM_NGC_API_KEY:-${NGC_API_KEY:-ngcapikey}}
+      - NGC_API_KEY=${STAGING_NIM_NGC_API_KEY}
       - OMP_NUM_THREADS=1
-      # NOTE: NIM_TRITON_PERFORMANCE_MODE does not work for llama-3.2-nemoretriever-1b-vlm-embed-v1 and must be commented out.
-      - NIM_TRITON_PERFORMANCE_MODE=throughput
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["0"]
+              device_ids: ["1"]
               capabilities: [gpu]
     runtime: nvidia
 
@@ -232,7 +234,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["0"]
+              device_ids: ["1"]
               capabilities: [gpu]
     runtime: nvidia
     profiles:
@@ -262,25 +264,44 @@ services:
       - "8265:8265"
     cap_add:
       - sys_nice
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${NV_INGEST_GPU_DEVICE:-0}"]
+              capabilities: [gpu]
+    runtime: nvidia
     environment:
       - ARROW_DEFAULT_MEMORY_POOL=system
       - OMP_NUM_THREADS=1
       - AUDIO_GRPC_ENDPOINT=audio:50051
       - AUDIO_INFER_PROTOCOL=grpc
-      - CUDA_VISIBLE_DEVICES=-1
+      - CUDA_VISIBLE_DEVICES=${NV_INGEST_GPU_DEVICE:-0}
       # Optional: Load custom pipeline YAML (uncomment and mount ./config volume above)
       #- INGEST_CONFIG_PATH=/workspace/config/custom_summarization_pipeline.yaml
       - MAX_INGEST_PROCESS_WORKERS=${MAX_INGEST_PROCESS_WORKERS:-16}
       - EMBEDDING_NIM_ENDPOINT=${EMBEDDING_NIM_ENDPOINT:-http://embedding:8000/v1}
-      - EMBEDDING_NIM_MODEL_NAME=${EMBEDDING_NIM_MODEL_NAME:-nvidia/llama-3.2-nv-embedqa-1b-v2}
+        #- EMBEDDING_NIM_MODEL_NAME=${EMBEDDING_NIM_MODEL_NAME:-nvidia/llama-3.2-nv-embedqa-1b-v2}
+      - EMBEDDING_NIM_MODEL_NAME=${EMBEDDING_NIM_MODEL_NAME:-nvidia/llama-nemotron-embed-vl-1b-v2}
       - INGEST_LOG_LEVEL=DEFAULT
       - INGEST_RAY_LOG_LEVEL=DEVELOPMENT
       - INGEST_DYNAMIC_MEMORY_THRESHOLD=0.80
       - INGEST_DISABLE_DYNAMIC_SCALING=${INGEST_DISABLE_DYNAMIC_SCALING:-false}
       # Ray internals configuration
-      - RAY_num_grpc_threads=1
-      - RAY_num_server_call_thread=1
-      - RAY_worker_num_grpc_internal_threads=1
+      - RAY_num_grpc_threads=4
+      - RAY_num_server_call_thread=4
+      - RAY_worker_num_grpc_internal_threads=4
+      # Prevent Ray from modifying CUDA_VISIBLE_DEVICES for workers
+      # This allows CuPy GPU acceleration in worker processes
+      - RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES=1
+      # CUDA path for CuPy JIT compilation (points to conda env with cuda-nvcc)
+      - CUDA_PATH=/opt/conda/envs/nv_ingest_runtime
+      # Add CUDA libraries to library path for CuPy JIT compilation
+      - LD_LIBRARY_PATH=/opt/conda/envs/nv_ingest_runtime/lib:/opt/conda/envs/nv_ingest_runtime/lib/stubs:/opt/conda/envs/nv_ingest_runtime/targets/x86_64-linux/lib
+      # Additional include path for CuPy CUDA headers
+      - CPLUS_INCLUDE_PATH=/opt/conda/envs/nv_ingest_runtime/targets/x86_64-linux/include
+      - C_INCLUDE_PATH=/opt/conda/envs/nv_ingest_runtime/targets/x86_64-linux/include
       # Dynamic Memory Scaling Configuration
       # - INGEST_DISABLE_DYNAMIC_SCALING=true # Disable dynamic scaling and use static worker count
       # - INGEST_DYNAMIC_MEMORY_KP=0.2

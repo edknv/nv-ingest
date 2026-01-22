@@ -32,6 +32,11 @@ dependencies = [
     "glom",
 ]
 
+[project.optional-dependencies]
+gpu = [
+    "cupy-cuda12x>=13.0.0",
+]
+
 [project.urls]
 homepage = "https://github.com/NVIDIA/nv-ingest"
 repository = "https://github.com/NVIDIA/nv-ingest"
