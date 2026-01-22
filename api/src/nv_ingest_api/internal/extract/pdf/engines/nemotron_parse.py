@@ -517,10 +517,10 @@ def _convert_pdfium_page_to_numpy_for_parser(
 ) -> np.ndarray:
     page_images, padding_offsets = pdfium_pages_to_numpy(
         [page],
-        render_dpi=render_dpi,
         scale_tuple=scale_tuple,
         padding_tuple=padding_tuple,
         render_rev_byteorder=True,
+        render_at_target_scale=True,
     )
 
     return page_images[0], padding_offsets[0]
@@ -536,6 +536,7 @@ def _convert_pdfium_page_to_numpy_for_yolox(
         scale_tuple=scale_tuple,
         padding_tuple=padding_tuple,
         render_rev_byteorder=True,
+        render_at_target_scale=True,
     )
 
     return page_images[0], padding_offsets[0]

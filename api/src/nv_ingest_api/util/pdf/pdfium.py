@@ -132,6 +132,7 @@ def pdfium_pages_to_numpy(
     padding_tuple: Optional[Tuple[int, int]] = None,
     rotation: int = 0,
     render_rev_byteorder: bool = False,
+    render_at_target_scale: bool = False,
 ) -> tuple[list[ndarray | ndarray[Any, dtype[Any]]], list[tuple[int, int]]]:
     """
     Converts a list of PdfPage objects to a list of NumPy arrays, where each array
@@ -147,7 +148,7 @@ def pdfium_pages_to_numpy(
         A list of PdfPage objects to be rendered and converted into NumPy arrays.
     render_dpi : int, optional
         The DPI (dots per inch) at which to render the pages. Must be between 50 and 1200.
-        Defaults to 300.
+        Defaults to 300. Ignored if render_at_target_scale is True and scale_tuple is provided.
     scale_tuple : Optional[Tuple[int, int]], optional
         A tuple (width, height) to resize the rendered image to using the thumbnail approach.
         Defaults to None.
@@ -158,6 +159,11 @@ def pdfium_pages_to_numpy(
     render_rev_byteorder : bool, optional
         If True, output RGB instead of BGR byte order, avoiding the need for channel
         swapping during numpy conversion. Defaults to False.
+    render_at_target_scale : bool, optional
+        If True and scale_tuple is provided, compute the scale factor to render directly
+        at the target size, eliminating the need for post-render scaling. This is faster
+        but may produce slightly different results than rendering at high DPI and downscaling.
+        Defaults to False.
 
     Returns
     -------
@@ -176,19 +182,37 @@ def pdfium_pages_to_numpy(
     IOError
         If there is an error saving the image to disk.
     """
-    if not (50 <= render_dpi <= 1200):
+    if not render_at_target_scale and not (50 <= render_dpi <= 1200):
         raise ValueError("render_dpi must be between 50 and 1200.")
 
     images = []
     padding_offsets = []
-    scale = render_dpi / 72  # 72 DPI is the base DPI in PDFium
 
     for idx, page in enumerate(pages):
+        # Get page dimensions in points (72 DPI base)
+        page_width = page.get_width()
+        page_height = page.get_height()
+
+        # Swap dimensions if rotation is 90 or 270 degrees (output will be transposed)
+        if rotation in (90, 270):
+            page_width, page_height = page_height, page_width
+
+        # Compute render scale
+        if render_at_target_scale and scale_tuple:
+            # Compute scale to render directly at target size (mimics PIL thumbnail behavior)
+            target_width, target_height = scale_tuple
+            scale_x = target_width / page_width
+            scale_y = target_height / page_height
+            scale = min(scale_x, scale_y)  # Preserve aspect ratio, fit within bounds
+        else:
+            scale = render_dpi / 72  # 72 DPI is the base DPI in PDFium
+
         # Render the page as a bitmap with the specified scale and rotation
         page_bitmap = page.render(scale=scale, rotation=rotation, rev_byteorder=render_rev_byteorder)
         img_arr = convert_bitmap_to_corrected_numpy(page_bitmap, skip_channel_swap=render_rev_byteorder)
-        # Apply scaling using the thumbnail approach if specified
-        if scale_tuple:
+
+        # Apply scaling using the thumbnail approach if specified (skip if already rendered at target scale)
+        if scale_tuple and not render_at_target_scale:
             img_arr = scale_numpy_image(img_arr, scale_tuple)
         # Apply padding if specified
         if padding_tuple:
@@ -399,6 +423,7 @@ def extract_image_like_objects_from_pdfium_page(page, merge=True, **kwargs):
             render_dpi=72,  # dpi = 72 is equivalent to scale = 1.
             rotation=rotation,  # Without rotation, coordinates from page.get_pos() will not match.
             render_rev_byteorder=True,
+            render_at_target_scale=True,
         )
         image_bboxes = extract_merged_images_from_pdfium_page(page, merge=merge, **kwargs)
         shape_bboxes = extract_merged_shapes_from_pdfium_page(page, merge=merge, **kwargs)
