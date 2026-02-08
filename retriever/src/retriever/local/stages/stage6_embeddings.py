@@ -16,11 +16,7 @@ from tqdm import tqdm
 
 from ._io import coerce_embedding_to_vector, iter_images, normalize_l2, read_json
 
-# import slimgest.model.local.llama_nemotron_embed_1b_v2_embedder as llama_nemotron_embed_1b_v2
 import numpy as np
-
-# from slimgest.model.local.llama_nemotron_embed_1b_v2_embedder import LlamaNemotronEmbed1BV2Embedder
-import llama_nemotron_embed_1b_v2
 import torch.nn.functional as F
 
 install(show_locals=False)
@@ -188,17 +184,18 @@ def run(
     embed_model = None
     tokenizer = None
     if not embedding_endpoint:
+        from transformers import AutoModel, AutoTokenizer
+
         console.print("[cyan]Loading local embedding model...[/cyan]")
-        # IMPORTANT: force_download=True will re-download huge weights every run. Keep it False.
-        embed_model = llama_nemotron_embed_1b_v2.load_model(
-            device=str(dev),
+        embed_model = AutoModel.from_pretrained(
+            "nvidia/llama-nemotron-embed-1b-v2",
             trust_remote_code=True,
             cache_dir=str(hf_cache_dir),
-            force_download=False,
-        )
-        tokenizer = llama_nemotron_embed_1b_v2.load_tokenizer(
+        ).to(dev)
+        embed_model.eval()
+        tokenizer = AutoTokenizer.from_pretrained(
+            "nvidia/llama-nemotron-embed-1b-v2",
             cache_dir=str(hf_cache_dir),
-            force_download=False,
         )
     else:
         console.print(f"[cyan]Using remote embedding endpoint: {embedding_endpoint}[/cyan]")

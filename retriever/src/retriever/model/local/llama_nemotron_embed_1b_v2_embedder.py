@@ -30,14 +30,19 @@ class LlamaNemotronEmbed1BV2Embedder:
         self._model = None
         self._device = None
 
-        import llama_nemotron_embed_1b_v2
+        from transformers import AutoModel, AutoTokenizer
 
         dev = torch.device(self.device or ("cuda" if torch.cuda.is_available() else "cpu"))
         hf_cache_dir = self.hf_cache_dir or str(Path.home() / ".cache" / "huggingface")
-        self._tokenizer = llama_nemotron_embed_1b_v2.load_tokenizer(cache_dir=hf_cache_dir, force_download=False)
-        self._model = llama_nemotron_embed_1b_v2.load_model(
-            device=str(dev), trust_remote_code=True, cache_dir=hf_cache_dir, force_download=False
+        self._tokenizer = AutoTokenizer.from_pretrained(
+            "nvidia/llama-nemotron-embed-1b-v2",
+            cache_dir=hf_cache_dir,
         )
+        self._model = AutoModel.from_pretrained(
+            "nvidia/llama-nemotron-embed-1b-v2",
+            trust_remote_code=True,
+            cache_dir=hf_cache_dir,
+        ).to(dev)
         self._model.eval()
         self._device = dev
 

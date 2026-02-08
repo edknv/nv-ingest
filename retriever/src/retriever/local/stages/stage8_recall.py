@@ -13,10 +13,6 @@ import pandas as pd
 import os
 import torch.nn.functional as F
 
-import llama_nemotron_embed_1b_v2
-
-# from slimgest.model.local.llama_nemotron_embed_1b_v2_embedder import LlamaNemotronEmbed1BV2Embedder
-# import slimgest.model.local.llama_nemotron_embed_1b_v2_embedder as llama_nemotron_embed_1b_v2
 from retriever.local.vdb.lancedb import LanceDB
 import lancedb
 
@@ -149,16 +145,17 @@ def run(
     # Ensure output directory exists
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # IMPORTANT: force_download=True will re-download huge weights every run. Keep it False.
-    embed_model = llama_nemotron_embed_1b_v2.load_model(
-        device=device,
+    from transformers import AutoModel, AutoTokenizer
+
+    embed_model = AutoModel.from_pretrained(
+        "nvidia/llama-nemotron-embed-1b-v2",
         trust_remote_code=True,
         cache_dir=str(hf_cache_dir),
-        force_download=False,
-    )
-    tokenizer = llama_nemotron_embed_1b_v2.load_tokenizer(
+    ).to(device)
+    embed_model.eval()
+    tokenizer = AutoTokenizer.from_pretrained(
+        "nvidia/llama-nemotron-embed-1b-v2",
         cache_dir=str(hf_cache_dir),
-        force_download=False,
     )
 
     db = lancedb.connect(uri="lancedb")
