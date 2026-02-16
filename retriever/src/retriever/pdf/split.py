@@ -45,7 +45,9 @@ def _split_pdf_to_single_page_bytes(pdf_binary: Any) -> List[bytes]:
     Split a PDF into single-page PDFs (raw bytes) using pypdfium2.
     """
     if pdfium is None:  # pragma: no cover
-        raise ImportError("pypdfium2 is required for PDF splitting but could not be imported.") from _PDFIUM_IMPORT_ERROR
+        raise ImportError(
+            "pypdfium2 is required for PDF splitting but could not be imported."
+        ) from _PDFIUM_IMPORT_ERROR
 
     try:
         doc = pdfium.PdfDocument(pdf_binary)
@@ -93,9 +95,9 @@ def split_pdf_batch(pdf_batch: Any, **kwargs: Any) -> pd.DataFrame:
     end_page = kwargs.get("end_page", None)
 
     out_rows: List[Dict[str, Any]] = []
-    for _, row in pdf_batch.iterrows():
-        pdf_path = row["path"] if "path" in pdf_batch.columns else None
-        pdf_bytes = row["bytes"] if "bytes" in pdf_batch.columns else None
+    for row in pdf_batch.itertuples(index=False):
+        pdf_path = getattr(row, "path", None) if "path" in pdf_batch.columns else None
+        pdf_bytes = getattr(row, "bytes", None) if "bytes" in pdf_batch.columns else None
 
         try:
             if not isinstance(pdf_bytes, (bytes, bytearray, memoryview)):
@@ -154,4 +156,3 @@ def split_pdf(pdf_ds: Any, **kwargs: Any) -> Any:
 
     # Note: returning a Dataset here creates the new dataset representing pages.
     return pdf_ds.map_batches(PDFSplitActor(**kwargs), batch_format="pandas")
-

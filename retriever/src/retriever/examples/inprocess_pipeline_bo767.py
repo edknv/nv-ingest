@@ -4,8 +4,7 @@ import json
 from pathlib import Path
 from retriever.recall.core import RecallConfig, retrieve_and_score
 
-
-os.environ["NEMOTRON_OCR_MODEL_DIR"] = "/work/git/nv-ingest/nemotron-ocr-v1"
+os.environ["NEMOTRON_OCR_MODEL_DIR"] = "/work/git/slimgest/models/nemotron-ocr-v1"
 
 ingestor = create_ingestor(run_mode="inprocess")
 
@@ -13,25 +12,23 @@ LANCEDB_URI = "lancedb"
 LANCEDB_TABLE = "nv-ingest"
 
 ingestor = (
-    ingestor
-    # .files("/work/data/jp20/*.pdf")
-    .files("/work/data/jp20/1015168.pdf")
+    ingestor.files("/work/data/bo767/*.pdf")
     .extract(
-        extract_text=False,
+        method="pdfium",
+        extract_text=True,
         extract_tables=True,
         extract_charts=True,
-        extract_infographics=True,
+        extract_infographics=False,
+        extract_images=False,
     )
     .embed(model_name="nemo_retriever_v1")
-    .vdb_upload(lancedb_uri=LANCEDB_URI, table_name=LANCEDB_TABLE, overwrite=True, create_index=True)
-    # .save_to_disk(output_directory="/home/jdyer/datasets/jp20_results_inprocess")
+    .vdb_upload(lancedb_uri=LANCEDB_URI, table_name=LANCEDB_TABLE, overwrite=False, create_index=True)
+    .save_to_disk(output_directory="/home/jdyer/datasets/jp20_results_inprocess")
 )
 
 print("Running extraction...")
-results = ingestor.ingest(show_progress=True)
+ingestor.ingest(show_progress=True)
 print("Extraction complete.")
-
-breakpoint()
 
 import lancedb
 
@@ -40,7 +37,7 @@ table = db.open_table("nv-ingest")
 unique_basenames = table.to_pandas()["pdf_basename"].unique()
 print(f"Unique basenames: {unique_basenames}")
 
-query_csv = Path("jp20_query_gt.csv")
+query_csv = Path("bo767_query_gt.csv")
 cfg = RecallConfig(
     lancedb_uri=str(LANCEDB_URI),
     lancedb_table=str(LANCEDB_TABLE),

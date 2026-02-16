@@ -33,6 +33,11 @@ class RecallConfig:
     embedding_api_key: str = ""
     top_k: int = 10
     ks: Sequence[int] = (1, 3, 5, 10)
+    # ANN search tuning (LanceDB IVF_HNSW_SQ).
+    # nprobes=0 means "search all partitions" (exhaustive); refine_factor re-ranks
+    # top candidates with full-precision vectors to eliminate SQ quantization error.
+    nprobes: int = 0
+    refine_factor: int = 10
     # Local HF knobs (only used when endpoints are missing).
     local_hf_device: Optional[str] = None
     local_hf_cache_dir: Optional[str] = None
@@ -130,11 +135,12 @@ def _embed_queries_local_hf(
     device: Optional[str],
     cache_dir: Optional[str],
     batch_size: int,
+    model_id: Optional[str] = None,
 ) -> List[List[float]]:
     # Lazy import: only load torch/HF when needed.
     from retriever.model.local.llama_nemotron_embed_1b_v2_embedder import LlamaNemotronEmbed1BV2Embedder
 
-    embedder = LlamaNemotronEmbed1BV2Embedder(device=device, hf_cache_dir=cache_dir, normalize=True)
+    embedder = LlamaNemotronEmbed1BV2Embedder(device=device, hf_cache_dir=cache_dir, normalize=True, model_id=model_id)
     vecs = embedder.embed(["query: " + q for q in queries], batch_size=int(batch_size))
     # Ensure list-of-list floats.
     return vecs.detach().to("cpu").tolist()
@@ -147,17 +153,37 @@ def _search_lancedb(
     query_vectors: List[List[float]],
     top_k: int,
     vector_column_name: str = "vector",
+    nprobes: int = 0,
+    refine_factor: int = 10,
 ) -> List[List[Dict[str, Any]]]:
     import lancedb  # type: ignore
 
     db = lancedb.connect(lancedb_uri)
     table = db.open_table(table_name)
 
+    # Determine nprobes: 0 means "search all partitions" for exhaustive ANN search.
+    # Read the actual partition count from the index so we don't hard-code it.
+    effective_nprobes = nprobes
+    if effective_nprobes <= 0:
+        try:
+            indices = table.list_indices()
+            for idx in indices:
+                np_ = getattr(idx, "num_partitions", None)
+                if np_ and int(np_) > 0:
+                    effective_nprobes = int(np_)
+                    break
+        except Exception:
+            pass
+        if effective_nprobes <= 0:
+            effective_nprobes = 16  # safe fallback matching default index config
+
     results: List[List[Dict[str, Any]]] = []
     for v in query_vectors:
         q = np.asarray(v, dtype="float32")
         hits = (
             table.search(q, vector_column_name=vector_column_name)
+            .nprobes(effective_nprobes)
+            .refine_factor(refine_factor)
             .select(["text", "metadata", "source", "_distance"])
             .limit(top_k)
             .to_list()
@@ -171,8 +197,8 @@ def _hits_to_keys(raw_hits: List[List[Dict[str, Any]]]) -> List[List[str]]:
     for hits in raw_hits:
         keys: List[str] = []
         for h in hits:
-            res = json.loads(h['metadata'])
-            source = json.loads(h['source'])
+            res = json.loads(h["metadata"])
+            source = json.loads(h["source"])
             # Prefer explicit `pdf_page` column; fall back to derived form.
             if res.get("page_number") and source.get("source_id"):
                 filename = Path(source["source_id"]).stem
@@ -191,7 +217,7 @@ def _recall_at_k(gold: List[str], retrieved: List[List[str]], k: int) -> float:
         page = g.split("_")[1]
 
         specific_page = f"{filename}_{page}"
-        entire_document = f"{filename}_-1" # This indicates that the text was retrieved from the entire document at index time and therefore the exact page is unknown but it still is a hit just with the missing metadata in the VDB
+        entire_document = f"{filename}_-1"  # This indicates that the text was retrieved from the entire document at index time and therefore the exact page is unknown but it still is a hit just with the missing metadata in the VDB
 
         if specific_page in (r[:k] if r else []):
             hits += 1
@@ -235,11 +261,16 @@ def retrieve_and_score(
             grpc=bool(use_grpc),
         )
     else:
+        # Only pass embedding_model as model_id when it looks like an HF repo
+        # (contains "/"); NIM aliases like "nemo_retriever_v1" are not valid.
+        _em = cfg.embedding_model
+        _hf_model_id = _em if (isinstance(_em, str) and "/" in _em) else None
         vectors = _embed_queries_local_hf(
             queries,
             device=cfg.local_hf_device,
             cache_dir=cfg.local_hf_cache_dir,
             batch_size=int(cfg.local_hf_batch_size),
+            model_id=_hf_model_id,
         )
     raw_hits = _search_lancedb(
         lancedb_uri=cfg.lancedb_uri,
@@ -247,6 +278,8 @@ def retrieve_and_score(
         query_vectors=vectors,
         top_k=int(cfg.top_k),
         vector_column_name=vector_column_name,
+        nprobes=int(cfg.nprobes),
+        refine_factor=int(cfg.refine_factor),
     )
     retrieved_keys = _hits_to_keys(raw_hits)
     metrics = {f"recall@{k}": _recall_at_k(gold, retrieved_keys, int(k)) for k in cfg.ks}
@@ -291,4 +324,3 @@ def evaluate_recall(
         "metrics": metrics,
         "saved": saved,
     }
-

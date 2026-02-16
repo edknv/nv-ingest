@@ -1,50 +1,66 @@
-import os
-from retriever import create_ingestor
 import json
+import os
 from pathlib import Path
+
+import ray
+from retriever import create_ingestor
 from retriever.recall.core import RecallConfig, retrieve_and_score
 
 
 os.environ["NEMOTRON_OCR_MODEL_DIR"] = "/work/git/nv-ingest/nemotron-ocr-v1"
 
-ingestor = create_ingestor(run_mode="inprocess")
+# ---------------------------------------------------------------------------
+# Diagnostic: set to a path to dump extracted text for comparison with
+# nv-ingest output.  Set to None to skip.
+# ---------------------------------------------------------------------------
+DUMP_TEXT_PATH = os.environ.get("DUMP_TEXT_PATH", None)
+
+ingestor = create_ingestor(run_mode="batch")
 
 LANCEDB_URI = "lancedb"
 LANCEDB_TABLE = "nv-ingest"
 
 ingestor = (
-    ingestor
-    # .files("/work/data/jp20/*.pdf")
-    .files("/work/data/jp20/1015168.pdf")
+    ingestor.files("/work/data/bo767/*.pdf")
     .extract(
-        extract_text=False,
+        extract_text=True,
         extract_tables=True,
         extract_charts=True,
-        extract_infographics=True,
+        extract_infographics=False,
+        # Resource tuning (auto-detected from available GPUs/CPUs if omitted):
+        # page_elements_workers=2,
+        # detect_workers=2,
+        # pdf_extract_workers=4,
+        # page_elements_batch_size=16,
+        # detect_batch_size=16,
     )
     .embed(model_name="nemo_retriever_v1")
     .vdb_upload(lancedb_uri=LANCEDB_URI, table_name=LANCEDB_TABLE, overwrite=True, create_index=True)
-    # .save_to_disk(output_directory="/home/jdyer/datasets/jp20_results_inprocess")
+    # .save_to_disk(output_directory="/tmp/bo767")
 )
 
 print("Running extraction...")
-results = ingestor.ingest(show_progress=True)
+ingestor.ingest()
 print("Extraction complete.")
 
-breakpoint()
+ray.shutdown()
+
+# ---------------------------------------------------------------------------
+# Recall calculation
+# ---------------------------------------------------------------------------
 
 import lancedb
 
-db = lancedb.connect("./lancedb")
-table = db.open_table("nv-ingest")
+db = lancedb.connect(f"./{LANCEDB_URI}")
+table = db.open_table(LANCEDB_TABLE)
+
 unique_basenames = table.to_pandas()["pdf_basename"].unique()
 print(f"Unique basenames: {unique_basenames}")
 
-query_csv = Path("jp20_query_gt.csv")
+query_csv = Path("bo767_query_gt.csv")
 cfg = RecallConfig(
     lancedb_uri=str(LANCEDB_URI),
     lancedb_table=str(LANCEDB_TABLE),
-    # Recall script falls back to local HF embeddings when endpoints are unset.
     embedding_model="nvidia/llama-3.2-nv-embedqa-1b-v2",
     top_k=10,
     ks=(1, 5, 10),
@@ -54,7 +70,6 @@ _df_query, _gold, _raw_hits, _retrieved_keys, metrics = retrieve_and_score(query
 
 
 def _gold_to_doc_page(golden_key: str) -> tuple[str, str]:
-    # Keys are expected to look like "<pdf_stem>_<page>" where pdf_stem may contain underscores.
     s = str(golden_key)
     if "_" not in s:
         return s, ""
@@ -63,11 +78,6 @@ def _gold_to_doc_page(golden_key: str) -> tuple[str, str]:
 
 
 def _is_hit_at_k(golden_key: str, retrieved_keys: list[str], k: int) -> bool:
-    """
-    Match retriever.recall.core._recall_at_k semantics:
-      - exact page hit: "<doc>_<page>"
-      - "entire document" hit: "<doc>_-1"
-    """
     doc, page = _gold_to_doc_page(golden_key)
     specific_page = f"{doc}_{page}"
     entire_document = f"{doc}_-1"
@@ -93,7 +103,7 @@ def _hit_key_and_distance(hit: dict) -> tuple[str | None, float | None]:
 
 
 print("\nPer-query retrieval details:")
-missed_gold: list[tuple[str, str]] = []  # (pdf filename, page)
+missed_gold: list[tuple[str, str]] = []
 for i, (q, g, hits) in enumerate(
     zip(
         _df_query["query"].astype(str).tolist(),
@@ -137,7 +147,6 @@ else:
         print(f"  {pdf} page {page}")
 print(f"\nTotal missed: {len(missed_unique)} / {len(_gold)}")
 
-
-print("Recall metrics (matching retriever.recall.core):")
+print("\nRecall metrics (matching retriever.recall.core):")
 for k, v in metrics.items():
     print(f"  {k}: {v:.4f}")

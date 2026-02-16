@@ -90,9 +90,7 @@ def _load_json(path: Path) -> Any:
         with path.open("r", encoding="utf-8") as f:
             return json.load(f)
     except json.JSONDecodeError as e:
-        raise typer.BadParameter(
-            f"Invalid JSON in '{path}': {e.msg} (line {e.lineno}, column {e.colno})"
-        ) from e
+        raise typer.BadParameter(f"Invalid JSON in '{path}': {e.msg} (line {e.lineno}, column {e.colno})") from e
 
 
 def _main_pdf_key(path: Path) -> str:
@@ -159,14 +157,28 @@ def _counter_from_page_elements_v3(value: Any) -> Counter[str]:
     return c
 
 
-def _count_table_regions(table_structure_v1: Any) -> int:
+def _count_table_regions(table_data: Any) -> int:
     """
-    Expected shape:
-      { "regions": [ {"label_name": "table", ...}, ... ] }
+    Count table regions from either the ``table`` column format (list of
+    OCR entries) or the legacy ``table_structure_v1`` format (dict with
+    ``regions``).
+
+    ``table`` format::
+
+        [ {"bbox_xyxy_norm": [...], "text": "..."}, ... ]
+
+    Legacy format (``table_structure_v1``)::
+
+        { "regions": [ {"label_name": "table", ...}, ... ] }
     """
-    if not isinstance(table_structure_v1, dict):
+    # New format: list of OCR entries — each entry is one table region.
+    if isinstance(table_data, list):
+        return len(table_data)
+
+    # Legacy format: dict with "regions" list.
+    if not isinstance(table_data, dict):
         return 0
-    regions = table_structure_v1.get("regions")
+    regions = table_data.get("regions")
     if not isinstance(regions, list):
         return 0
     n = 0
@@ -318,7 +330,7 @@ def _normalize_inprocess(*, path: Path) -> _NormalizedInprocess:
             page_element_counts_by_page[pn] = counts
 
         # Table regions (independent of "page elements" model)
-        table_region_counts_by_page[pn] = _count_table_regions(rec.get("table_structure_v1"))
+        table_region_counts_by_page[pn] = _count_table_regions(rec.get("table") or rec.get("table_structure_v1"))
 
     # Document text: join in ascending page order (keeps comparison stable).
     document_text = "\n\n".join(text_by_page[p] for p in sorted(text_by_page.keys())).strip()
@@ -415,9 +427,7 @@ def _compute_diff_json(
         b_n = int(inp.page_element_counts_total.get(label, 0))
         ok = a_n == b_n
         if not ok:
-            structured_mismatches.append(
-                {"subtype": st, "inprocess_label": label, "main": a_n, "inprocess": b_n}
-            )
+            structured_mismatches.append({"subtype": st, "inprocess_label": label, "main": a_n, "inprocess": b_n})
 
     # Per-page diffs (store all diffs; UI printing can truncate)
     pages = sorted(
@@ -556,9 +566,9 @@ def _render_pdf_summary(
         _fmt_counter(main_counts, subtype_keys),
         _fmt_counter(inp_counts, [_normalize_inprocess_label(SUBTYPE_TO_INPROCESS_LABEL[k]) for k in subtype_keys]),
         ok=(len(mismatch_notes) == 0),
-        note=None
-        if not mismatch_notes
-        else "; ".join(mismatch_notes[:4]) + ("; ..." if len(mismatch_notes) > 4 else ""),
+        note=(
+            None if not mismatch_notes else "; ".join(mismatch_notes[:4]) + ("; ..." if len(mismatch_notes) > 4 else "")
+        ),
     )
 
     # Table-region totals (different model, but useful sanity check)
@@ -574,13 +584,19 @@ def _render_pdf_summary(
 
     # Per-page diffs
     if show_page_diffs:
-        pages = sorted({*main.structured_counts_by_page.keys(), *inp.page_element_counts_by_page.keys(), *inp.table_region_counts_by_page.keys()})
+        pages = sorted(
+            {
+                *main.structured_counts_by_page.keys(),
+                *inp.page_element_counts_by_page.keys(),
+                *inp.table_region_counts_by_page.keys(),
+            }
+        )
         if pages:
             per_page = Table(show_header=True, header_style="bold", pad_edge=False)
             per_page.add_column("page", justify="right", no_wrap=True)
             per_page.add_column("main (tables/charts/infographics)")
             per_page.add_column("inprocess page_elements_v3 (table/chart/infographic)")
-            per_page.add_column("inprocess table_regions(table_structure_v1)")
+            per_page.add_column("inprocess table_regions(table)")
             per_page.add_column("Status", no_wrap=True)
 
             shown = 0
@@ -596,7 +612,9 @@ def _render_pdf_summary(
 
                 b_tbl = inp_c.get(_normalize_inprocess_label(SUBTYPE_TO_INPROCESS_LABEL.get("table", "table")), 0)
                 b_cht = inp_c.get(_normalize_inprocess_label(SUBTYPE_TO_INPROCESS_LABEL.get("chart", "chart")), 0)
-                b_inf = inp_c.get(_normalize_inprocess_label(SUBTYPE_TO_INPROCESS_LABEL.get("infographic", "infographic")), 0)
+                b_inf = inp_c.get(
+                    _normalize_inprocess_label(SUBTYPE_TO_INPROCESS_LABEL.get("infographic", "infographic")), 0
+                )
 
                 ok = (a_tbl == b_tbl) and (a_cht == b_cht) and (a_inf == b_inf) and (a_tbl == inp_tables)
                 if ok:
@@ -655,7 +673,7 @@ def _discover_inprocess_files(inprocess_results: Path) -> dict[str, Path]:
     """
     out: dict[str, Path] = {}
     for p in sorted(inprocess_results.glob("*.json")):
-        stem = p.name[:-len(".json")] if p.name.endswith(".json") else p.stem
+        stem = p.name[: -len(".json")] if p.name.endswith(".json") else p.stem
         parts = stem.split(".")
         # If the name matches "<pdfstem>.<timestamp>.<hash>", keep everything except the last 2 parts.
         # This is resilient to dots in the original PDF stem.
@@ -789,9 +807,13 @@ def compare_results(
             file_console.print()
 
             txt_path.write_text(file_console.export_text(), encoding="utf-8")
-            json_payload = _compute_diff_json(main=None, inp=None, missing=missing, min_text_similarity=min_text_similarity)
+            json_payload = _compute_diff_json(
+                main=None, inp=None, missing=missing, min_text_similarity=min_text_similarity
+            )
             json_payload["pdf_key"] = pdf_key
-            json_path.write_text(json.dumps(json_payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+            json_path.write_text(
+                json.dumps(json_payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8"
+            )
 
             any_diff = True
             continue
@@ -830,8 +852,12 @@ def compare_results(
         )
         txt_path.write_text(file_console.export_text(), encoding="utf-8")
 
-        json_payload = _compute_diff_json(main=main_norm, inp=inproc_norm, missing=None, min_text_similarity=min_text_similarity)
-        json_path.write_text(json.dumps(json_payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+        json_payload = _compute_diff_json(
+            main=main_norm, inp=inproc_norm, missing=None, min_text_similarity=min_text_similarity
+        )
+        json_path.write_text(
+            json.dumps(json_payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
 
     if any_diff and fail_on_diff:
         raise typer.Exit(code=1)

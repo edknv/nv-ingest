@@ -29,7 +29,6 @@ except Exception:  # pragma: no cover
     Image = None  # type: ignore[assignment]
 
 
-
 def _render_page_to_base64(page: Any, *, dpi: int = 300, image_format: str = "png") -> Dict[str, Any]:
     """
     Render a page to an image and return base64 plus minimal metadata.
@@ -116,13 +115,10 @@ def _error_record(
     This is used to prevent one PDF/page failure from aborting an entire Ray job.
     """
     return {
+        "path": source_path,
         "page_number": int(page_number),
         "text": "",
         "page_image": None,
-        "images": [],
-        "tables": [],
-        "charts": [],
-        "infographics": [],
         "metadata": {
             "has_text": False,
             "needs_ocr": False,
@@ -147,6 +143,7 @@ def _is_scanned_page(page) -> bool:
 
     return num_chars == 0 and num_images > 0
 
+
 def _extract_page_text(page) -> str:
     """
     Always extract text from the given page and return it as a raw string.
@@ -154,6 +151,7 @@ def _extract_page_text(page) -> str:
     """
     textpage = page.get_textpage()
     return textpage.get_text_bounded()
+
 
 def pdf_extraction(
     pdf_binary: Any,
@@ -166,7 +164,8 @@ def pdf_extraction(
     image_format: str = "png",
     text_extraction_method: str = "pdfium_hybrid",
     text_depth: str = "page",
-    **kwargs: Any) -> Any:
+    **kwargs: Any,
+) -> Any:
     """
     Here are the steps for pdf extraction that should be implemented:
     1. Load the pdf from the binary data using pypdfium2
@@ -184,13 +183,17 @@ def pdf_extraction(
         if pdfium is None:  # pragma: no cover
             # Best-effort: return error records for the whole batch rather than raising.
             outputs: List[Dict[str, Any]] = []
-            for _, row in pdf_binary.iterrows():
-                pdf_path = row["path"] if "path" in pdf_binary.columns else None
+            for row in pdf_binary.itertuples(index=False):
+                pdf_path = getattr(row, "path", None) if "path" in pdf_binary.columns else None
                 outputs.append(
                     _error_record(
                         source_path=str(pdf_path) if pdf_path is not None else None,
                         stage="import_pypdfium2",
-                        exc=_PDFIUM_IMPORT_ERROR if _PDFIUM_IMPORT_ERROR is not None else RuntimeError("pypdfium2 unavailable"),
+                        exc=(
+                            _PDFIUM_IMPORT_ERROR
+                            if _PDFIUM_IMPORT_ERROR is not None
+                            else RuntimeError("pypdfium2 unavailable")
+                        ),
                         page_number=0,
                         dpi=dpi,
                     )
@@ -199,10 +202,10 @@ def pdf_extraction(
 
         outputs: List[Dict[str, Any]] = []
 
-        for _, row in pdf_binary.iterrows():
-            pdf_bytes = row["bytes"] if "bytes" in pdf_binary.columns else None
-            pdf_path = row["path"] if "path" in pdf_binary.columns else None
-            page_number = int(row["page_number"]) if "page_number" in pdf_binary.columns else 1
+        for row in pdf_binary.itertuples(index=False):
+            pdf_bytes = getattr(row, "bytes", None) if "bytes" in pdf_binary.columns else None
+            pdf_path = getattr(row, "path", None) if "path" in pdf_binary.columns else None
+            page_number = int(getattr(row, "page_number", 1)) if "page_number" in pdf_binary.columns else 1
 
             try:
                 if not isinstance(pdf_bytes, (bytes, bytearray, memoryview)):
@@ -226,10 +229,14 @@ def pdf_extraction(
                     is_scanned_page = _is_scanned_page(page)
 
                     ocr_extraction_needed_for_text = extract_text and (
-                        (text_extraction_method == "pdfium_hybrid" and is_scanned_page) or text_extraction_method == "ocr"
+                        (text_extraction_method == "pdfium_hybrid" and is_scanned_page)
+                        or text_extraction_method == "ocr"
                     )
 
                     extraction_needed_for_structured = extract_tables or extract_charts or extract_infographics
+
+                    # Default to empty so scanned/OCR pages don't hit a NameError below.
+                    text = ""
 
                     # Text extraction
                     if extract_text and not ocr_extraction_needed_for_text:
@@ -242,21 +249,24 @@ def pdf_extraction(
 
                     has_text = bool(text.strip()) if extract_text else False
 
+                    extract_page_as_image = kwargs.get("extract_page_as_image", False)
                     want_any_raster = bool(
-                        extract_images or extract_tables or extract_charts or extract_infographics or ocr_extraction_needed_for_text
+                        extract_images
+                        or extract_tables
+                        or extract_charts
+                        or extract_infographics
+                        or ocr_extraction_needed_for_text
+                        or extract_page_as_image
                     )
                     render_info: Optional[Dict[str, Any]] = None
                     if want_any_raster:
                         render_info = _render_page_to_base64(page, dpi=dpi, image_format=image_format)
 
                     page_record: Dict[str, Any] = {
+                        "path": pdf_path,
                         "page_number": page_number,
                         "text": text if extract_text else "",
                         "page_image": None,
-                        "images": [],
-                        "tables": [],
-                        "charts": [],
-                        "infographics": [],
                         "metadata": {
                             "has_text": has_text,
                             "needs_ocr_for_text": ocr_extraction_needed_for_text,

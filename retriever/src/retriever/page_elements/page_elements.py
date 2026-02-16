@@ -12,6 +12,15 @@ from nemotron_page_elements_v3.utils import postprocess_preds_page_element
 import pandas as pd
 
 try:
+    from nv_ingest_api.internal.primitives.nim.model_interface.yolox import (
+        postprocess_page_elements_v3,
+        YOLOX_PAGE_V3_CLASS_LABELS,
+    )
+except ImportError:
+    postprocess_page_elements_v3 = None  # type: ignore[assignment,misc]
+    YOLOX_PAGE_V3_CLASS_LABELS = None  # type: ignore[assignment]
+
+try:
     import numpy as np
 except Exception:  # pragma: no cover
     np = None  # type: ignore[assignment]
@@ -65,11 +74,9 @@ def _ensure_chw_float_tensor(x: TensorOrArray) -> "torch.Tensor":
     if t.ndim != 3:
         raise ValueError(f"Expected CHW tensor, got shape {tuple(t.shape)}")
 
-    # Normalize dtype/range.
-    if t.dtype == torch.uint8:
-        t = t.to(dtype=torch.float32) / 255.0
-    else:
-        t = t.to(dtype=torch.float32)
+    # Keep 0-255 range: resize_pad pads with 114.0 (designed for 0-255),
+    # and YoloXWrapper.forward() handles the 0-255 → model-input conversion.
+    t = t.to(dtype=torch.float32)
 
     return t.contiguous()
 
@@ -116,13 +123,13 @@ def _decode_b64_image_to_np_array(image_b64: str) -> Tuple["np.array", Tuple[int
 
 def _labels_from_model(model: Any) -> List[str]:
     return [
-            "table",
-            "chart",
-            "title",
-            "infographic",
-            "text",
-            "header_footer",
-        ]
+        "table",
+        "chart",
+        "title",
+        "infographic",
+        "text",
+        "header_footer",
+    ]
 
 
 def _counts_by_label(detections: Sequence[Dict[str, Any]]) -> Dict[str, int]:
@@ -242,6 +249,78 @@ def _postprocess_to_per_image_detections(
     return out[: int(batch_size)]
 
 
+# -- Label mapping between retriever ("text") and API ("paragraph") --
+_RETRIEVER_LABEL_NAMES = ["table", "chart", "title", "infographic", "text", "header_footer"]
+_RETRIEVER_TO_API = {"text": "paragraph"}
+_API_TO_RETRIEVER = {"paragraph": "text"}
+
+
+def _detections_to_annotation_dict(
+    dets: List[Dict[str, Any]],
+) -> Dict[str, List[List[float]]]:
+    """Convert a list of detection dicts into the annotation_dict format expected by
+    ``postprocess_page_elements_v3``.
+
+    Each detection dict has keys ``bbox_xyxy_norm``, ``label_name``, ``score``.
+    The annotation_dict maps label names (using API naming, i.e. "paragraph") to
+    ``[[x0, y0, x1, y1, confidence], ...]``.
+    """
+    ann: Dict[str, List[List[float]]] = {}
+    for d in dets:
+        name = _RETRIEVER_TO_API.get(d["label_name"], d["label_name"])
+        bbox = list(d["bbox_xyxy_norm"])  # [x0, y0, x1, y1]
+        bbox.append(float(d["score"]) if d["score"] is not None else 0.0)
+        ann.setdefault(name, []).append(bbox)
+    return ann
+
+
+def _annotation_dict_to_detections(
+    ann_dict: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    """Convert an annotation_dict back into a list of detection dicts.
+
+    Maps API label names back to retriever names (e.g. "paragraph" -> "text")
+    and assigns integer label IDs from the retriever label order.
+    """
+    dets: List[Dict[str, Any]] = []
+    for api_name, entries in ann_dict.items():
+        retriever_name = _API_TO_RETRIEVER.get(api_name, api_name)
+        try:
+            label_id = _RETRIEVER_LABEL_NAMES.index(retriever_name)
+        except ValueError:
+            label_id = None
+        for entry in entries:
+            # entry is [x0, y0, x1, y1, confidence]
+            dets.append(
+                {
+                    "bbox_xyxy_norm": list(entry[:4]),
+                    "label": label_id,
+                    "label_name": retriever_name,
+                    "score": float(entry[4]) if len(entry) > 4 else 0.0,
+                }
+            )
+    return dets
+
+
+def _apply_page_elements_v3_postprocess(
+    dets: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Apply ``postprocess_page_elements_v3`` (box fusion, title matching,
+    expansion, overlap removal) to a single image's detection list.
+
+    Returns the original detections unchanged if the API function is unavailable.
+    """
+    if postprocess_page_elements_v3 is None or not dets:
+        return dets
+    try:
+        ann_dict = _detections_to_annotation_dict(dets)
+        labels = YOLOX_PAGE_V3_CLASS_LABELS if YOLOX_PAGE_V3_CLASS_LABELS is not None else list(ann_dict.keys())
+        result = postprocess_page_elements_v3(ann_dict, labels=labels)
+        return _annotation_dict_to_detections(result)
+    except Exception:
+        return dets
+
+
 def detect_page_elements_v3(
     pages_df: Any,
     *,
@@ -276,7 +355,6 @@ def detect_page_elements_v3(
     if inference_batch_size <= 0:
         raise ValueError("inference_batch_size must be > 0")
 
-
     # Working snippet for single image inference and debugging
     # breakpoint()
     # first_page = pages_df.iloc[0]
@@ -299,9 +377,9 @@ def detect_page_elements_v3(
 
     label_names = _labels_from_model(model)
 
-    for _, row in pages_df.iterrows():
+    for row in pages_df.itertuples(index=False):
         try:
-            b64 = row.get("page_image")["image_b64"]
+            b64 = getattr(row, "page_image")["image_b64"]
             if not b64:
                 raise ValueError("No usable image_b64 found in row.")
             t, orig_shape = _decode_b64_image_to_np_array(b64)
@@ -375,7 +453,6 @@ def detect_page_elements_v3(
                         f"Model returned {len(preds)} preds for batch size {len(pre_list)}; falling back to per-image."
                     )
         except Exception as ex:
-            print(f"Error invoking model: {ex}")
             preds_list: List[Any] = []
             for j in range(int(batch.shape[0])):
                 preds_list.append(model(batch[j : j + 1], orig_shapes[j]))
@@ -418,6 +495,8 @@ def detect_page_elements_v3(
                 batch_size=len(pre_list),
                 label_names=label_names,
             )
+            # Apply v3 postprocessing (box fusion, title matching, expansion, overlap removal)
+            per_image_dets = [_apply_page_elements_v3_postprocess(dets) for dets in per_image_dets]
             for local_i, row_i in enumerate(chunk_idx):
                 dets = per_image_dets[local_i] if local_i < len(per_image_dets) else []
                 row_payloads[row_i] = {
@@ -428,11 +507,15 @@ def detect_page_elements_v3(
         except BaseException as e:
             # If postprocess fails, attach an error but keep job alive.
             for row_i in chunk_idx:
-                row_payloads[row_i] = _error_payload(stage="postprocess", exc=e) | {"timing": {"seconds": float(elapsed)}}
+                row_payloads[row_i] = _error_payload(stage="postprocess", exc=e) | {
+                    "timing": {"seconds": float(elapsed)}
+                }
 
     out = pages_df.copy()
     out[output_column] = row_payloads
-    out[num_detections_column] = [int(len(p.get("detections") or [])) if isinstance(p, dict) else 0 for p in row_payloads]
+    out[num_detections_column] = [
+        int(len(p.get("detections") or [])) if isinstance(p, dict) else 0 for p in row_payloads
+    ]
     out[counts_by_label_column] = [
         _counts_by_label(p.get("detections") or []) if isinstance(p, dict) else {} for p in row_payloads
     ]
@@ -473,4 +556,3 @@ class PageElementDetectionActor:
                 out["page_elements_v3_counts_by_label"] = [{} for _ in range(len(out.index))]
                 return out
             return [{"page_elements_v3": _error_payload(stage="actor_call", exc=e)}]
-
