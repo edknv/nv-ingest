@@ -465,32 +465,46 @@ def ocr_page_elements(
                         elif label_name == "infographic":
                             infographic_items.append(entry)
             else:
-                for label_name, bbox, crop_array in crops:
-                    # Use word-level merging for tables to preserve cell boundaries;
-                    # paragraph-level for charts/infographics where structure matters less.
-                    ml = "word" if label_name == "table" else "paragraph"
-                    preds = model.invoke(crop_array, merge_level=ml)
-
-                    # Parse and assemble text.
-                    blocks = _parse_ocr_result(preds)
-                    if label_name == "table":
-                        text = _blocks_to_pseudo_markdown(blocks)
-                        if not text:
-                            text = _blocks_to_text(blocks)  # fallback
-                    else:
-                        text = _blocks_to_text(blocks)
-
-                    entry = {
-                        "bbox_xyxy_norm": bbox,
-                        "text": text,
-                    }
-
-                    if label_name == "table":
-                        table_items.append(entry)
-                    elif label_name == "chart":
-                        chart_items.append(entry)
-                    elif label_name == "infographic":
-                        infographic_items.append(entry)
+                if crops and hasattr(model, "invoke_batch"):
+                    # Batched path: run all crops through a single forward pass.
+                    crop_arrays = [c[2] for c in crops]
+                    merge_lvls = [
+                        "word" if c[0] == "table" else "paragraph" for c in crops
+                    ]
+                    batch_preds = model.invoke_batch(crop_arrays, merge_lvls)
+                    for (label_name, bbox, _), preds in zip(crops, batch_preds):
+                        blocks = _parse_ocr_result(preds)
+                        if label_name == "table":
+                            text = _blocks_to_pseudo_markdown(blocks)
+                            if not text:
+                                text = _blocks_to_text(blocks)
+                        else:
+                            text = _blocks_to_text(blocks)
+                        entry = {"bbox_xyxy_norm": bbox, "text": text}
+                        if label_name == "table":
+                            table_items.append(entry)
+                        elif label_name == "chart":
+                            chart_items.append(entry)
+                        elif label_name == "infographic":
+                            infographic_items.append(entry)
+                else:
+                    for label_name, bbox, crop_array in crops:
+                        ml = "word" if label_name == "table" else "paragraph"
+                        preds = model.invoke(crop_array, merge_level=ml)
+                        blocks = _parse_ocr_result(preds)
+                        if label_name == "table":
+                            text = _blocks_to_pseudo_markdown(blocks)
+                            if not text:
+                                text = _blocks_to_text(blocks)
+                        else:
+                            text = _blocks_to_text(blocks)
+                        entry = {"bbox_xyxy_norm": bbox, "text": text}
+                        if label_name == "table":
+                            table_items.append(entry)
+                        elif label_name == "chart":
+                            chart_items.append(entry)
+                        elif label_name == "infographic":
+                            infographic_items.append(entry)
 
         except BaseException as e:
             row_error = {

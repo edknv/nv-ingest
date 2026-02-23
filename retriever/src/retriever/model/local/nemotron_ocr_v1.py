@@ -58,8 +58,10 @@ class NemotronOCRV1(BaseModel):
         if not isinstance(detector, torch.nn.Module):
             return
 
-        # NemotronOCR internally resizes/pads to 1024 and runs B=1 (see upstream FIXME);
-        # keep the TRT input shape fixed to avoid accidental batching issues.
+        # NemotronOCR is a high-level pipeline (not an nn.Module). We can optionally
+        # TensorRT-compile individual submodules (e.g. the detector backbone) but
+        # must keep post-processing (NMS, box decoding, etc.) in eager PyTorch/C++.
+        # TRT is compiled for B=1; invoke_batch() bypasses TRT via eager PyTorch.
         try:
             trt_input = torch_tensorrt.Input((1, 3, 1024, 1024), dtype=torch.float16)
         except TypeError:
@@ -195,6 +197,275 @@ class NemotronOCRV1(BaseModel):
 
         # bytes / ndarray / BytesIO are supported directly by nemotron_ocr.
         return self._model(input_data, merge_level=merge_level)
+
+    def invoke_batch(
+        self,
+        inputs: List[np.ndarray],
+        merge_levels: List[str],
+    ) -> List[Any]:
+        """
+        Batched OCR inference on multiple HWC uint8 numpy arrays.
+
+        Runs all images through the detector, recognizer, and relational
+        models in a single batched forward pass for near-linear speedup.
+
+        Parameters
+        ----------
+        inputs : list[np.ndarray]
+            List of HWC uint8 crop arrays.
+        merge_levels : list[str]
+            Per-image merge level (``"word"`` / ``"sentence"`` / ``"paragraph"``).
+
+        Returns
+        -------
+        list[list[dict]]
+            One prediction list per input image.
+        """
+        if self._model is None:
+            raise RuntimeError("Local OCR model was not initialized.")
+        if not inputs:
+            return []
+
+        # If the upstream pipeline already exposes batch_call, prefer it.
+        if hasattr(self._model, "batch_call"):
+            return self._model.batch_call(inputs, merge_levels=merge_levels)
+
+        return self._batched_inference(inputs, merge_levels)
+
+    # ------------------------------------------------------------------
+    # Batched inference using upstream model sub-modules directly
+    # ------------------------------------------------------------------
+
+    def _batched_inference(
+        self,
+        inputs: List[np.ndarray],
+        merge_levels: List[str],
+    ) -> List[Any]:
+        import torch.nn.functional as F
+        from torch import amp
+
+        from nemotron_ocr.inference.pipeline import (
+            PAD_COLOR,
+            INFER_LENGTH,
+            DETECTOR_DOWNSAMPLE,
+            MERGE_LEVELS,
+            NMS_PROB_THRESHOLD,
+            NMS_IOU_THRESHOLD,
+            NMS_MAX_REGIONS,
+        )
+        from nemotron_ocr.inference.pre_processing import interpolate_and_pad, pad_to_square
+        from nemotron_ocr.inference.post_processing.data.text_region import TextBlock
+        from nemotron_ocr.inference.post_processing.research_ops import (
+            parse_relational_results,
+            reorder_boxes,
+        )
+        from nemotron_ocr_cpp import (
+            quad_non_maximal_suppression,
+            region_counts_to_indices,
+            rrect_to_quads,
+        )
+
+        m = self._model  # upstream NemotronOCR instance
+
+        for ml in merge_levels:
+            if ml not in MERGE_LEVELS:
+                raise ValueError(f"Invalid merge level: {ml}. Must be one of {MERGE_LEVELS}.")
+
+        # --- Convert each HWC ndarray → CHW float16, pad to square, resize ---
+        # Each crop has a different size, so we must resize each to 1024×1024
+        # *before* concatenating (torch.cat requires matching spatial dims).
+        image_tensors = [m._load_image_to_tensor(img) for img in inputs]
+
+        original_shapes: List[Tuple[int, ...]] = []
+        padded_lengths: List[int] = []
+        resized_singles: List[torch.Tensor] = []
+        for img_t in image_tensors:
+            orig_shape = img_t.shape[1:]  # (H, W)
+            original_shapes.append(orig_shape)
+            pl = max(orig_shape)
+            padded_lengths.append(pl)
+            resized = interpolate_and_pad(
+                pad_to_square(img_t, pl, how="bottom_right").unsqueeze(0),
+                PAD_COLOR,
+                INFER_LENGTH,
+            )
+            resized_singles.append(resized)
+
+        batch_tensor = torch.cat(resized_singles, dim=0)
+        B = batch_tensor.shape[0]
+
+        # --- Detector (single batched forward pass) ---
+        with amp.autocast("cuda", enabled=True), torch.no_grad():
+            det_conf, _, det_rboxes, det_feature_3 = m.detector(batch_tensor.cuda())
+
+        # --- NMS (batch-aware since upstream CUDA fix) ---
+        with amp.autocast("cuda", enabled=True), torch.no_grad():
+            e2e_det_conf = torch.sigmoid(det_conf)
+            e2e_det_coords = rrect_to_quads(det_rboxes.float(), DETECTOR_DOWNSAMPLE)
+
+            quads, confidence, region_counts = quad_non_maximal_suppression(
+                e2e_det_coords,
+                e2e_det_conf,
+                prob_threshold=NMS_PROB_THRESHOLD,
+                iou_threshold=NMS_IOU_THRESHOLD,
+                kernel_height=2,
+                kernel_width=3,
+                max_regions=NMS_MAX_REGIONS,
+                verbose=False,
+            )[:3]
+
+        # --- Quad rectification & grid sampling ---
+        if quads.shape[0] == 0:
+            rec_rectified_quads = torch.empty(
+                0, 128, 8, 32, dtype=torch.float32, device=batch_tensor.device
+            )
+            rel_rectified_quads = torch.empty(
+                0, 128, 2, 3, dtype=torch.float32, device=batch_tensor.device
+            )
+        else:
+            rec_rectified_quads = m.recognizer_quad_rectifier(
+                quads.detach(), batch_tensor.shape[2], batch_tensor.shape[3]
+            )
+            rel_rectified_quads = m.relational_quad_rectifier(
+                quads.cuda().detach(), batch_tensor.shape[2], batch_tensor.shape[3]
+            )
+
+            input_indices = region_counts_to_indices(region_counts, quads.shape[0])
+
+            rec_rectified_quads = m.grid_sampler(
+                det_feature_3.float(), rec_rectified_quads.float(), input_indices
+            )
+            rel_rectified_quads = m.grid_sampler(
+                det_feature_3.float().cuda(),
+                rel_rectified_quads,
+                input_indices.cuda(),
+            )
+
+        # --- Recognizer ---
+        if rec_rectified_quads.shape[0] == 0:
+            rec_output = torch.empty(
+                0, 32, 858, dtype=torch.float16, device=rec_rectified_quads.device
+            )
+            rec_features = torch.empty(
+                0, 32, 256, dtype=torch.float16, device=rec_rectified_quads.device
+            )
+        else:
+            with amp.autocast("cuda", enabled=True), torch.no_grad():
+                rec_output, rec_features = m.recognizer(rec_rectified_quads.cuda())
+
+        # --- Relational + per-image post-processing ---
+        all_predictions: List[list] = []
+
+        if region_counts.sum() > 0:
+            rel_output = m.relational(
+                rel_rectified_quads.cuda(),
+                quads.cuda(),
+                region_counts.cpu(),
+                rec_features.cuda(),
+            )
+            words, lines, line_var = (
+                rel_output["words"],
+                rel_output["lines"],
+                rel_output["line_log_var_unc"],
+            )
+
+            with amp.autocast("cuda", enabled=True), torch.no_grad():
+                words = [F.softmax(r, dim=1, dtype=torch.float32)[:, 1:] for r in words]
+
+                output = {
+                    "sequences": F.softmax(rec_output, dim=2, dtype=torch.float32),
+                    "region_counts": region_counts,
+                    "quads": quads,
+                    "raw_detector_confidence": e2e_det_conf,
+                    "confidence": confidence,
+                    "relations": words,
+                    "line_relations": lines,
+                    "line_rel_var": line_var,
+                    "fg_colors": None,
+                    "fonts": None,
+                    "tt_log_var_uncertainty": None,
+                    "e2e_recog_features": rec_features,
+                }
+
+            quads = output["quads"]
+
+            # Per-image scale factors (crops may have different padded_lengths).
+            lengths: List[float] = []
+            for count, pl in zip(region_counts, padded_lengths):
+                lengths.extend([pl / INFER_LENGTH] * count.item())
+
+            lengths_tensor = torch.tensor(
+                lengths, dtype=torch.float32, device=quads.device
+            ).view(quads.shape[0], 1, 1)
+            quads *= lengths_tensor
+
+            batch_results = m.recog_encoder.convert_targets_to_labels(
+                output, image_size=None, is_gt=False
+            )
+            relation_batch = m.relation_encoder.convert_targets_to_labels(
+                output, image_size=None, is_gt=False
+            )
+
+            for example, rel_example in zip(batch_results, relation_batch):
+                example.relation_graph = rel_example.relation_graph
+                example.prune_invalid_relations()
+
+            for example in batch_results:
+                if example.relation_graph is None:
+                    continue
+                for paragraph in example.relation_graph:
+                    block = []
+                    for line in paragraph:
+                        for relational_idx in line:
+                            block.append(example[relational_idx])
+                    if block:
+                        example.blocks.append(TextBlock(block))
+
+            for example in batch_results:
+                for text_region in example:
+                    text_region.region = text_region.region.vertices
+
+            # Per-image prediction assembly.
+            for example, merge_level, original_shape in zip(
+                batch_results, merge_levels, original_shapes
+            ):
+                predictions: List[dict] = []
+                boxes, texts, scores = parse_relational_results(
+                    example, level=merge_level
+                )
+                boxes, texts, scores = reorder_boxes(
+                    boxes, texts, scores, mode="top_left", dbscan_eps=10
+                )
+
+                orig_h, orig_w = original_shape
+
+                if len(boxes) == 0:
+                    pass  # no detections → empty predictions
+                else:
+                    boxes_array = np.array(boxes).reshape(-1, 4, 2)
+                    boxes_array[:, :, 0] = boxes_array[:, :, 0] / orig_w
+                    boxes_array[:, :, 1] = boxes_array[:, :, 1] / orig_h
+                    boxes = boxes_array.astype(np.float16).tolist()
+
+                    for box, text, conf in zip(boxes, texts, scores):
+                        if box == "nan":
+                            break
+                        predictions.append(
+                            {
+                                "text": text,
+                                "confidence": conf,
+                                "left": min(p[0] for p in box),
+                                "upper": max(p[1] for p in box),
+                                "right": max(p[0] for p in box),
+                                "lower": min(p[1] for p in box),
+                            }
+                        )
+
+                all_predictions.append(predictions)
+        else:
+            all_predictions = [[] for _ in range(B)]
+
+        return all_predictions
 
     @property
     def model_name(self) -> str:
