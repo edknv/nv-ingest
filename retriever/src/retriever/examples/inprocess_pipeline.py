@@ -4,7 +4,9 @@ Run with: uv run python -m retriever.examples.inprocess_pipeline <input-dir>
 """
 import json
 import os
+import time
 from pathlib import Path
+from typing import Optional
 
 import lancedb
 import typer
@@ -15,6 +17,44 @@ app = typer.Typer()
 
 LANCEDB_URI = "lancedb"
 LANCEDB_TABLE = "nv-ingest"
+
+
+def _estimate_processed_pages(uri: str, table_name: str) -> Optional[int]:
+    """
+    Estimate pages processed by counting unique (source_id, page_number) pairs.
+
+    Falls back to table row count if page-level fields are unavailable.
+    """
+    try:
+        db = lancedb.connect(uri)
+        table = db.open_table(table_name)
+    except Exception:
+        return None
+
+    try:
+        df = table.to_pandas()[["source_id", "page_number"]]
+        return int(df.dropna(subset=["source_id", "page_number"]).drop_duplicates().shape[0])
+    except Exception:
+        try:
+            return int(table.count_rows())
+        except Exception:
+            return None
+
+
+def _print_pages_per_second(processed_pages: Optional[int], ingest_elapsed_s: float) -> None:
+    if ingest_elapsed_s <= 0:
+        print("Pages/sec: unavailable (ingest elapsed time was non-positive).")
+        return
+    if processed_pages is None:
+        print(
+            "Pages/sec: unavailable (could not estimate processed pages). "
+            f"Ingest time: {ingest_elapsed_s:.2f}s"
+        )
+        return
+
+    pps = processed_pages / ingest_elapsed_s
+    print(f"Pages processed: {processed_pages}")
+    print(f"Pages/sec (ingest only): {pps:.2f}")
 
 
 def _gold_to_doc_page(golden_key: str) -> tuple[str, str]:
@@ -69,7 +109,20 @@ def main(
         "--no-recall-details",
         help="Do not print per-query retrieval details (query, gold, hits). Only the missed-gold summary and recall metrics are printed.",
     ),
+    max_workers: int = typer.Option(
+        16,
+        "--max-workers",
+        help="Maximum number of parallel ingest workers.",
+    ),
+    gpu_devices: Optional[list[str]] = typer.Option(
+        None,
+        "--gpu-devices",
+        help="GPU device IDs to use (e.g. --gpu-devices 0 --gpu-devices 1). Defaults to ['0'].",
+    ),
 ) -> None:
+    if gpu_devices is None:
+        gpu_devices = ["0"]
+
     os.environ.setdefault("NEMOTRON_OCR_MODEL_DIR", str(Path.cwd() / "nemotron-ocr-v1"))
 
     input_dir = Path(input_dir)
@@ -86,11 +139,19 @@ def main(
             extract_infographics=False,
         )
         .embed(model_name="nemo_retriever_v1")
-        .vdb_upload(lancedb_uri=LANCEDB_URI, table_name=LANCEDB_TABLE, overwrite=False, create_index=True)
+        .vdb_upload(lancedb_uri=LANCEDB_URI, table_name=LANCEDB_TABLE, overwrite=True, create_index=True)
     )
 
     print("Running extraction...")
-    ingestor.ingest(show_progress=True)
+    ingest_start = time.perf_counter()
+    ingestor.ingest(
+        parallel=True,
+        max_workers=max_workers,
+        gpu_devices=gpu_devices,
+        show_progress=True,
+    )
+    ingest_elapsed_s = time.perf_counter() - ingest_start
+    processed_pages = _estimate_processed_pages(LANCEDB_URI, LANCEDB_TABLE)
     print("Extraction complete.")
 
     # ---------------------------------------------------------------------------
@@ -99,6 +160,7 @@ def main(
     query_csv = Path(query_csv)
     if not query_csv.exists():
         print(f"Query CSV not found at {query_csv}; skipping recall evaluation.")
+        _print_pages_per_second(processed_pages, ingest_elapsed_s)
         return
 
     db = lancedb.connect(f"./{LANCEDB_URI}")
@@ -166,6 +228,7 @@ def main(
     print("\nRecall metrics (matching retriever.recall.core):")
     for k, v in metrics.items():
         print(f"  {k}: {v:.4f}")
+    _print_pages_per_second(processed_pages, ingest_elapsed_s)
 
 
 if __name__ == "__main__":
