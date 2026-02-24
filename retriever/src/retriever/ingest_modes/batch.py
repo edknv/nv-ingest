@@ -231,7 +231,7 @@ class _BatchEmbedActor:
             self._model = None
             return
 
-        from retriever.model.local.llama_nemotron_embed_1b_v2_embedder import LlamaNemotronEmbed1BV2Embedder
+        from retriever.model.constants import is_vl_embed_model
 
         device = kwargs.get("device")
         hf_cache_dir = kwargs.get("hf_cache_dir")
@@ -243,13 +243,26 @@ class _BatchEmbedActor:
         model_name_raw = kwargs.get("model_name")
         model_id = model_name_raw if (isinstance(model_name_raw, str) and "/" in model_name_raw) else None
 
-        self._model = LlamaNemotronEmbed1BV2Embedder(
-            device=str(device) if device else None,
-            hf_cache_dir=str(hf_cache_dir) if hf_cache_dir else None,
-            normalize=normalize,
-            max_length=max_length,
-            model_id=model_id,
-        )
+        if is_vl_embed_model(model_name_raw):
+            from retriever.model.local.llama_nemotron_embed_vl_1b_v2_embedder import (
+                LlamaNemotronEmbedVL1BV2Embedder,
+            )
+
+            self._model = LlamaNemotronEmbedVL1BV2Embedder(
+                device=str(device) if device else None,
+                hf_cache_dir=str(hf_cache_dir) if hf_cache_dir else None,
+                model_id=model_id,
+            )
+        else:
+            from retriever.model.local.llama_nemotron_embed_1b_v2_embedder import LlamaNemotronEmbed1BV2Embedder
+
+            self._model = LlamaNemotronEmbed1BV2Embedder(
+                device=str(device) if device else None,
+                hf_cache_dir=str(hf_cache_dir) if hf_cache_dir else None,
+                normalize=normalize,
+                max_length=max_length,
+                model_id=model_id,
+            )
 
     def __call__(self, batch_df: Any) -> Any:
         from retriever.ingest_modes.inprocess import embed_text_main_text_embed

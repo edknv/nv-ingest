@@ -104,18 +104,34 @@ def _maybe_inject_local_hf_embedder(task_config: Dict[str, Any], transform_confi
         return
 
     # Lazy import: only load torch/HF when we truly need local embeddings.
-    from retriever.model.local.llama_nemotron_embed_1b_v2_embedder import LlamaNemotronEmbed1BV2Embedder
+    from retriever.model.constants import is_vl_embed_model
 
     local_device = task_config.get("local_hf_device")
     local_cache_dir = task_config.get("local_hf_cache_dir")
     local_batch_size = int(task_config.get("local_hf_batch_size") or 64)
 
-    embedder = LlamaNemotronEmbed1BV2Embedder(device=local_device, hf_cache_dir=local_cache_dir, normalize=True)
+    # Determine model name from task_config or transform_config.
+    model_name = task_config.get("model_name") or getattr(transform_config, "embedding_model", None)
 
-    def _embed(texts):
-        prefix = f"{transform_config.input_type}: " if getattr(transform_config, "input_type", None) else ""
-        vecs = embedder.embed([prefix + t for t in texts], batch_size=local_batch_size)
-        return vecs.tolist()
+    if is_vl_embed_model(model_name):
+        from retriever.model.local.llama_nemotron_embed_vl_1b_v2_embedder import (
+            LlamaNemotronEmbedVL1BV2Embedder,
+        )
+
+        embedder = LlamaNemotronEmbedVL1BV2Embedder(device=local_device, hf_cache_dir=local_cache_dir)
+
+        # VL model handles formatting internally; no prefix needed.
+        def _embed(texts):
+            return embedder.parse_and_embed_mixed(texts, batch_size=local_batch_size)
+    else:
+        from retriever.model.local.llama_nemotron_embed_1b_v2_embedder import LlamaNemotronEmbed1BV2Embedder
+
+        embedder = LlamaNemotronEmbed1BV2Embedder(device=local_device, hf_cache_dir=local_cache_dir, normalize=True)
+
+        def _embed(texts):
+            prefix = f"{transform_config.input_type}: " if getattr(transform_config, "input_type", None) else ""
+            vecs = embedder.embed([prefix + t for t in texts], batch_size=local_batch_size)
+            return vecs.tolist()
 
     # Force the API transform to use the callable path by explicitly overriding endpoint_url to None.
     task_config["endpoint_url"] = None

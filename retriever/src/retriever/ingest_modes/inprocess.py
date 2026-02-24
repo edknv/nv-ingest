@@ -23,6 +23,7 @@ from nemotron_page_elements_v3.model import define_model
 import pandas as pd
 from retriever.chart.chart_detection import detect_graphic_elements_v1_from_page_elements_v3
 from retriever.model.local import NemotronGraphicElementsV1, NemotronOCRV1, NemotronPageElementsV3
+from retriever.model.constants import is_vl_embed_model
 from retriever.model.local.llama_nemotron_embed_1b_v2_embedder import LlamaNemotronEmbed1BV2Embedder
 from retriever.page_elements import detect_page_elements_v3
 from retriever.ocr.ocr import ocr_page_elements
@@ -192,14 +193,20 @@ def embed_text_main_text_embed(
     # Only used when running with a local model (no NIM endpoint).
     _embed = None
     if _endpoint is None and model is not None:
+        if getattr(model, "is_multimodal", False):
+            # VL model: parse_and_embed_mixed handles data-URI images and text
+            # transparently; no "passage: " prefix needed.
+            def _embed(texts: Sequence[str]) -> Sequence[Sequence[float]]:
+                return model.parse_and_embed_mixed(texts, batch_size=int(inference_batch_size))
+        else:
 
-        def _embed(texts: Sequence[str]) -> Sequence[Sequence[float]]:
-            prefixed = [f"passage: {t}" for t in texts]
-            vecs = model.embed(prefixed, batch_size=int(inference_batch_size))
-            tolist = getattr(vecs, "tolist", None)
-            if callable(tolist):
-                return tolist()
-            return vecs  # type: ignore[return-value]
+            def _embed(texts: Sequence[str]) -> Sequence[Sequence[float]]:
+                prefixed = [f"passage: {t}" for t in texts]
+                vecs = model.embed(prefixed, batch_size=int(inference_batch_size))
+                tolist = getattr(vecs, "tolist", None)
+                if callable(tolist):
+                    return tolist()
+                return vecs  # type: ignore[return-value]
 
     cfg = TextEmbeddingConfig(
         text_column=str(text_column),
@@ -780,13 +787,24 @@ class InProcessIngestor(Ingestor):
         model_id = model_name_raw if (isinstance(model_name_raw, str) and "/" in model_name_raw) else None
 
         embed_kwargs.setdefault("input_type", "passage")
-        embed_kwargs["model"] = LlamaNemotronEmbed1BV2Embedder(
-            device=str(device) if device is not None else None,
-            hf_cache_dir=str(hf_cache_dir) if hf_cache_dir is not None else None,
-            normalize=normalize,
-            max_length=max_length,
-            model_id=model_id,
-        )
+        if is_vl_embed_model(model_name_raw):
+            from retriever.model.local.llama_nemotron_embed_vl_1b_v2_embedder import (
+                LlamaNemotronEmbedVL1BV2Embedder,
+            )
+
+            embed_kwargs["model"] = LlamaNemotronEmbedVL1BV2Embedder(
+                device=str(device) if device is not None else None,
+                hf_cache_dir=str(hf_cache_dir) if hf_cache_dir is not None else None,
+                model_id=model_id,
+            )
+        else:
+            embed_kwargs["model"] = LlamaNemotronEmbed1BV2Embedder(
+                device=str(device) if device is not None else None,
+                hf_cache_dir=str(hf_cache_dir) if hf_cache_dir is not None else None,
+                normalize=normalize,
+                max_length=max_length,
+                model_id=model_id,
+            )
         self._tasks.append((embed_text_main_text_embed, embed_kwargs))
         return self
 

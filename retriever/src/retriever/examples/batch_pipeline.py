@@ -476,6 +476,19 @@ def main(
         "--embed-invoke-url",
         help="Optional remote endpoint URL for embedding model inference.",
     ),
+    embed_model_name: str = typer.Option(
+        "nvidia/llama-3.2-nv-embedqa-1b-v2",
+        "--embed-model-name",
+        help=(
+            "Embedding model name passed to .embed(). "
+            'Use "nvidia/llama-nemotron-embed-vl-1b-v2" for the multimodal VL model.'
+        ),
+    ),
+    structured_elements_modality: str = typer.Option(
+        "text",
+        "--structured-elements-modality",
+        help='Modality for structured elements (tables/charts): "text", "image", or "image_text". Only meaningful for VL models.',
+    ),
     runtime_metrics_dir: Optional[Path] = typer.Option(
         None,
         "--runtime-metrics-dir",
@@ -583,11 +596,12 @@ def main(
                 ocr_invoke_url=ocr_invoke_url,
             )
             .embed(
-                model_name="nemo_retriever_v1",
+                model_name=str(embed_model_name),
                 embed_workers=int(embed_workers),
                 embed_batch_size=int(embed_batch_size),
                 embed_cpus_per_actor=float(embed_cpus_per_actor),
                 embed_invoke_url=embed_invoke_url,
+                structured_elements_modality=str(structured_elements_modality),
             )
             .vdb_upload(lancedb_uri=lancedb_uri, table_name=LANCEDB_TABLE, overwrite=True, create_index=True)
         )
@@ -646,10 +660,18 @@ def main(
         unique_basenames = table.to_pandas()["pdf_basename"].unique()
         print(f"Unique basenames: {unique_basenames}")
 
+        # Resolve the HF model ID for recall query embedding.
+        # NIM aliases (no "/") default to the text-only model; full HF repo IDs
+        # (e.g. "nvidia/llama-nemotron-embed-vl-1b-v2") are passed through.
+        if "/" in str(embed_model_name):
+            _recall_model = str(embed_model_name)
+        else:
+            _recall_model = "nvidia/llama-3.2-nv-embedqa-1b-v2"
+
         cfg = RecallConfig(
             lancedb_uri=str(lancedb_uri),
             lancedb_table=str(LANCEDB_TABLE),
-            embedding_model="nvidia/llama-3.2-nv-embedqa-1b-v2",
+            embedding_model=_recall_model,
             top_k=10,
             ks=(1, 5, 10),
         )
