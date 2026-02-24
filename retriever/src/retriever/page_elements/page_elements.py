@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
-import base64
-import io
 import time
 import traceback
 
@@ -21,11 +19,6 @@ except Exception:  # pragma: no cover
     torch = None  # type: ignore[assignment]
 
 try:
-    from PIL import Image
-except Exception:  # pragma: no cover
-    Image = None  # type: ignore[assignment]
-
-try:
     from nv_ingest_api.internal.primitives.nim.model_interface.yolox import (
         postprocess_page_elements_v3,
         YOLOX_PAGE_V3_CLASS_LABELS,
@@ -35,6 +28,7 @@ except ImportError:
     YOLOX_PAGE_V3_CLASS_LABELS = None  # type: ignore[assignment]
 
 from retriever.nim.nim import invoke_page_elements_batches
+from retriever.util.image import np_rgb_to_b64
 
 
 TensorOrArray = Union["torch.Tensor", "np.ndarray"]
@@ -92,34 +86,6 @@ def _error_payload(*, stage: str, exc: BaseException) -> Dict[str, Any]:
             "traceback": "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
         },
     }
-
-
-def _decode_b64_image_to_chw_tensor(image_b64: str) -> Tuple["torch.Tensor", Tuple[int, int]]:
-    if torch is None or Image is None or np is None:  # pragma: no cover
-        raise ImportError("page element detection requires torch, pillow, and numpy.")
-
-    raw = base64.b64decode(image_b64)
-    with Image.open(io.BytesIO(raw)) as im0:
-        im = im0.convert("RGB")
-        w, h = im.size
-        arr = np.array(im)  # (H,W,3)
-
-    t = torch.from_numpy(arr).permute(2, 0, 1).contiguous()  # (3,H,W) uint8
-    t = t.to(dtype=torch.float32) / 255.0
-    return t, (int(h), int(w))
-
-
-def _decode_b64_image_to_np_array(image_b64: str) -> Tuple["np.array", Tuple[int, int]]:
-    if torch is None or Image is None or np is None:  # pragma: no cover
-        raise ImportError("page element detection requires torch, pillow, and numpy.")
-
-    raw = base64.b64decode(image_b64)
-    with Image.open(io.BytesIO(raw)) as im0:
-        im = im0.convert("RGB")
-        w, h = im.size
-        arr = np.array(im)
-
-    return arr, (int(h), int(w))
 
 
 def _labels_from_model(_model: Any) -> List[str]:
@@ -389,8 +355,7 @@ def detect_page_elements_v3(
 
     Input:
       - `pages_df`: pandas.DataFrame (typical Ray Data `batch_format="pandas"`)
-        Must contain an image base64 source either in `image_b64` or one of
-        `images`/`tables`/`charts`/`infographics` (each as list[{"image_b64": ...}]).
+        Must contain ``page_image`` with an ``image_np`` key (HWC uint8 RGB numpy array).
 
     Output:
       - returns a pandas.DataFrame with original columns preserved, plus:
@@ -408,32 +373,21 @@ def detect_page_elements_v3(
     if inference_batch_size <= 0:
         raise ValueError("inference_batch_size must be > 0")
 
-    # Working snippet for single image inference and debugging
-    # breakpoint()
-    # first_page = pages_df.iloc[0]
-    # b64 = first_page.get("page_image")["image_b64"]
-
-    # t, orig_shape = _decode_b64_image_to_np_array(b64)
-
-    # # Inference
-    # with torch.inference_mode():
-    #     x = model.preprocess(t)
-    #     preds = model(x, orig_shape)[0]
-
-    # print(preds)
-    # breakpoint()
-
     invoke_url = (invoke_url or kwargs.get("page_elements_invoke_url") or "").strip()
     use_remote = bool(invoke_url)
 
     if not use_remote and model is None:
         raise ValueError("A local `model` is required when `invoke_url` is not provided.")
 
-    # Prepare per-row decode artifacts (local mode), raw base64 (remote mode),
-    # and placeholders for missing/errored rows.
+    # Image encoding configuration for remote endpoints.
+    _image_format = str(kwargs.get("image_format", "jpeg"))
+    _jpeg_quality = int(kwargs.get("jpeg_quality", 95))
+
+    # Prepare per-row artifacts: numpy arrays (local) or base64 strings (remote).
     row_tensors: List[Optional[TensorOrArray]] = []
     row_shapes: List[Optional[Tuple[int, int]]] = []
     row_b64: List[Optional[str]] = []
+    row_mime: Optional[str] = None
     row_payloads: List[Dict[str, Any]] = []
 
     label_names = _labels_from_model(model) if model is not None else list(_RETRIEVER_LABEL_NAMES)
@@ -444,16 +398,20 @@ def detect_page_elements_v3(
 
     for _, row in pages_df.iterrows():
         try:
-            b64 = row.get("page_image")["image_b64"]
-            if not b64:
-                raise ValueError("No usable image_b64 found in row.")
-            row_b64.append(b64)
+            page_image = row.get("page_image")
+            arr = page_image["image_np"]
+            if arr is None:
+                raise ValueError("No usable image_np found in row.")
+            orig_shape = (int(arr.shape[0]), int(arr.shape[1]))
             if use_remote:
+                b64_str, mime = np_rgb_to_b64(arr, image_format=_image_format, jpeg_quality=_jpeg_quality)
+                row_b64.append(b64_str)
+                row_mime = mime
                 row_tensors.append(None)
                 row_shapes.append(None)
             else:
-                t, orig_shape = _decode_b64_image_to_np_array(b64)
-                row_tensors.append(t)
+                row_b64.append(None)
+                row_tensors.append(arr)
                 row_shapes.append(orig_shape)
             row_payloads.append({"detections": []})
         except BaseException as e:
@@ -483,6 +441,7 @@ def detect_page_elements_v3(
             response_items = invoke_page_elements_batches(
                 invoke_url=invoke_url,
                 image_b64_list=valid_b64,
+                image_mime_type=row_mime or "image/png",
                 api_key=api_key,
                 timeout_s=float(request_timeout_s),
                 max_batch_size=int(inference_batch_size),

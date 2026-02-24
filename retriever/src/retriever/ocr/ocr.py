@@ -10,19 +10,13 @@ by PDFium in the PDF extraction stage.
 
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-import base64
-import io
 import time
 import traceback
 
 import numpy as np
 import pandas as pd
 from retriever.nim.nim import invoke_image_inference_batches
-
-try:
-    from PIL import Image
-except Exception:  # pragma: no cover
-    Image = None  # type: ignore[assignment]
+from retriever.util.image import crop_np_by_norm_bbox, np_rgb_to_b64
 
 
 # ---------------------------------------------------------------------------
@@ -42,106 +36,20 @@ def _error_payload(*, stage: str, exc: BaseException) -> Dict[str, Any]:
     }
 
 
-def _crop_b64_image_by_norm_bbox(
-    page_image_b64: str,
-    *,
-    bbox_xyxy_norm: Sequence[float],
-    image_format: str = "png",
-) -> Tuple[Optional[str], Optional[Tuple[int, int]]]:
-    """
-    Crop a base64-encoded RGB image by a normalized xyxy bbox.
-
-    Returns
-    -------
-    cropped_image_b64 : str | None
-        Base64-encoded cropped image (PNG), or *None* on failure.
-    cropped_shape_hw : tuple[int, int] | None
-        (H, W) of the crop, or *None* on failure.
-    """
-    if Image is None:  # pragma: no cover
-        raise ImportError("Cropping requires pillow.")
-
-    if not isinstance(page_image_b64, str) or not page_image_b64:
-        return None, None
-    try:
-        x1n, y1n, x2n, y2n = [float(x) for x in bbox_xyxy_norm]
-    except Exception:
-        return None, None
-
-    try:
-        raw = base64.b64decode(page_image_b64)
-        with Image.open(io.BytesIO(raw)) as im0:
-            im = im0.convert("RGB")
-            w, h = im.size
-            if w <= 1 or h <= 1:
-                return None, None
-
-            def _clamp_int(v: float, lo: int, hi: int) -> int:
-                if v != v:  # NaN
-                    return lo
-                return int(min(max(v, float(lo)), float(hi)))
-
-            x1 = _clamp_int(x1n * w, 0, w)
-            x2 = _clamp_int(x2n * w, 0, w)
-            y1 = _clamp_int(y1n * h, 0, h)
-            y2 = _clamp_int(y2n * h, 0, h)
-
-            if x2 <= x1 or y2 <= y1:
-                return None, None
-
-            crop = im.crop((x1, y1, x2, y2))
-            cw, ch = crop.size
-            if cw <= 1 or ch <= 1:
-                return None, None
-
-            buf = io.BytesIO()
-            fmt = str(image_format or "png").lower()
-            if fmt not in {"png"}:
-                fmt = "png"
-            crop.save(buf, format=fmt.upper())
-            return base64.b64encode(buf.getvalue()).decode("ascii"), (int(ch), int(cw))
-    except Exception:
-        return None, None
-
-
 def _crop_all_from_page(
-    page_image_b64: str,
+    page_image_np: np.ndarray,
     detections: List[Dict[str, Any]],
     wanted_labels: set,
 ) -> List[Tuple[str, List[float], np.ndarray]]:
     """
-    Decode the page image **once** and crop all matching detections.
+    Crop all matching detections from an HWC uint8 RGB page image array.
 
     Returns a list of ``(label_name, bbox_xyxy_norm, crop_array)`` tuples for
     detections whose ``label_name`` is in *wanted_labels* and whose crop is
     valid.  Skips detections that fail to crop (bad bbox, tiny region, etc.).
-
-    Crops are returned as HWC uint8 numpy arrays so they can be passed
-    directly to ``NemotronOCRV1.invoke()`` without a PNG/base64 round-trip.
     """
-    if Image is None:  # pragma: no cover
-        raise ImportError("Cropping requires pillow.")
-
-    if not isinstance(page_image_b64, str) or not page_image_b64:
+    if page_image_np is None:
         return []
-
-    try:
-        raw = base64.b64decode(page_image_b64)
-        im0 = Image.open(io.BytesIO(raw))
-        im = im0.convert("RGB")
-        im0.close()
-    except Exception:
-        return []
-
-    w, h = im.size
-    if w <= 1 or h <= 1:
-        im.close()
-        return []
-
-    def _clamp_int(v: float, lo: int, hi: int) -> int:
-        if v != v:  # NaN
-            return lo
-        return int(min(max(v, float(lo)), float(hi)))
 
     results: List[Tuple[str, List[float], np.ndarray]] = []
     for det in detections:
@@ -155,40 +63,14 @@ def _crop_all_from_page(
         if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
             continue
 
-        try:
-            x1n, y1n, x2n, y2n = [float(x) for x in bbox]
-        except Exception:
+        crop_result = crop_np_by_norm_bbox(page_image_np, bbox)
+        if crop_result is None:
             continue
 
-        x1 = _clamp_int(x1n * w, 0, w)
-        x2 = _clamp_int(x2n * w, 0, w)
-        y1 = _clamp_int(y1n * h, 0, h)
-        y2 = _clamp_int(y2n * h, 0, h)
-
-        if x2 <= x1 or y2 <= y1:
-            continue
-
-        crop = im.crop((x1, y1, x2, y2))
-        cw, ch = crop.size
-        if cw <= 1 or ch <= 1:
-            crop.close()
-            continue
-
-        crop_array = np.asarray(crop, dtype=np.uint8).copy()
-        crop.close()
+        crop_array, _ = crop_result
         results.append((label_name, [float(x) for x in bbox], crop_array))
 
-    im.close()
     return results
-
-
-def _np_rgb_to_b64_png(crop_array: np.ndarray) -> str:
-    if Image is None:  # pragma: no cover
-        raise ImportError("Pillow is required for image encoding.")
-    img = Image.fromarray(crop_array.astype(np.uint8), mode="RGB")
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
 def _extract_remote_ocr_item(response_item: Any) -> Any:
@@ -353,7 +235,7 @@ def ocr_page_elements(
     Run Nemotron OCR v1 on cropped regions detected by PageElements v3.
 
     For each row (page) in ``batch_df``:
-    1. Read ``page_elements_v3`` detections and ``page_image["image_b64"]``.
+    1. Read ``page_elements_v3`` detections and ``page_image["image_np"]``.
     2. For each detection whose ``label_name`` is a requested type, crop the
        page image, invoke OCR, parse the result, and collect text.
     3. Write per-type content lists and timing metadata to output columns.
@@ -379,6 +261,9 @@ def ocr_page_elements(
     use_remote = bool(invoke_url)
     if not use_remote and model is None:
         raise ValueError("A local `model` is required when `invoke_url` is not provided.")
+
+    _image_format = str(kwargs.get("image_format", "jpeg"))
+    _jpeg_quality = int(kwargs.get("jpeg_quality", 95))
 
     # Determine which labels we need to process.
     wanted_labels: set[str] = set()
@@ -414,9 +299,9 @@ def ocr_page_elements(
 
             # --- get page image ---
             page_image = getattr(row, "page_image", None) or {}
-            page_image_b64 = page_image.get("image_b64") if isinstance(page_image, dict) else None
+            page_image_np = page_image.get("image_np") if isinstance(page_image, dict) else None
 
-            if not isinstance(page_image_b64, str) or not page_image_b64:
+            if page_image_np is None:
                 # No image available — nothing to crop/OCR.
                 all_table.append(table_items)
                 all_chart.append(chart_items)
@@ -424,20 +309,23 @@ def ocr_page_elements(
                 all_ocr_meta.append({"timing": None, "error": None})
                 continue
 
-            # --- decode page image once, crop all matching detections ---
-            crops = _crop_all_from_page(page_image_b64, dets, wanted_labels)
+            # --- crop all matching detections directly from numpy array ---
+            crops = _crop_all_from_page(page_image_np, dets, wanted_labels)
 
             if use_remote:
                 crop_b64s: List[str] = []
                 crop_meta: List[Tuple[str, List[float]]] = []
+                _crop_mime: str = "image/png"
                 for label_name, bbox, crop_array in crops:
-                    crop_b64s.append(_np_rgb_to_b64_png(crop_array))
+                    b64_str, _crop_mime = np_rgb_to_b64(crop_array, image_format=_image_format, jpeg_quality=_jpeg_quality)
+                    crop_b64s.append(b64_str)
                     crop_meta.append((label_name, bbox))
 
                 if crop_b64s:
                     response_items = invoke_image_inference_batches(
                         invoke_url=invoke_url,
                         image_b64_list=crop_b64s,
+                        image_mime_type=_crop_mime,
                         api_key=api_key,
                         timeout_s=float(request_timeout_s),
                         max_batch_size=int(kwargs.get("inference_batch_size", 8)),
@@ -550,6 +438,8 @@ class OCRActor:
         "_invoke_url",
         "_api_key",
         "_request_timeout_s",
+        "_image_format",
+        "_jpeg_quality",
     )
 
     def __init__(
@@ -562,6 +452,8 @@ class OCRActor:
         invoke_url: Optional[str] = None,
         api_key: Optional[str] = None,
         request_timeout_s: float = 120.0,
+        image_format: str = "jpeg",
+        jpeg_quality: int = 95,
     ) -> None:
         # model_dir = os.environ.get("NEMOTRON_OCR_MODEL_DIR", "")
         # if not model_dir:
@@ -572,6 +464,8 @@ class OCRActor:
         self._invoke_url = (ocr_invoke_url or invoke_url or "").strip()
         self._api_key = api_key
         self._request_timeout_s = float(request_timeout_s)
+        self._image_format = str(image_format)
+        self._jpeg_quality = int(jpeg_quality)
         if self._invoke_url:
             self._model = None
         else:
@@ -594,6 +488,8 @@ class OCRActor:
                 extract_tables=self._extract_tables,
                 extract_charts=self._extract_charts,
                 extract_infographics=self._extract_infographics,
+                image_format=self._image_format,
+                jpeg_quality=self._jpeg_quality,
                 **override_kwargs,
             )
         except BaseException as e:

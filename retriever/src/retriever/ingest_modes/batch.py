@@ -344,6 +344,9 @@ class BatchIngestor(Ingestor):
         - ``detect_workers``: ActorPool size for detection stages (default num_gpus // 4).
         - ``page_elements_cpus_per_actor``: CPUs reserved per page-elements actor (default 1).
         - ``ocr_cpus_per_actor``: CPUs reserved per OCR actor (default 1).
+        - ``keep_page_images``: If True, retain ``page_image`` numpy arrays in the
+          DataFrame after extraction. By default (False), page images are dropped
+          after the last image-consuming stage (OCR) to free memory.
         """
 
         # -- Pop resource-tuning kwargs before forwarding to actors --
@@ -482,7 +485,7 @@ class BatchIngestor(Ingestor):
             gpu_embed,
         )
 
-        # Downstream batch stages assume `page_image.image_b64` exists for every page.
+        # Downstream batch stages assume `page_image.image_np` exists for every page.
         # Ensure PDF extraction emits a page image unless the caller explicitly disables it.
         kwargs.setdefault("extract_page_as_image", True)
 
@@ -508,6 +511,8 @@ class BatchIngestor(Ingestor):
             "remote_max_pool_workers",
             "remote_max_retries",
             "remote_max_429_retries",
+            "image_format",
+            "jpeg_quality",
         }
         detect_kwargs = {k: kwargs[k] for k in detect_passthrough_keys if k in kwargs}
         page_elements_invoke_url = kwargs.get("page_elements_invoke_url", kwargs.get("invoke_url"))
@@ -578,6 +583,8 @@ class BatchIngestor(Ingestor):
             "remote_max_pool_workers",
             "remote_max_retries",
             "remote_max_429_retries",
+            "image_format",
+            "jpeg_quality",
         ):
             if k in kwargs:
                 ocr_flags[k] = kwargs[k]
@@ -598,6 +605,23 @@ class BatchIngestor(Ingestor):
                 num_gpus=gpu_ocr,
                 compute=rd.ActorPoolStrategy(size=detect_workers),
                 fn_constructor_kwargs=ocr_flags,
+            )
+
+        # Drop page images to free memory unless the caller asked to keep them.
+        keep_page_images = bool(kwargs.pop("keep_page_images", False))
+        if not keep_page_images:
+            def _drop_page_images(df: Any) -> Any:
+                import pandas as _pd
+                if isinstance(df, _pd.DataFrame) and "page_image" in df.columns:
+                    df.loc[:, "page_image"] = None
+                return df
+
+            self._rd_dataset = self._rd_dataset.map_batches(
+                _drop_page_images,
+                batch_size=detect_batch_size,
+                batch_format="pandas",
+                num_cpus=0.1,
+                num_gpus=0,
             )
 
         return self

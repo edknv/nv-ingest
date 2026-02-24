@@ -110,6 +110,7 @@ def invoke_image_inference_batches(
     *,
     invoke_url: str,
     image_b64_list: Sequence[str],
+    image_mime_type: str = "image/jpeg",
     api_key: Optional[str] = None,
     timeout_s: float = 120.0,
     max_batch_size: int = 8,
@@ -139,11 +140,13 @@ def invoke_image_inference_batches(
     ranges = _chunk_ranges(n, int(max_batch_size))
     flattened: List[Optional[Any]] = [None] * n
 
+    _mime = str(image_mime_type)
+
     def _invoke_one_batch(start: int, end: int, endpoint_url: str) -> Tuple[int, int, List[Any]]:
         inputs = [
             {
                 "type": "image_url",
-                "url": f"data:image/png;base64,{b64}",
+                "url": f"data:{_mime};base64,{b64}",
             }
             for b64 in image_b64_list[start:end]
         ]
@@ -189,6 +192,7 @@ def invoke_page_elements_batches(
     *,
     invoke_url: str,
     image_b64_list: Sequence[str],
+    image_mime_type: str = "image/jpeg",
     api_key: Optional[str] = None,
     timeout_s: float = 120.0,
     max_batch_size: int = 8,
@@ -200,6 +204,7 @@ def invoke_page_elements_batches(
     return invoke_image_inference_batches(
         invoke_url=invoke_url,
         image_b64_list=image_b64_list,
+        image_mime_type=image_mime_type,
         api_key=api_key,
         timeout_s=timeout_s,
         max_batch_size=max_batch_size,

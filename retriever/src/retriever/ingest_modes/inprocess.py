@@ -644,6 +644,11 @@ class InProcessIngestor(Ingestor):
         TODO: implement actual local extraction (PDF split/extract, page elements,
         table structure, chart detection, etc.). For now this records the
         configuration so call sites can be wired up and chained.
+
+        Optional kwargs:
+        - ``keep_page_images``: If True, retain ``page_image`` numpy arrays in the
+          DataFrame after extraction. By default (False), page images are dropped
+          after the last image-consuming stage (OCR) to free memory.
         """
         # NOTE: `kwargs` passed to `.extract()` are intended primarily for PDF extraction
         # (e.g. `extract_text`, `dpi`, etc). Downstream model stages do NOT necessarily
@@ -652,8 +657,9 @@ class InProcessIngestor(Ingestor):
         print(f"kwargs: {kwargs}")
 
         extract_kwargs = dict(kwargs)
+        self._keep_page_images = bool(extract_kwargs.pop("keep_page_images", False))
         # Downstream in-process stages (page elements / table / chart / infographic) assume
-        # `page_image.image_b64` exists. Ensure PDF extraction emits a page image unless
+        # `page_image.image_np` exists. Ensure PDF extraction emits a page image unless
         # the caller explicitly disables it.
         if "extract_page_as_image" not in extract_kwargs:
             if any(
@@ -669,6 +675,8 @@ class InProcessIngestor(Ingestor):
             "output_column",
             "num_detections_column",
             "counts_by_label_column",
+            "image_format",
+            "jpeg_quality",
         }
 
         def _stage_remote_kwargs(stage_name: str) -> dict[str, Any]:
@@ -727,6 +735,9 @@ class InProcessIngestor(Ingestor):
         if kwargs.get("extract_infographics") is True:
             ocr_flags["extract_infographics"] = True
         ocr_flags.update(_stage_remote_kwargs("ocr"))
+        for _ocr_k in ("image_format", "jpeg_quality"):
+            if _ocr_k in kwargs:
+                ocr_flags[_ocr_k] = kwargs[_ocr_k]
 
         if ocr_flags:
             print("Adding OCR extraction task")
@@ -932,6 +943,14 @@ class InProcessIngestor(Ingestor):
                     current = func(pdf_binary=current, **kwargs)
                 else:
                     current = func(current, **kwargs)
+                # Drop page images after OCR (the last image-consuming stage) to free memory.
+                if (
+                    not getattr(self, "_keep_page_images", False)
+                    and func is ocr_page_elements
+                    and isinstance(current, pd.DataFrame)
+                    and "page_image" in current.columns
+                ):
+                    current["page_image"] = None
             results.append(current)
 
         # Run upload/save once on combined results so overwrite=True keeps full corpus.

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
+import numpy as np
 import pandas as pd
 import ray
 import ray.data as rd
@@ -87,10 +88,9 @@ def make_seed_page_elements_row(pdf_path: Path, *, dpi: int) -> Dict[str, Any]:
     page_image = out.get("page_image") if isinstance(out, dict) else None
     if not (
         isinstance(page_image, dict)
-        and isinstance(page_image.get("image_b64"), str)
-        and page_image.get("image_b64")
+        and isinstance(page_image.get("image_np"), np.ndarray)
     ):
-        raise RuntimeError("Seed extraction row does not contain page_image.image_b64.")
+        raise RuntimeError("Seed extraction row does not contain page_image.image_np.")
     return out
 
 

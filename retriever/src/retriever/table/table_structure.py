@@ -3,13 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
 
-import base64
-import io
 import time
 import traceback
 
 import pandas as pd
 from retriever.nim.nim import invoke_image_inference_batches
+from retriever.util.image import np_hwc_to_chw_float_tensor, crop_np_by_norm_bbox, np_rgb_to_b64
 
 try:
     import numpy as np
@@ -21,12 +20,6 @@ try:
 except Exception:  # pragma: no cover
     torch = None  # type: ignore[assignment]
 
-try:
-    from PIL import Image
-except Exception:  # pragma: no cover
-    Image = None  # type: ignore[assignment]
-
-
 def _error_payload(*, stage: str, exc: BaseException) -> Dict[str, Any]:
     return {
         "detections": [],
@@ -37,82 +30,6 @@ def _error_payload(*, stage: str, exc: BaseException) -> Dict[str, Any]:
             "traceback": "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
         },
     }
-
-
-def _decode_b64_image_to_chw_tensor(image_b64: str) -> Tuple["torch.Tensor", Tuple[int, int]]:
-    if torch is None or Image is None or np is None:  # pragma: no cover
-        raise ImportError("table structure detection requires torch, pillow, and numpy.")
-
-    raw = base64.b64decode(image_b64)
-    with Image.open(io.BytesIO(raw)) as im0:
-        im = im0.convert("RGB")
-        w, h = im.size
-        arr = np.array(im, dtype=np.uint8)  # (H,W,3)
-
-    t = torch.from_numpy(arr).permute(2, 0, 1).contiguous()  # (3,H,W) uint8
-    t = t.to(dtype=torch.float32) / 255.0
-    return t, (int(h), int(w))
-
-
-def _crop_b64_image_by_norm_bbox(
-    page_image_b64: str,
-    *,
-    bbox_xyxy_norm: Sequence[float],
-    image_format: str = "png",
-) -> Tuple[Optional[str], Optional[Tuple[int, int]]]:
-    """
-    Crop a base64-encoded RGB image by a normalized xyxy bbox.
-
-    Returns:
-      - cropped_image_b64 (same encoding as `image_format`) or None on failure
-      - cropped_shape_hw (H,W) or None on failure
-    """
-    if Image is None:  # pragma: no cover
-        raise ImportError("Cropping requires pillow.")
-
-    if not isinstance(page_image_b64, str) or not page_image_b64:
-        return None, None
-    try:
-        x1n, y1n, x2n, y2n = [float(x) for x in bbox_xyxy_norm]
-    except Exception:
-        return None, None
-
-    try:
-        raw = base64.b64decode(page_image_b64)
-        with Image.open(io.BytesIO(raw)) as im0:
-            im = im0.convert("RGB")
-            w, h = im.size
-            if w <= 1 or h <= 1:
-                return None, None
-
-            # Convert normalized coords to pixel coords and clamp.
-            def _clamp_int(v: float, lo: int, hi: int) -> int:
-                if v != v:  # NaN
-                    return lo
-                return int(min(max(v, float(lo)), float(hi)))
-
-            x1 = _clamp_int(x1n * w, 0, w)
-            x2 = _clamp_int(x2n * w, 0, w)
-            y1 = _clamp_int(y1n * h, 0, h)
-            y2 = _clamp_int(y2n * h, 0, h)
-
-            # Ensure a valid rectangle.
-            if x2 <= x1 or y2 <= y1:
-                return None, None
-
-            crop = im.crop((x1, y1, x2, y2))
-            cw, ch = crop.size
-            if cw <= 1 or ch <= 1:
-                return None, None
-
-            buf = io.BytesIO()
-            fmt = str(image_format or "png").lower()
-            if fmt not in {"png"}:
-                fmt = "png"
-            crop.save(buf, format=fmt.upper())
-            return base64.b64encode(buf.getvalue()).decode("ascii"), (int(ch), int(cw))
-    except Exception:
-        return None, None
 
 
 def _labels_from_model(model: Any) -> List[str]:
@@ -273,7 +190,7 @@ def detect_table_structure_v1(
 
     Input:
       - `batch_df`: pandas.DataFrame (Ray Data `batch_format="pandas"`)
-        Must contain a base64 image source (best-effort from `tables`/`image_b64`/etc).
+        Must contain ``page_image`` with an ``image_np`` key (HWC uint8 RGB numpy array).
     Output:
       - pandas.DataFrame with original columns preserved, plus:
         - `output_column`: {"detections": [...], "timing": {...}, "error": ...}
@@ -295,24 +212,31 @@ def detect_table_structure_v1(
     if not use_remote and model is None:
         raise ValueError("A local `model` is required when `invoke_url` is not provided.")
 
+    _image_format = str(kwargs.get("image_format", "jpeg"))
+    _jpeg_quality = int(kwargs.get("jpeg_quality", 95))
+
     label_names = _labels_from_model(model) if model is not None else []
 
     # Decode inputs.
     tensors: List[Optional["torch.Tensor"]] = []
     shapes: List[Optional[Tuple[int, int]]] = []
     image_b64_list: List[Optional[str]] = []
+    _image_mime: Optional[str] = None
     payloads: List[Dict[str, Any]] = []
     for _, row in batch_df.iterrows():
         try:
-            b64 = row.get("page_image", {}).get("image_b64", None)
-            if not b64:
-                raise ValueError("No usable image_b64 found in row.")
-            image_b64_list.append(b64)
+            arr = row.get("page_image", {}).get("image_np", None)
+            if arr is None:
+                raise ValueError("No usable image_np found in row.")
             if use_remote:
+                b64_str, _image_mime = np_rgb_to_b64(arr, image_format=_image_format, jpeg_quality=_jpeg_quality)
+                image_b64_list.append(b64_str)
                 tensors.append(None)
                 shapes.append(None)
             else:
-                t, orig_shape = _decode_b64_image_to_chw_tensor(b64)
+                image_b64_list.append(None)
+                t, orig_shape = np_hwc_to_chw_float_tensor(arr)
+                t = t / 255.0
                 tensors.append(t)
                 shapes.append(orig_shape)
             payloads.append({"detections": []})
@@ -334,6 +258,7 @@ def detect_table_structure_v1(
             response_items = invoke_image_inference_batches(
                 invoke_url=invoke_url,
                 image_b64_list=cast(List[str], valid_b64),
+                image_mime_type=_image_mime or "image/png",
                 api_key=api_key,
                 timeout_s=float(request_timeout_s),
                 max_batch_size=int(inference_batch_size),
@@ -463,7 +388,7 @@ def detect_table_structure_v1_from_page_elements_v3(
     - Check `page_elements_counts_by_label_column` for `"table" > 0`
     - If so, enumerate `pages_df[page_elements_column]["detections"]`
       and for each detection with `label_name == "table"`:
-        - crop `page_image.image_b64` by the detection bbox
+        - crop `page_image.image_np` by the detection bbox
         - run table-structure model on that crop
 
     Output payload shape:
@@ -482,13 +407,16 @@ def detect_table_structure_v1_from_page_elements_v3(
     if not use_remote and model is None:
         raise ValueError("A local `model` is required when `invoke_url` is not provided.")
 
+    _image_format = str(kwargs.get("image_format", "jpeg"))
+    _jpeg_quality = int(kwargs.get("jpeg_quality", 95))
+
     # Prepare per-row output containers.
     out_payloads: List[Dict[str, Any]] = []
     out_total_dets: List[int] = []
     out_counts: List[Dict[str, int]] = []
 
     # Collect all table crops across the whole batch so we can batch-invoke the model.
-    crop_b64s: List[str] = []
+    crop_arrays: List[np.ndarray] = []
     crop_shapes: List[Tuple[int, int]] = []
     crop_row_region_refs: List[Tuple[int, int, Dict[str, Any]]] = []  # (row_i, region_i, region_dict_ref)
 
@@ -523,13 +451,13 @@ def detect_table_structure_v1_from_page_elements_v3(
             continue
 
         page_image = row.get(page_image_column) or {}
-        page_image_b64 = page_image.get("image_b64") if isinstance(page_image, dict) else None
-        if not isinstance(page_image_b64, str) or not page_image_b64:
+        page_image_np = page_image.get("image_np") if isinstance(page_image, dict) else None
+        if page_image_np is None:
             # Counts said there are tables, but we can't crop without an image.
             page_payload["error"] = {
                 "stage": "crop",
                 "type": "ValueError",
-                "message": "page_image.image_b64 missing; cannot crop tables for table_structure_v1.",
+                "message": "page_image.image_np missing; cannot crop tables for table_structure_v1.",
                 "traceback": "",
             }
             out_payloads.append(page_payload)
@@ -547,11 +475,10 @@ def detect_table_structure_v1_from_page_elements_v3(
             if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
                 continue
 
-            crop_b64, crop_shape_hw = _crop_b64_image_by_norm_bbox(
-                page_image_b64, bbox_xyxy_norm=cast(Sequence[float], bbox)
-            )
-            if not crop_b64 or crop_shape_hw is None:
+            crop_result = crop_np_by_norm_bbox(page_image_np, bbox)
+            if crop_result is None:
                 continue
+            crop_arr, crop_shape_hw = crop_result
 
             region_payload: Dict[str, Any] = {
                 "label_name": "table",
@@ -564,7 +491,7 @@ def detect_table_structure_v1_from_page_elements_v3(
             }
             regions.append(region_payload)
 
-            crop_b64s.append(crop_b64)
+            crop_arrays.append(crop_arr)
             crop_shapes.append(crop_shape_hw)
             crop_row_region_refs.append((row_i, len(regions) - 1, region_payload))
 
@@ -574,16 +501,20 @@ def detect_table_structure_v1_from_page_elements_v3(
         out_counts.append({})  # filled after model invocation
 
     # Second pass: run model on all crops (if any) and write results back into region dict refs.
-    if crop_b64s:
+    if crop_arrays:
         label_names = _labels_from_model(model) if model is not None else []
 
         crop_payloads: List[Dict[str, Any]] = []
         if use_remote:
+            _crop_b64_mime_pairs = [np_rgb_to_b64(a, image_format=_image_format, jpeg_quality=_jpeg_quality) for a in crop_arrays]
+            remote_b64s = [p[0] for p in _crop_b64_mime_pairs]
+            _crop_mime = _crop_b64_mime_pairs[0][1] if _crop_b64_mime_pairs else "image/png"
             t0 = time.perf_counter()
             try:
                 response_items = invoke_image_inference_batches(
                     invoke_url=invoke_url,
-                    image_b64_list=crop_b64s,
+                    image_b64_list=remote_b64s,
+                    image_mime_type=_crop_mime,
                     api_key=api_key,
                     timeout_s=float(request_timeout_s),
                     max_batch_size=int(inference_batch_size),
@@ -592,24 +523,25 @@ def detect_table_structure_v1_from_page_elements_v3(
                     max_429_retries=int(kwargs.get("remote_max_429_retries", 5)),
                 )
                 elapsed = time.perf_counter() - t0
-                if len(response_items) != len(crop_b64s):
-                    raise RuntimeError(f"Expected {len(crop_b64s)} remote predictions, got {len(response_items)}")
+                if len(response_items) != len(crop_arrays):
+                    raise RuntimeError(f"Expected {len(crop_arrays)} remote predictions, got {len(response_items)}")
                 for i, resp in enumerate(response_items):
                     pred_item = _extract_remote_pred_item(resp)
                     dets = _prediction_to_detections(pred_item, label_names=label_names)
                     crop_payloads.append({"detections": dets, "timing": {"seconds": float(elapsed)}, "error": None})
             except BaseException as e:
                 elapsed = time.perf_counter() - t0
-                for _ in crop_b64s:
+                for _ in crop_arrays:
                     crop_payloads.append(
                         _error_payload(stage="remote_invoke", exc=e) | {"timing": {"seconds": float(elapsed)}}
                     )
         else:
             tensors: List[Optional["torch.Tensor"]] = []
             shapes: List[Optional[Tuple[int, int]]] = []
-            for b64 in crop_b64s:
+            for crop_arr in crop_arrays:
                 try:
-                    t, orig_shape = _decode_b64_image_to_chw_tensor(b64)
+                    t, orig_shape = np_hwc_to_chw_float_tensor(crop_arr)
+                    t = t / 255.0
                     tensors.append(t)
                     shapes.append(orig_shape)
                     crop_payloads.append({"detections": []})

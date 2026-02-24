@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-import base64
-import io
 import time
 import traceback
 
@@ -20,10 +18,7 @@ try:
 except Exception:  # pragma: no cover
     torch = None  # type: ignore[assignment]
 
-try:
-    from PIL import Image
-except Exception:  # pragma: no cover
-    Image = None  # type: ignore[assignment]
+from retriever.util.image import np_hwc_to_chw_float_tensor, crop_np_by_norm_bbox
 
 
 def _error_payload(*, stage: str, exc: BaseException) -> Dict[str, Any]:
@@ -36,79 +31,6 @@ def _error_payload(*, stage: str, exc: BaseException) -> Dict[str, Any]:
             "traceback": "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
         },
     }
-
-
-def _decode_b64_image_to_chw_tensor(image_b64: str) -> Tuple["torch.Tensor", Tuple[int, int]]:
-    if torch is None or Image is None or np is None:  # pragma: no cover
-        raise ImportError("chart detection requires torch, pillow, and numpy.")
-
-    raw = base64.b64decode(image_b64)
-    with Image.open(io.BytesIO(raw)) as im0:
-        im = im0.convert("RGB")
-        w, h = im.size
-        arr = np.array(im, dtype=np.uint8)  # (H,W,3)
-
-    t = torch.from_numpy(arr).permute(2, 0, 1).contiguous()  # (3,H,W) uint8
-    t = t.to(dtype=torch.float32) / 255.0
-    return t, (int(h), int(w))
-
-
-def _crop_b64_image_by_norm_bbox(
-    page_image_b64: str,
-    *,
-    bbox_xyxy_norm: Sequence[float],
-    image_format: str = "png",
-) -> Tuple[Optional[str], Optional[Tuple[int, int]]]:
-    """
-    Crop a base64-encoded RGB image by a normalized xyxy bbox.
-
-    Returns:
-      - cropped_image_b64 (png) or None
-      - cropped_shape_hw (H,W) or None
-    """
-    if Image is None:  # pragma: no cover
-        raise ImportError("Cropping requires pillow.")
-    if not isinstance(page_image_b64, str) or not page_image_b64:
-        return None, None
-    try:
-        x1n, y1n, x2n, y2n = [float(x) for x in bbox_xyxy_norm]
-    except Exception:
-        return None, None
-
-    try:
-        raw = base64.b64decode(page_image_b64)
-        with Image.open(io.BytesIO(raw)) as im0:
-            im = im0.convert("RGB")
-            w, h = im.size
-            if w <= 1 or h <= 1:
-                return None, None
-
-            def _clamp_int(v: float, lo: int, hi: int) -> int:
-                if v != v:  # NaN
-                    return lo
-                return int(min(max(v, float(lo)), float(hi)))
-
-            x1 = _clamp_int(x1n * w, 0, w)
-            x2 = _clamp_int(x2n * w, 0, w)
-            y1 = _clamp_int(y1n * h, 0, h)
-            y2 = _clamp_int(y2n * h, 0, h)
-
-            if x2 <= x1 or y2 <= y1:
-                return None, None
-
-            crop = im.crop((x1, y1, x2, y2))
-            cw, ch = crop.size
-            if cw <= 1 or ch <= 1:
-                return None, None
-
-            buf = io.BytesIO()
-            fmt = str(image_format or "png").lower()
-            if fmt not in {"png"}:
-                fmt = "png"
-            crop.save(buf, format=fmt.upper())
-            return base64.b64encode(buf.getvalue()).decode("ascii"), (int(ch), int(cw))
-    except Exception:
-        return None, None
 
 
 def _labels_from_model(model: Any) -> List[str]:
@@ -255,10 +177,11 @@ def detect_graphic_elements_v1(
     payloads: List[Dict[str, Any]] = []
     for _, row in batch_df.iterrows():
         try:
-            b64 = row.get("page_image", {}).get("image_b64", None)
-            if not b64:
-                raise ValueError("No usable image_b64 found in row.")
-            t, orig_shape = _decode_b64_image_to_chw_tensor(b64)
+            arr = row.get("page_image", {}).get("image_np", None)
+            if arr is None:
+                raise ValueError("No usable image_np found in row.")
+            t, orig_shape = np_hwc_to_chw_float_tensor(arr)
+            t = t / 255.0
             tensors.append(t)
             shapes.append(orig_shape)
             payloads.append({"detections": []})
@@ -363,7 +286,7 @@ def detect_graphic_elements_v1_from_page_elements_v3(
     Run Nemotron Graphic Elements v1 only on cropped chart regions.
 
     Gate per page on `page_elements_v3_counts_by_label["chart"] > 0`, then crop
-    `page_image.image_b64` to each detection whose `label_name == "chart"`, and
+    `page_image.image_np` to each detection whose `label_name == "chart"`, and
     run the model on those crops.
 
     Output payload shape:
@@ -380,7 +303,7 @@ def detect_graphic_elements_v1_from_page_elements_v3(
     out_total_dets: List[int] = []
     out_counts: List[Dict[str, int]] = []
 
-    crop_b64s: List[str] = []
+    crop_arrays: List[np.ndarray] = []
     crop_shapes: List[Tuple[int, int]] = []
     crop_region_refs: List[Dict[str, Any]] = []
 
@@ -412,12 +335,12 @@ def detect_graphic_elements_v1_from_page_elements_v3(
             continue
 
         page_image = row.get(page_image_column) or {}
-        page_image_b64 = page_image.get("image_b64") if isinstance(page_image, dict) else None
-        if not isinstance(page_image_b64, str) or not page_image_b64:
+        page_image_np = page_image.get("image_np") if isinstance(page_image, dict) else None
+        if page_image_np is None:
             page_payload["error"] = {
                 "stage": "crop",
                 "type": "ValueError",
-                "message": "page_image.image_b64 missing; cannot crop charts for graphic_elements_v1.",
+                "message": "page_image.image_np missing; cannot crop charts for graphic_elements_v1.",
                 "traceback": "",
             }
             out_payloads.append(page_payload)
@@ -435,11 +358,10 @@ def detect_graphic_elements_v1_from_page_elements_v3(
             if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
                 continue
 
-            crop_b64, crop_shape_hw = _crop_b64_image_by_norm_bbox(
-                page_image_b64, bbox_xyxy_norm=cast(Sequence[float], bbox)
-            )
-            if not crop_b64 or crop_shape_hw is None:
+            crop_result = crop_np_by_norm_bbox(page_image_np, bbox)
+            if crop_result is None:
                 continue
+            crop_arr, crop_shape_hw = crop_result
 
             region_payload: Dict[str, Any] = {
                 "label_name": "chart",
@@ -451,7 +373,7 @@ def detect_graphic_elements_v1_from_page_elements_v3(
                 "error": None,
             }
             regions.append(region_payload)
-            crop_b64s.append(crop_b64)
+            crop_arrays.append(crop_arr)
             crop_shapes.append(crop_shape_hw)
             crop_region_refs.append(region_payload)
 
@@ -460,15 +382,16 @@ def detect_graphic_elements_v1_from_page_elements_v3(
         out_total_dets.append(0)
         out_counts.append({})
 
-    if crop_b64s:
+    if crop_arrays:
         label_names = _labels_from_model(model)
 
         tensors: List[Optional["torch.Tensor"]] = []
         shapes: List[Optional[Tuple[int, int]]] = []
         crop_payloads: List[Dict[str, Any]] = []
-        for b64 in crop_b64s:
+        for crop_arr in crop_arrays:
             try:
-                t, orig_shape = _decode_b64_image_to_chw_tensor(b64)
+                t, orig_shape = np_hwc_to_chw_float_tensor(crop_arr)
+                t = t / 255.0
                 tensors.append(t)
                 shapes.append(orig_shape)
                 crop_payloads.append({"detections": []})
