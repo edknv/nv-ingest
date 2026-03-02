@@ -116,6 +116,7 @@ def explode_content_to_rows(
     modality: str = "text",
     text_elements_modality: Optional[str] = None,
     structured_elements_modality: Optional[str] = None,
+    embed_scope: str = "page",
 ) -> Any:
     """Expand each page row into multiple rows for per-element embedding.
 
@@ -158,6 +159,22 @@ def explode_content_to_rows(
 
     if not isinstance(batch_df, pd.DataFrame) or batch_df.empty:
         return batch_df
+
+    # ------------------------------------------------------------------
+    # Page-level embedding: one row per page, concatenated text, full
+    # page image (no cropping).  structured_elements_modality is ignored.
+    # ------------------------------------------------------------------
+    if embed_scope == "page":
+        out_rows: List[Dict[str, Any]] = []
+        for _, row in batch_df.iterrows():
+            row_dict = _deep_copy_row(row.to_dict())
+            row_dict[text_column] = _combine_text_with_content(row_dict, text_column, content_columns)
+            row_dict["_embed_modality"] = text_mod
+            if text_mod in IMAGE_MODALITIES:
+                page_image = row_dict.get("page_image")
+                row_dict["_image_b64"] = page_image.get("image_b64") if isinstance(page_image, dict) else None
+            out_rows.append(row_dict)
+        return pd.DataFrame(out_rows).reset_index(drop=True)
 
     # Whether *any* element type requires images.
     any_images = text_mod in IMAGE_MODALITIES or struct_mod in IMAGE_MODALITIES
@@ -1207,6 +1224,14 @@ class InProcessIngestor(Ingestor):
                 for k in ("extract_text", "extract_images", "extract_tables", "extract_charts", "extract_infographics")
             ):
                 extract_kwargs["extract_page_as_image"] = True
+
+        # Cap rendered page dimensions to what downstream models actually need.
+        # YOLOX and NemotronOCR resize to 1024x1024; at 200 DPI a Letter page
+        # is 1700x2200, so capping at 1024x1280 saves ~45% of pixels with no
+        # quality loss for downstream consumers.
+        extract_kwargs.setdefault("render_max_width", 1024)
+        extract_kwargs.setdefault("render_max_height", 1280)
+
         self._pipeline_type = "pdf"
         self._tasks.append((pdf_extraction, extract_kwargs))
 
@@ -1385,6 +1410,7 @@ class InProcessIngestor(Ingestor):
                     "modality": embed_modality,
                     "text_elements_modality": text_elements_modality,
                     "structured_elements_modality": structured_elements_modality,
+                    "embed_scope": resolved.embed_scope,
                 },
             )
         )

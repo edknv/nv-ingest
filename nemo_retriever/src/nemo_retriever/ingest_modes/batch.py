@@ -559,6 +559,13 @@ class BatchIngestor(Ingestor):
         # memory usage by ~30-40% vs 300 DPI.
         kwargs.setdefault("dpi", 200)
 
+        # Cap rendered page dimensions to what downstream models actually need.
+        # YOLOX and NemotronOCR resize to 1024x1024; at 200 DPI a Letter page
+        # is 1700x2200, so capping at 1024x1280 saves ~45% of pixels with no
+        # quality loss for downstream consumers.
+        kwargs.setdefault("render_max_width", 1024)
+        kwargs.setdefault("render_max_height", 1280)
+
         self._pipeline_type = "pdf"
         self._tasks.append(("extract", dict(kwargs)))
 
@@ -865,6 +872,7 @@ class BatchIngestor(Ingestor):
             modality=embed_modality,
             text_elements_modality=text_elements_modality,
             structured_elements_modality=structured_elements_modality,
+            embed_scope=resolved.embed_scope,
         )
         self._rd_dataset = self._rd_dataset.map_batches(
             _explode_fn,

@@ -173,7 +173,7 @@ class TestExplodeContentToRows:
             }
         )
 
-        result = explode_content_to_rows(df)
+        result = explode_content_to_rows(df, embed_scope="element")
 
         assert "_embed_modality" in result.columns
         assert list(result["_embed_modality"]) == ["text", "text"]
@@ -192,7 +192,7 @@ class TestExplodeContentToRows:
             }
         )
 
-        result = explode_content_to_rows(df, modality="text_image")
+        result = explode_content_to_rows(df, modality="text_image", embed_scope="element")
 
         assert "_image_b64" in result.columns
         images = list(result["_image_b64"])
@@ -210,3 +210,106 @@ class TestExplodeContentToRows:
             "full_page_b64",
             bbox_xyxy_norm=[0.1, 0.2, 0.9, 0.8],
         )
+
+
+# ===================================================================
+# explode_content_to_rows — page scope
+# ===================================================================
+
+
+class TestExplodeContentToRowsPageScope:
+    def test_page_scope_produces_one_row_per_page(self):
+        """Page scope keeps one row per page — no explosion into element rows."""
+        df = pd.DataFrame(
+            {
+                "text": ["Hello world"],
+                "table": [[{"text": "cell data"}]],
+                "chart": [[{"text": "chart caption"}]],
+            }
+        )
+
+        result = explode_content_to_rows(df, embed_scope="page")
+
+        assert len(result) == 1
+
+    def test_page_scope_concatenates_all_text(self):
+        """Page scope concatenates page text + table + chart + infographic text."""
+        df = pd.DataFrame(
+            {
+                "text": ["Page paragraph."],
+                "table": [[{"text": "Table content."}]],
+                "chart": [[{"text": "Chart caption."}]],
+                "infographic": [[{"text": "Infographic text."}]],
+            }
+        )
+
+        result = explode_content_to_rows(df, embed_scope="page")
+
+        combined = result["text"].iloc[0]
+        assert "Page paragraph." in combined
+        assert "Table content." in combined
+        assert "Chart caption." in combined
+        assert "Infographic text." in combined
+
+    def test_page_scope_uses_full_page_image(self):
+        """Page scope uses the full page image — no cropping."""
+        df = pd.DataFrame(
+            {
+                "text": ["some text"],
+                "page_image": [{"image_b64": "full_page_b64"}],
+                "table": [[{"text": "cell", "bbox_xyxy_norm": [0.1, 0.2, 0.9, 0.8]}]],
+            }
+        )
+
+        result = explode_content_to_rows(df, modality="text_image", embed_scope="page")
+
+        assert len(result) == 1
+        assert result["_image_b64"].iloc[0] == "full_page_b64"
+        assert result["_embed_modality"].iloc[0] == "text_image"
+
+    def test_page_scope_empty_page(self):
+        """An empty page (no text, no structured content) still produces one row."""
+        df = pd.DataFrame(
+            {
+                "text": [""],
+                "table": [[]],
+            }
+        )
+
+        result = explode_content_to_rows(df, embed_scope="page")
+
+        assert len(result) == 1
+        assert result["text"].iloc[0] == ""
+
+    def test_page_scope_multiple_pages(self):
+        """Page scope produces exactly one row per page across multiple pages."""
+        df = pd.DataFrame(
+            {
+                "text": ["Page 1 text", "Page 2 text"],
+                "table": [
+                    [{"text": "table1"}],
+                    [{"text": "table2a"}, {"text": "table2b"}],
+                ],
+            }
+        )
+
+        result = explode_content_to_rows(df, embed_scope="page")
+
+        assert len(result) == 2
+        assert "table1" in result["text"].iloc[0]
+        assert "table2a" in result["text"].iloc[1]
+        assert "table2b" in result["text"].iloc[1]
+
+    def test_element_scope_unchanged(self):
+        """Default element scope still explodes into per-element rows (regression test)."""
+        df = pd.DataFrame(
+            {
+                "text": ["Hello world"],
+                "table": [[{"text": "cell data"}]],
+            }
+        )
+
+        result = explode_content_to_rows(df, embed_scope="element")
+
+        # Element scope: 1 text row + 1 table row = 2 rows
+        assert len(result) == 2

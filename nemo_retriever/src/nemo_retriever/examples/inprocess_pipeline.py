@@ -189,6 +189,11 @@ def main(
         "--structured-elements-modality",
         help="Embedding modality override for table/chart/infographic rows. Falls back to --embed-modality.",
     ),
+    embed_scope: str = typer.Option(
+        "page",
+        "--embed-scope",
+        help="Embedding scope: 'element' (one embedding per text chunk/table/chart) or 'page' (one embedding per page with concatenated text and full page image).",  # noqa: E501
+    ),
 ) -> None:
     _ = input_type
 
@@ -215,6 +220,7 @@ def main(
                     embed_modality=embed_modality,
                     text_elements_modality=text_elements_modality,
                     structured_elements_modality=structured_elements_modality,
+                    embed_scope=embed_scope,
                 )
             )
             .vdb_upload(
@@ -241,6 +247,7 @@ def main(
                     embed_modality=embed_modality,
                     text_elements_modality=text_elements_modality,
                     structured_elements_modality=structured_elements_modality,
+                    embed_scope=embed_scope,
                 )
             )
             .vdb_upload(
@@ -283,6 +290,7 @@ def main(
                     embed_modality=embed_modality,
                     text_elements_modality=text_elements_modality,
                     structured_elements_modality=structured_elements_modality,
+                    embed_scope=embed_scope,
                 )
             )
             .vdb_upload(
@@ -324,6 +332,7 @@ def main(
                     embed_modality=embed_modality,
                     text_elements_modality=text_elements_modality,
                     structured_elements_modality=structured_elements_modality,
+                    embed_scope=embed_scope,
                 )
             )
             .vdb_upload(

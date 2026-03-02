@@ -25,6 +25,10 @@ truncate: "END"            # how the service truncates long inputs
 # Batch sizing (NIM-side batching is handled internally; this is stage batching)
 batch_size: 4
 
+# Embedding scope: "element" (default, one embedding per text chunk/table/chart)
+# or "page" (one embedding per page with concatenated text and full page image).
+# embed_scope: page
+
 # Modalities for multi-modal models (leave as "text" for text-only models)
 text_elements_modality: "text"
 image_elements_modality: "text"

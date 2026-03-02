@@ -66,6 +66,7 @@ class _FusedModelActor:
         self._extract_tables = bool(kwargs.get("extract_tables", False))
         self._extract_charts = bool(kwargs.get("extract_charts", False))
         self._extract_infographics = bool(kwargs.get("extract_infographics", False))
+        self._embed_scope = str(kwargs.get("embed_scope", "element"))
         self._embed_kwargs = {
             "model_name": kwargs.get("model_name"),
             "text_column": str(kwargs.get("text_column", "text")),
@@ -107,7 +108,7 @@ class _FusedModelActor:
             extract_charts=self._extract_charts,
             extract_infographics=self._extract_infographics,
         )
-        exploded = explode_content_to_rows(ocred, text_column=str(self._embed_kwargs["text_column"]))
+        exploded = explode_content_to_rows(ocred, text_column=str(self._embed_kwargs["text_column"]), embed_scope=self._embed_scope)
         embedded = embed_text_main_text_embed(exploded, model=self._embed_model, **self._embed_kwargs)
         return embedded
 
@@ -196,12 +197,14 @@ class FusedIngestor(BatchIngestor):
         _assert_no_remote_endpoints(dict(kwargs), context="embed")
 
         if getattr(self, "_pipeline_type", None) == "audio":
+            from functools import partial
+
             embed_workers = int(kwargs.get("embed_workers", 1))
             embed_batch_size = int(kwargs.get("embed_batch_size", 256))
             embed_cpus_per_actor = float(kwargs.get("embed_cpus_per_actor", 1))
             self._rd_dataset = self._rd_dataset.repartition(target_num_rows_per_block=256)
             self._rd_dataset = self._rd_dataset.map_batches(
-                explode_content_to_rows,
+                partial(explode_content_to_rows, embed_scope=resolved.embed_scope),
                 batch_size=embed_batch_size,
                 batch_format="pandas",
                 num_cpus=1,

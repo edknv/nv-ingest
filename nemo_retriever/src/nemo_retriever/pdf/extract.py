@@ -6,11 +6,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from io import BytesIO
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-import base64
 import traceback
-import pypdfium2.raw as pdfium_c
 
 import pandas as pd
 
@@ -22,86 +20,47 @@ except Exception as e:  # pragma: no cover
 else:  # pragma: no cover
     _PDFIUM_IMPORT_ERROR = None
 
-try:
-    import numpy as np
-except Exception:  # pragma: no cover
-    np = None  # type: ignore[assignment]
-
-try:
-    from PIL import Image
-except Exception:  # pragma: no cover
-    Image = None  # type: ignore[assignment]
+from nv_ingest_api.util.pdf.pdfium import pdfium_pages_to_numpy, is_scanned_page
+from nv_ingest_api.util.image_processing.transforms import numpy_to_base64
 
 
-def _render_page_to_base64(page: Any, *, dpi: int = 200, image_format: str = "png") -> Dict[str, Any]:
+def _render_page_to_base64(
+    page: Any,
+    *,
+    dpi: int = 200,
+    image_format: str = "png",
+    max_width: Optional[int] = None,
+    max_height: Optional[int] = None,
+) -> Dict[str, Any]:
     """
     Render a page to an image and return base64 plus minimal metadata.
 
+    Delegates to :func:`pdfium_pages_to_numpy` for target-scale rendering
+    and BGR→RGB correction, and :func:`numpy_to_base64` for encoding.
+
     Returns dict with:
     - image_b64: str
-    - encoding: str ("png" or "raw")
+    - encoding: str (e.g. "png")
     - orig_shape_hw: tuple[int,int] (H,W) of the rendered raster
-    - shape/dtype: optional (for raw)
     """
-    scale = max(float(dpi) / 72.0, 0.01)
-    bitmap = page.render(scale=scale)
+    scale_tuple: Optional[Tuple[int, int]] = None
+    if max_width is not None and max_height is not None:
+        scale_tuple = (max_width, max_height)
 
-    # Prefer numpy output when available.
-    arr = None
-    if hasattr(bitmap, "to_numpy"):
-        try:
-            arr = bitmap.to_numpy()
-        except Exception:
-            arr = None
+    images, _ = pdfium_pages_to_numpy(
+        [page],
+        render_dpi=dpi,
+        scale_tuple=scale_tuple,
+    )
+    arr = images[0]
+    h, w = arr.shape[:2]
 
-    if arr is None and hasattr(bitmap, "to_pil"):
-        try:
-            pil_img = bitmap.to_pil()
-        except Exception:
-            pil_img = None
-        if pil_img is not None:
-            w, h = pil_img.size
-            buf = BytesIO()
-            pil_img.save(buf, format=image_format.upper())
-            return {
-                "image_b64": base64.b64encode(buf.getvalue()).decode("ascii"),
-                "encoding": image_format.lower(),
-                "orig_shape_hw": (int(h), int(w)),
-            }
-
-    # Fallback: if we got a numpy-like array, try encoding with Pillow; else raw bytes.
-    if arr is not None and Image is not None:
-        try:
-            # Expect typical image layouts like (H,W,C) or (H,W).
-            h = int(arr.shape[0]) if hasattr(arr, "shape") and len(arr.shape) >= 2 else 0
-            w = int(arr.shape[1]) if hasattr(arr, "shape") and len(arr.shape) >= 2 else 0
-            pil = Image.fromarray(arr)
-            buf = BytesIO()
-            pil.save(buf, format=image_format.upper())
-            return {
-                "image_b64": base64.b64encode(buf.getvalue()).decode("ascii"),
-                "encoding": image_format.lower(),
-                "orig_shape_hw": (int(h), int(w)),
-            }
-        except Exception:
-            pass
-
-    if arr is not None:
-        # Last resort: raw bytes base64 (still a base64 string, but not a standard image container).
-        raw = arr.tobytes()
-        meta: Dict[str, Any] = {"image_b64": base64.b64encode(raw).decode("ascii"), "encoding": "raw"}
-        if hasattr(arr, "shape"):
-            meta["shape"] = tuple(arr.shape)
-            try:
-                if len(arr.shape) >= 2:
-                    meta["orig_shape_hw"] = (int(arr.shape[0]), int(arr.shape[1]))
-            except Exception:
-                pass
-        if hasattr(arr, "dtype"):
-            meta["dtype"] = str(arr.dtype)
-        return meta
-
-    raise RuntimeError("Failed to render page to an image representation.")
+    image_b64 = numpy_to_base64(arr, format=image_format.upper())
+    return {
+        "image_b64": image_b64,
+        "encoding": image_format.lower(),
+        "orig_shape_hw": (int(h), int(w)),
+    }
 
 
 def _error_record(
@@ -143,15 +102,6 @@ def _error_record(
     }
 
 
-def _is_scanned_page(page) -> bool:
-    tp = page.get_textpage()
-    text = tp.get_text_bounded() or ""
-    num_chars = len(text.strip())
-    num_images = sum(1 for obj in page.get_objects() if obj.type == pdfium_c.FPDF_PAGEOBJ_IMAGE)
-
-    return num_chars == 0 and num_images > 0
-
-
 def _extract_page_text(page) -> str:
     """
     Always extract text from the given page and return it as a raw string.
@@ -169,6 +119,8 @@ def pdf_extraction(
     extract_charts: bool = False,
     extract_infographics: bool = False,
     dpi: int = 200,
+    render_max_width: Optional[int] = None,
+    render_max_height: Optional[int] = None,
     image_format: str = "png",
     text_extraction_method: str = "pdfium_hybrid",
     text_depth: str = "page",
@@ -234,10 +186,10 @@ def pdf_extraction(
                 try:
                     # we can safely assume page[0] only because pre-splitting has already occurred.
                     page = doc.get_page(0)
-                    is_scanned_page = _is_scanned_page(page)
+                    scanned = is_scanned_page(page)
 
                     ocr_extraction_needed_for_text = extract_text and (
-                        (text_extraction_method == "pdfium_hybrid" and is_scanned_page)
+                        (text_extraction_method == "pdfium_hybrid" and scanned)
                         or text_extraction_method == "ocr"
                     )
 
@@ -268,7 +220,13 @@ def pdf_extraction(
                     )
                     render_info: Optional[Dict[str, Any]] = None
                     if want_any_raster:
-                        render_info = _render_page_to_base64(page, dpi=dpi, image_format=image_format)
+                        render_info = _render_page_to_base64(
+                            page,
+                            dpi=dpi,
+                            image_format=image_format,
+                            max_width=render_max_width,
+                            max_height=render_max_height,
+                        )
 
                     page_record: Dict[str, Any] = {
                         "path": pdf_path,

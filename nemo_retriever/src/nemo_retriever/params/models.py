@@ -153,6 +153,8 @@ class ExtractParams(_ParamsModel):
     extract_infographics: bool = False
     extract_page_as_image: Optional[bool] = None
     dpi: int = 200
+    render_max_width: Optional[int] = None
+    render_max_height: Optional[int] = None
 
     invoke_url: Optional[str] = None
     api_key: Optional[str] = None
@@ -185,6 +187,7 @@ class EmbedParams(_ParamsModel):
     embed_modality: str = "text"  # "text", "image", or "text_image" — default for all element types
     text_elements_modality: Optional[str] = None  # per-type override for page-text rows
     structured_elements_modality: Optional[str] = None  # per-type override for table/chart/infographic rows
+    embed_scope: Literal["element", "page"] = "page"
     text_column: str = "text"
     inference_batch_size: int = 32
     output_column: str = "text_embeddings_1b_v2"
