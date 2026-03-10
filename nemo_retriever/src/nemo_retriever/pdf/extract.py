@@ -185,8 +185,8 @@ def pdf_extraction(
     """
 
     # Assumption: PDF splitting ran earlier and produced a dataset where each row
-    # contains a *single-page* PDF in the `"bytes"` column. We therefore open the
-    # document and only process page 0 for each row.
+    # contains the original PDF bytes in the `"bytes"` column and a `"page_number"`
+    # column (1-indexed) indicating which page to process.
     if isinstance(pdf_binary, pd.DataFrame):
         if pdfium is None:  # pragma: no cover
             # Best-effort: return error records for the whole batch rather than raising.
@@ -220,7 +220,7 @@ def pdf_extraction(
                 if not isinstance(pdf_bytes, (bytes, bytearray, memoryview)):
                     raise RuntimeError(f"Unsupported bytes payload type: {type(pdf_bytes)!r}")
 
-                # Step 1: load the *single-page* PDF bytes.
+                # Step 1: load the PDF bytes.
                 try:
                     doc = pdfium.PdfDocument(pdf_bytes)
                 except Exception:
@@ -230,11 +230,11 @@ def pdf_extraction(
                 if image_format not in {"png"}:
                     raise ValueError(f"Unsupported image_format: {image_format!r}")
 
-                # Step 2: process only the first page (single-page doc).
+                # Step 2: jump to the target page using the page_number column.
                 page = None
                 try:
-                    # we can safely assume page[0] only because pre-splitting has already occurred.
-                    page = doc.get_page(0)
+                    page_idx = page_number - 1
+                    page = doc.get_page(page_idx)
                     is_scanned_page = _is_scanned_page(page)
 
                     ocr_extraction_needed_for_text = extract_text and (

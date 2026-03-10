@@ -57,7 +57,7 @@ from ..params import IngestExecuteParams
 from ..params import TextChunkParams
 from ..params import VdbUploadParams
 from ..pdf.extract import pdf_extraction
-from ..pdf.split import _split_pdf_to_single_page_bytes, pdf_path_to_pages_df
+from ..pdf.split import pdf_path_to_pages_df
 from ..txt import txt_file_to_chunks_df
 from ..html import html_file_to_chunks_df
 
@@ -550,8 +550,17 @@ def pages_df_from_pdf_bytes(pdf_bytes: Union[bytes, bytearray], source_path: str
     Used by the online ingest mode to run the same pipeline on document bytes
     received via REST. Columns: bytes, path, page_number.
     """
-    pages = _split_pdf_to_single_page_bytes(pdf_bytes)
-    out_rows = [{"bytes": b, "path": source_path, "page_number": i + 1} for i, b in enumerate(pages)]
+    if not isinstance(pdf_bytes, bytes):
+        pdf_bytes = bytes(pdf_bytes)
+    doc = pdfium.PdfDocument(pdf_bytes)
+    try:
+        n_pages = len(doc)
+    finally:
+        try:
+            doc.close()
+        except Exception:
+            pass
+    out_rows = [{"bytes": pdf_bytes, "path": source_path, "page_number": i + 1} for i in range(n_pages)]
     return pd.DataFrame(out_rows)
 
 
@@ -770,45 +779,38 @@ def pdf_to_pages_df(path: str) -> pd.DataFrame:
     abs_path = os.path.abspath(path)
     ext = os.path.splitext(abs_path)[1].lower()
     out_rows: list[dict[str, Any]] = []
-    doc = None
     try:
         if ext in SUPPORTED_EXTENSIONS and ext != ".pdf":
             # Convert DOCX/PPTX to PDF bytes first.
             with open(abs_path, "rb") as f:
                 file_bytes = f.read()
             pdf_bytes = convert_to_pdf_bytes(file_bytes, ext)
-            doc = pdfium.PdfDocument(BytesIO(pdf_bytes))
         else:
-            doc = pdfium.PdfDocument(abs_path)
+            with open(abs_path, "rb") as f:
+                pdf_bytes = f.read()
 
-        for page_idx in range(len(doc)):
-            single = pdfium.PdfDocument.new()
+        # Count pages without materializing per-page PDF copies
+        doc = pdfium.PdfDocument(pdf_bytes if isinstance(pdf_bytes, bytes) else BytesIO(pdf_bytes))
+        try:
+            n_pages = len(doc)
+        finally:
             try:
-                single.import_pages(doc, pages=[page_idx])
-                buf = BytesIO()
-                single.save(buf)
-                out_rows.append(
-                    {
-                        "bytes": buf.getvalue(),
-                        "path": abs_path,
-                        "page_number": page_idx + 1,
-                    }
-                )
-            finally:
-                try:
-                    single.close()
-                except Exception:
-                    pass
+                doc.close()
+            except Exception:
+                pass
+
+        for page_idx in range(n_pages):
+            out_rows.append(
+                {
+                    "bytes": pdf_bytes,
+                    "path": abs_path,
+                    "page_number": page_idx + 1,
+                }
+            )
     except BaseException as e:
         # Preserve shape expected downstream (pdf_extraction emits error
         # records per-row, so we return a single row to trigger that).
         out_rows.append({"bytes": b"", "path": abs_path, "page_number": 0, "error": str(e)})
-    finally:
-        try:
-            if doc is not None:
-                doc.close()
-        except Exception:
-            pass
 
     return pd.DataFrame(out_rows)
 
@@ -828,28 +830,27 @@ def _iter_page_chunks(path: str, chunk_size: int = 32) -> Iterator[pd.DataFrame]
 
     abs_path = os.path.abspath(path)
     ext = os.path.splitext(abs_path)[1].lower()
-    doc = None
     try:
         if ext in SUPPORTED_EXTENSIONS and ext != ".pdf":
             with open(abs_path, "rb") as f:
                 pdf_bytes = convert_to_pdf_bytes(f.read(), ext)
-            doc = pdfium.PdfDocument(BytesIO(pdf_bytes))
         else:
-            doc = pdfium.PdfDocument(abs_path)
+            with open(abs_path, "rb") as f:
+                pdf_bytes = f.read()
+
+        # Count pages without materializing per-page PDF copies
+        doc = pdfium.PdfDocument(pdf_bytes if isinstance(pdf_bytes, bytes) else BytesIO(pdf_bytes))
+        try:
+            n_pages = len(doc)
+        finally:
+            try:
+                doc.close()
+            except Exception:
+                pass
 
         chunk: list[dict] = []
-        for page_idx in range(len(doc)):
-            single = pdfium.PdfDocument.new()
-            try:
-                single.import_pages(doc, pages=[page_idx])
-                buf = BytesIO()
-                single.save(buf)
-                chunk.append({"bytes": buf.getvalue(), "path": abs_path, "page_number": page_idx + 1})
-            finally:
-                try:
-                    single.close()
-                except Exception:
-                    pass
+        for page_idx in range(n_pages):
+            chunk.append({"bytes": pdf_bytes, "path": abs_path, "page_number": page_idx + 1})
             if len(chunk) >= chunk_size:
                 yield pd.DataFrame(chunk)
                 chunk = []
@@ -857,12 +858,6 @@ def _iter_page_chunks(path: str, chunk_size: int = 32) -> Iterator[pd.DataFrame]
             yield pd.DataFrame(chunk)
     except BaseException as e:
         yield pd.DataFrame([{"bytes": b"", "path": abs_path, "page_number": 0, "error": str(e)}])
-    finally:
-        if doc is not None:
-            try:
-                doc.close()
-            except Exception:
-                pass
 
 
 def _process_doc_cpu(doc_path: str, cpu_tasks: list) -> pd.DataFrame:
@@ -1649,9 +1644,7 @@ class InProcessIngestor(Ingestor):
                         with open(abs_path, "rb") as f:
                             file_bytes = f.read()
                         pdf_bytes = convert_to_pdf_bytes(file_bytes, ext)
-                        pages = _split_pdf_to_single_page_bytes(pdf_bytes)
-                        out_rows = [{"bytes": b, "path": abs_path, "page_number": i + 1} for i, b in enumerate(pages)]
-                        return pd.DataFrame(out_rows)
+                        return pages_df_from_pdf_bytes(pdf_bytes, abs_path)
                     except BaseException as e:
                         return pd.DataFrame([{"bytes": b"", "path": abs_path, "page_number": 0, "error": str(e)}])
                 return pdf_path_to_pages_df(p)

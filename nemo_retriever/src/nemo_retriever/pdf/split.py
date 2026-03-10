@@ -46,9 +46,9 @@ def _error_record(
     }
 
 
-def _split_pdf_to_single_page_bytes(pdf_binary: Any) -> List[bytes]:
+def _count_pdf_pages(pdf_binary: Any) -> int:
     """
-    Split a PDF into single-page PDFs (raw bytes) using pypdfium2.
+    Count the number of pages in a PDF without materializing per-page copies.
     """
     if pdfium is None:  # pragma: no cover
         raise ImportError(
@@ -63,27 +63,13 @@ def _split_pdf_to_single_page_bytes(pdf_binary: Any) -> List[bytes]:
         else:
             raise
 
-    out: List[bytes] = []
     try:
-        for page_idx in range(len(doc)):
-            single = pdfium.PdfDocument.new()
-            try:
-                single.import_pages(doc, pages=[page_idx])
-                buf = BytesIO()
-                single.save(buf)
-                out.append(buf.getvalue())
-            finally:
-                try:
-                    single.close()
-                except Exception:
-                    pass
+        return len(doc)
     finally:
         try:
             doc.close()
         except Exception:
             pass
-
-    return out
 
 
 def pdf_path_to_pages_df(path: str) -> pd.DataFrame:
@@ -103,11 +89,11 @@ def pdf_path_to_pages_df(path: str) -> pd.DataFrame:
     out_rows: List[Dict[str, Any]] = []
     try:
         raw_bytes = Path(abs_path).read_bytes()
-        pages = _split_pdf_to_single_page_bytes(raw_bytes)
-        for page_idx, page_bytes in enumerate(pages):
+        n_pages = _count_pdf_pages(raw_bytes)
+        for page_idx in range(n_pages):
             out_rows.append(
                 {
-                    "bytes": page_bytes,
+                    "bytes": raw_bytes,
                     "path": abs_path,
                     "page_number": page_idx + 1,
                 }
@@ -141,16 +127,20 @@ def split_pdf_batch(pdf_batch: Any, params: PdfSplitParams | None = None) -> pd.
             if not isinstance(pdf_bytes, (bytes, bytearray, memoryview)):
                 raise ValueError(f"Unsupported bytes payload type: {type(pdf_bytes)!r}")
 
-            pages = _split_pdf_to_single_page_bytes(pdf_bytes)
+            # Ensure we have a plain bytes object for consistent sharing across rows
+            if not isinstance(pdf_bytes, bytes):
+                pdf_bytes = bytes(pdf_bytes)
+
+            n_pages = _count_pdf_pages(pdf_bytes)
             start_idx = 0 if start_page is None else max(int(start_page) - 1, 0)
-            end_idx = (len(pages) - 1) if end_page is None else min(int(end_page) - 1, len(pages) - 1)
-            if len(pages) == 0 or start_idx > end_idx:
+            end_idx = (n_pages - 1) if end_page is None else min(int(end_page) - 1, n_pages - 1)
+            if n_pages == 0 or start_idx > end_idx:
                 continue
 
             for page_idx in range(start_idx, end_idx + 1):
                 out_rows.append(
                     {
-                        "bytes": pages[page_idx],
+                        "bytes": pdf_bytes,
                         "path": pdf_path,
                         "page_number": page_idx + 1,
                         "metadata": {"source_path": pdf_path},
