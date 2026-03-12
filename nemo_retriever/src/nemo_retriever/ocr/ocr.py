@@ -110,10 +110,7 @@ def _crop_b64_image_by_norm_bbox(
                 return None, None
 
             buf = io.BytesIO()
-            fmt = str(image_format or "png").lower()
-            if fmt not in {"png"}:
-                fmt = "png"
-            crop.save(buf, format=fmt.upper())
+            crop.save(buf, format="JPEG", quality=100)
             return base64.b64encode(buf.getvalue()).decode("ascii"), (int(ch), int(cw))
     except Exception:
         return None, None
@@ -195,7 +192,7 @@ def _crop_all_from_page(
 
         if as_b64:
             buf = io.BytesIO()
-            crop.save(buf, format="PNG")
+            crop.save(buf, format="JPEG", quality=100)
             crop.close()
             value = base64.b64encode(buf.getvalue()).decode("ascii")
         else:
@@ -212,7 +209,7 @@ def _np_rgb_to_b64_png(crop_array: np.ndarray) -> str:
         raise ImportError("Pillow is required for image encoding.")
     img = Image.fromarray(crop_array.astype(np.uint8), mode="RGB")
     buf = io.BytesIO()
-    img.save(buf, format="PNG")
+    img.save(buf, format="JPEG", quality=100)
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
