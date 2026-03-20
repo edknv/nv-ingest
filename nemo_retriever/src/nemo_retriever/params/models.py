@@ -302,6 +302,12 @@ class ChartParams(_ParamsModel):
     inference_batch_size: int = 8
 
 
+class DedupParams(_ParamsModel):
+    content_hash: bool = True
+    bbox_iou: bool = True
+    iou_threshold: float = Field(default=0.45, ge=0.0, le=1.0)
+
+
 class CaptionParams(_ParamsModel):
     endpoint_url: Optional[str] = None
     model_name: str = "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16"
