@@ -347,14 +347,14 @@ def main(
             )
         )
 
-    # Auto-dedup: enabled when extracting images + structured content (tables/charts/infographics)
+    enable_caption = caption or caption_invoke_url is not None
+
+    # Auto-dedup: only useful when captioning is on (images become rows)
     has_structured = extract_tables or extract_charts or extract_infographics
-    if dedup and has_structured and extract_images:
+    if dedup and enable_caption and has_structured and extract_images:
         from nemo_retriever.params import DedupParams
 
         ingestor = ingestor.dedup(DedupParams(iou_threshold=dedup_iou_threshold))
-
-    enable_caption = caption or caption_invoke_url is not None
     if enable_caption:
         ingestor = ingestor.caption(
             CaptionParams(
