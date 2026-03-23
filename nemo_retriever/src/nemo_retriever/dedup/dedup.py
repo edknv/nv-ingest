@@ -5,13 +5,16 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from typing import Any, List, Tuple
 
 import pandas as pd
 
 from nemo_retriever.params import DedupParams
 
-_STRUCTURED_COLUMNS = ("tables", "charts", "infographics")
+logger = logging.getLogger(__name__)
+
+_STRUCTURED_COLUMNS = ("table", "chart", "infographic")
 
 
 def calculate_iou(bbox1: Tuple[float, ...], bbox2: Tuple[float, ...]) -> float:
@@ -44,7 +47,7 @@ def calculate_iou(bbox1: Tuple[float, ...], bbox2: Tuple[float, ...]) -> float:
 
 
 def _collect_structured_bboxes(row: pd.Series) -> List[Tuple[float, ...]]:
-    """Gather all bounding boxes from tables, charts, and infographics columns."""
+    """Gather all bounding boxes from table, chart, and infographic columns."""
     bboxes: List[Tuple[float, ...]] = []
     for col in _STRUCTURED_COLUMNS:
         items = row.get(col)
@@ -74,8 +77,8 @@ def dedup_images(
     1. **Content-hash dedup** (``content_hash=True``): MD5-hash each
        ``image_b64``; remove exact duplicates (keep first).
     2. **Bbox IoU dedup** (``bbox_iou=True``): Compare each image's
-       ``bbox_xyxy_norm`` against all entries in ``tables``, ``charts``,
-       ``infographics``. If IoU >= ``iou_threshold``, drop the image
+       ``bbox_xyxy_norm`` against all entries in ``table``, ``chart``,
+       ``infographic``. If IoU >= ``iou_threshold``, drop the image
        (prefer structured content).
     """
     if not isinstance(batch_df, pd.DataFrame) or batch_df.empty:
@@ -83,11 +86,17 @@ def dedup_images(
     if "images" not in batch_df.columns:
         return batch_df
 
+    total_before = 0
+    total_after_hash = 0
+    total_after_bbox = 0
+
     for row_idx, row in batch_df.iterrows():
         images = row.get("images")
         if not isinstance(images, list) or not images:
             continue
 
+        original_count = len(images)
+        total_before += original_count
         filtered = list(images)
 
         # Pass 1: content-hash dedup
@@ -108,6 +117,9 @@ def dedup_images(
                     deduped.append(item)
             filtered = deduped
 
+        after_hash = len(filtered)
+        total_after_hash += after_hash
+
         # Pass 2: bbox IoU dedup against structured content
         if bbox_iou:
             structured_bboxes = _collect_structured_bboxes(row)
@@ -122,15 +134,17 @@ def dedup_images(
                         surviving.append(item)
                         continue
                     img_bbox_t = tuple(img_bbox[:4])
-                    overlaps = any(
-                        calculate_iou(img_bbox_t, sb) >= iou_threshold
-                        for sb in structured_bboxes
-                    )
+                    overlaps = any(calculate_iou(img_bbox_t, sb) >= iou_threshold for sb in structured_bboxes)
                     if not overlaps:
                         surviving.append(item)
                 filtered = surviving
 
+        total_after_bbox += len(filtered)
         batch_df.at[row_idx, "images"] = filtered
+
+    hash_removed = total_before - total_after_hash
+    bbox_removed = total_after_hash - total_after_bbox
+    print(f"Dedup: {total_before} images -> {total_after_bbox}" f" (hash: -{hash_removed}, bbox: -{bbox_removed})")
 
     return batch_df
 

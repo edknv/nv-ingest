@@ -517,6 +517,11 @@ def main(
         "--extract-text/--no-extract-text",
         help="Extract text from PDF pages.",
     ),
+    extract_images: bool = typer.Option(
+        True,
+        "--extract-images/--no-extract-images",
+        help="Extract images from PDF pages.",
+    ),
     extract_tables: bool = typer.Option(
         True,
         "--extract-tables/--no-extract-tables",
@@ -566,6 +571,19 @@ def main(
         0.5,
         "--caption-gpu-memory-utilization",
         help="Fraction of GPU memory vLLM may use for the caption model (0.0–1.0).",
+    ),
+    dedup: bool = typer.Option(
+        True,
+        "--dedup/--no-dedup",
+        help=(
+            "Image deduplication (content-hash + bbox IoU). Auto-enabled when extracting "
+            "both images and structured content. Use --no-dedup to disable."
+        ),
+    ),
+    dedup_iou_threshold: float = typer.Option(
+        0.45,
+        "--dedup-iou-threshold",
+        help="IoU threshold for bbox-based image dedup (0.0–1.0, default 0.45).",
     ),
     text_chunk: bool = typer.Option(
         False,
@@ -755,6 +773,7 @@ def main(
                 method=method,
                 dpi=int(dpi),
                 extract_text=extract_text,
+                extract_images=extract_images,
                 extract_tables=extract_tables,
                 extract_charts=extract_charts,
                 extract_infographics=extract_infographics,
@@ -792,6 +811,13 @@ def main(
         enable_text_chunk = text_chunk or text_chunk_max_tokens is not None or text_chunk_overlap_tokens is not None
         if enable_text_chunk:
             ingestor = ingestor.split(_text_chunk_params)
+
+        # Auto-dedup: enabled when extracting images + structured content (tables/charts/infographics)
+        has_structured = extract_tables or extract_charts or extract_infographics
+        if dedup and has_structured and extract_images:
+            from nemo_retriever.params import DedupParams
+
+            ingestor = ingestor.dedup(DedupParams(iou_threshold=dedup_iou_threshold))
 
         enable_caption = caption or caption_invoke_url is not None
         if enable_caption:
