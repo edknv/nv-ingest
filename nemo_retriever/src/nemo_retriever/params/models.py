@@ -36,6 +36,7 @@ class ModelRuntimeParams(_ParamsModel):
     normalize: bool = True
     max_length: int = 8192
     model_name: Optional[str] = None
+    compile: bool = False
 
 
 class IngestorCreateParams(_ParamsModel):
@@ -161,6 +162,7 @@ class ExtractParams(_ParamsModel):
     extract_page_as_image: Optional[bool] = None
 
     # Extraction options
+    compile: bool = False
     method: str = "pdfium"
     use_table_structure: bool = False
     table_output_format: Optional[Literal["pseudo_markdown", "markdown"]] = None
@@ -222,6 +224,7 @@ class EmbedParams(_ParamsModel):
     embedding_endpoint: Optional[str] = None
     embed_invoke_url: Optional[str] = None
     api_key: Optional[str] = None
+    compile: bool = False
     input_type: str = "passage"
     embed_modality: str = "text"  # "text", "image", or "text_image" — default for all element types
     embed_granularity: Literal["element", "page"] = "element"  # "element" = per-element rows, "page" = one row per page

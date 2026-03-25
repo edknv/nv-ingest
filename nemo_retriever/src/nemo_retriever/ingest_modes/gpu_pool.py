@@ -35,11 +35,12 @@ class PageElementsModelConfig:
     """Config to recreate a page-elements model via ``define_model("page_element_v3")``."""
 
     config_name: str = "page_element_v3"
+    compile: bool = False
 
     def create(self) -> Any:
         from nemo_retriever.model.local import NemotronPageElementsV3
 
-        return NemotronPageElementsV3()
+        return NemotronPageElementsV3(compile=self.compile)
 
 
 @dataclass
@@ -47,11 +48,12 @@ class OCRModelConfig:
     """Config to recreate a NemotronOCRV1 model."""
 
     model_dir: str = ""
+    compile: bool = False
 
     def create(self) -> Any:
         from nemo_retriever.model.local import NemotronOCRV1
 
-        return NemotronOCRV1(model_dir=self.model_dir)
+        return NemotronOCRV1(model_dir=self.model_dir, compile=self.compile)
 
 
 @dataclass
@@ -75,6 +77,7 @@ class EmbeddingModelConfig:
     normalize: bool = True
     max_length: int = 8192
     model_id: Optional[str] = None
+    compile: bool = False
 
     def create(self) -> Any:
         from nemo_retriever.model import create_local_embedder
@@ -85,6 +88,7 @@ class EmbeddingModelConfig:
             hf_cache_dir=self.hf_cache_dir,
             normalize=self.normalize,
             max_length=self.max_length,
+            compile=self.compile,
         )
 
 

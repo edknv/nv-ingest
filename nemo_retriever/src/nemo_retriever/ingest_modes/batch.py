@@ -183,6 +183,7 @@ class _BatchEmbedActor:
             hf_cache_dir=str(self._kwargs["hf_cache_dir"]) if self._kwargs.get("hf_cache_dir") else None,
             normalize=bool(self._kwargs.get("normalize", True)),
             max_length=int(self._kwargs.get("max_length", 8192)),
+            compile=bool(self._kwargs.get("compile", False)),
         )
 
     def __call__(self, batch_df: Any) -> Any:
@@ -470,6 +471,7 @@ class BatchIngestor(Ingestor):
             "remote_max_pool_workers",
             "remote_max_retries",
             "remote_max_429_retries",
+            "compile",
         }
         detect_kwargs = {k: kwargs[k] for k in detect_passthrough_keys if k in kwargs}
         page_elements_invoke_url = kwargs.get("page_elements_invoke_url", kwargs.get("invoke_url"))

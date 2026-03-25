@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import List, Optional
 
 from nemo_retriever.utils.hf_cache import configure_global_hf_cache_base
+from nemo_retriever.utils.trt_utils import is_trt_enabled, try_compile_model
 from ..model import BaseModel, RunMode
 
 
@@ -43,6 +44,7 @@ class NemotronRerankV2(BaseModel):
         model_name: str = _DEFAULT_MODEL,
         device: Optional[str] = None,
         hf_cache_dir: Optional[str] = None,
+        compile: bool = False,
     ) -> None:
         super().__init__()
         import torch
@@ -77,6 +79,9 @@ class NemotronRerankV2(BaseModel):
 
         if self._model.config.pad_token_id is None:
             self._model.config.pad_token_id = self._tokenizer.eos_token_id
+
+        if (compile or is_trt_enabled()) and self._device != "cpu":
+            self._model = try_compile_model(self._model)
 
     # ------------------------------------------------------------------
     # BaseModel abstract properties

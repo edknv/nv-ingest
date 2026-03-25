@@ -585,6 +585,11 @@ def main(
         "--text-chunk-overlap-tokens",
         help="Token overlap between consecutive text chunks (default: 150). Implies --text-chunk.",
     ),
+    compile: bool = typer.Option(
+        False,
+        "--compile/--no-compile",
+        help="Compile models with torch.compile for faster inference. Uses torch_tensorrt backend if installed, otherwise inductor.",
+    ),
 ) -> None:
     log_handle, original_stdout, original_stderr = _configure_logging(log_file, debug=bool(debug))
     try:
@@ -708,6 +713,7 @@ def main(
             model_name=str(embed_model_name),
             embed_invoke_url=embed_invoke_url,
             api_key=embed_remote_api_key,
+            compile=compile,
             embed_modality=embed_modality,
             text_elements_modality=text_elements_modality,
             structured_elements_modality=structured_elements_modality,
@@ -760,6 +766,7 @@ def main(
                 extract_infographics=extract_infographics,
                 extract_page_as_image=extract_page_as_image,
                 api_key=extract_remote_api_key,
+                compile=compile,
                 use_graphic_elements=use_graphic_elements,
                 graphic_elements_invoke_url=graphic_elements_invoke_url,
                 inference_batch_size=page_elements_batch_size,

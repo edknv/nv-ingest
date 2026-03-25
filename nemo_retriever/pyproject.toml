@@ -87,6 +87,9 @@ dev = [
   "build>=1.2.2",
   "pytest>=8.0.2",
 ]
+trt = [
+  "torch-tensorrt>=2.6.0",
+]
 
 [project.scripts]
 retriever = "nemo_retriever.__main__:main"

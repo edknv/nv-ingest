@@ -6,12 +6,12 @@ from typing import Any, Dict, List, Optional, Tuple, Union  # noqa: F401
 
 import base64
 import io
-import os
 from pathlib import Path  # noqa: F401
 
 import numpy as np
 import torch
 from nemo_retriever.utils.hf_cache import configure_global_hf_cache_base
+from nemo_retriever.utils.trt_utils import is_trt_enabled, try_compile_trt
 from ..model import BaseModel, RunMode
 
 from PIL import Image
@@ -30,6 +30,7 @@ class NemotronOCRV1(BaseModel):
     def __init__(
         self,
         model_dir: Optional[str] = None,
+        compile: bool = False,
     ) -> None:
         super().__init__()
         configure_global_hf_cache_base()
@@ -42,8 +43,7 @@ class NemotronOCRV1(BaseModel):
         # NemotronOCR is a high-level pipeline (not an nn.Module). We can optionally
         # TensorRT-compile individual submodules (e.g. the detector backbone) but
         # must keep post-processing (NMS, box decoding, etc.) in eager PyTorch/C++.
-        self._enable_trt = os.getenv("RETRIEVER_ENABLE_TORCH_TRT", "").strip().lower() in {"1", "true", "yes", "on"}
-        if self._enable_trt and self._model is not None:
+        if (compile or is_trt_enabled()) and self._model is not None:
             self._maybe_compile_submodules()
 
     def _maybe_compile_submodules(self) -> None:
@@ -51,12 +51,6 @@ class NemotronOCRV1(BaseModel):
         Best-effort TensorRT compilation of internal nn.Modules.
         Any failure falls back to eager PyTorch without breaking initialization.
         """
-        try:
-            import torch_tensorrt  # type: ignore
-        except Exception:
-            return
-
-        # Detector is the safest candidate: input is a BCHW image tensor.
         if self._model is None:
             return
 
@@ -64,31 +58,21 @@ class NemotronOCRV1(BaseModel):
         if not isinstance(detector, torch.nn.Module):
             return
 
-        # NemotronOCR internally resizes/pads to 1024 and runs B=1 (see upstream FIXME);
-        # keep the TRT input shape fixed to avoid accidental batching issues.
         try:
-            trt_input = torch_tensorrt.Input((1, 3, 1024, 1024), dtype=torch.float16)
-        except TypeError:
-            # Older/newer API variants: fall back to named arg.
-            trt_input = torch_tensorrt.Input(shape=(1, 3, 1024, 1024), dtype=torch.float16)
+            import torch_tensorrt  # type: ignore
 
-        # If any torchvision NMS makes it into a compiled graph elsewhere, forcing
-        # that op to run in Torch avoids hard failures.
-        compile_kwargs: Dict[str, Any] = {
-            "inputs": [trt_input],
-            "enabled_precisions": {torch.float16},
-        }
-        if hasattr(torch_tensorrt, "compile"):
-            for k in ("torch_executed_ops", "torch_executed_modules"):
-                if k == "torch_executed_ops":
-                    compile_kwargs[k] = {"torchvision::nms"}
-                elif k == "torch_executed_modules":
-                    compile_kwargs[k] = set()
-            try:
-                self._model.detector = torch_tensorrt.compile(detector, **compile_kwargs)
-            except Exception:
-                # Leave detector as-is on any failure.
-                return
+            trt_input = torch_tensorrt.Input((1, 3, 1024, 1024), dtype=torch.float16)
+        except Exception:
+            return
+
+        compiled = try_compile_trt(
+            detector,
+            [trt_input],
+            {torch.float16},
+            torch_executed_ops={"torchvision::nms"},
+        )
+        if compiled is not detector:
+            self._model.detector = compiled
 
     def preprocess(self, tensor: torch.Tensor) -> torch.Tensor:
         """Preprocess the input tensor."""

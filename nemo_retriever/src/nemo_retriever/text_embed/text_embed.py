@@ -193,12 +193,14 @@ class TextEmbedActor:
 
         from nemo_retriever.model import create_local_embedder
 
+        compile_model = bool(self.detect_kwargs.pop("compile", False))
         self._model = create_local_embedder(
             self.detect_kwargs.get("model_name"),
             device=str(device) if device is not None else None,
             hf_cache_dir=str(hf_cache_dir) if hf_cache_dir is not None else None,
             normalize=normalize,
             max_length=int(max_length),
+            compile=compile_model,
         )
 
     def __call__(self, batch_df: Any, **override_kwargs: Any) -> Any:

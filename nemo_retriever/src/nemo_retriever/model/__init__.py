@@ -42,12 +42,17 @@ def create_local_embedder(
     hf_cache_dir: str | None = None,
     normalize: bool = True,
     max_length: int = 8192,
+    compile: bool = False,
 ):
     """Create the appropriate local embedding model (VL or non-VL).
 
     Centralises the resolve -> branch -> construct pattern that was previously
     duplicated across batch, inprocess, fused, gpu_pool, recall, retriever,
     and text_embed code paths.
+
+    When *compile* is True the model is compiled via ``torch.compile`` for
+    faster inference.  If ``torch_tensorrt`` is installed it is used as the
+    backend; otherwise the built-in ``inductor`` backend is used.
     """
     model_id = resolve_embed_model(model_name)
 
@@ -72,4 +77,5 @@ def create_local_embedder(
         normalize=normalize,
         max_length=max_length,
         model_id=model_id,
+        compile=compile,
     )

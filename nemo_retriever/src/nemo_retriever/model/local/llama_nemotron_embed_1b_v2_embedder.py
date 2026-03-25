@@ -12,6 +12,7 @@ import torch
 
 from nemo_retriever.utils.hf_cache import configure_global_hf_cache_base
 from nemo_retriever.utils.hf_model_registry import get_hf_revision
+from nemo_retriever.utils.trt_utils import is_trt_enabled, try_compile_model
 
 
 def _l2_normalize(x: torch.Tensor, eps: float = 1e-12) -> torch.Tensor:
@@ -37,6 +38,7 @@ class LlamaNemotronEmbed1BV2Embedder:
     # max_length: int = 4096
     max_length: int = 8192
     model_id: Optional[str] = None
+    compile: bool = False
 
     def __post_init__(self) -> None:
         self._tokenizer = None
@@ -64,6 +66,13 @@ class LlamaNemotronEmbed1BV2Embedder:
         self._model = self._model.to(dev)
         self._model.eval()
         self._device = dev
+
+        # Bake output_hidden_states into the config so the forward call does not
+        # need the kwarg (which can break compilation tracing).
+        self._model.config.output_hidden_states = True
+
+        if (self.compile or is_trt_enabled()) and dev.type == "cuda":
+            self._model = try_compile_model(self._model)
 
     @property
     def is_remote(self) -> bool:
@@ -97,7 +106,9 @@ class LlamaNemotronEmbed1BV2Embedder:
                         max_length=max(1, int(self.max_length)),
                         return_tensors="pt",
                     ).to(dev)
-                    out = self._model(**batch, output_hidden_states=True)
+                    # output_hidden_states is set on the model config so we
+                    # don't pass it as a kwarg (which breaks TRT tracing).
+                    out = self._model(**batch)
                     # The bidirectional model returns BaseModelOutputWithPast
                     # (last_hidden_state), but some transformers versions or
                     # model revisions return CausalLMOutputWithPast (hidden_states).

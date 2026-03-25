@@ -8,6 +8,7 @@ from torch import nn
 import torch
 import numpy as np
 from nemo_retriever.utils.hf_cache import configure_global_hf_cache_base
+from nemo_retriever.utils.trt_utils import is_trt_enabled, try_compile_trt
 from ..model import HuggingFaceModel, RunMode
 
 from nemotron_page_elements_v3.model import define_model as define_model_page_elements
@@ -28,11 +29,54 @@ class NemotronPageElementsV3(HuggingFaceModel):
     - Text regions
     """
 
-    def __init__(self) -> None:
+    def __init__(self, compile: bool = False) -> None:
         super().__init__(self.model_name)
         configure_global_hf_cache_base()
         self._model = define_model_page_elements(self.model_name)
         self._page_elements_input_shape = (1024, 1024)
+
+        if (compile or is_trt_enabled()) and torch.cuda.is_available():
+            self._maybe_compile_submodules()
+
+    def _maybe_compile_submodules(self) -> None:
+        """Best-effort TensorRT compilation of the detector backbone.
+
+        The full model takes an extra *orig_shape* argument that is not a tensor,
+        so we compile only the detector submodule (YOLOX backbone) — the same
+        approach used by :class:`NemotronOCRV1`.
+        """
+        if self._model is None:
+            return
+
+        # The upstream model may expose the detector as an attribute.
+        detector = getattr(self._model, "detector", None)
+        if not isinstance(detector, torch.nn.Module):
+            # If no detector submodule, try compiling the whole model as a
+            # fallback — it is an nn.Module after all.
+            detector = self._model if isinstance(self._model, torch.nn.Module) else None
+        if detector is None:
+            return
+
+        try:
+            import torch_tensorrt  # type: ignore
+
+            trt_input = torch_tensorrt.Input(
+                (1, 3, 1024, 1024), dtype=torch.float16
+            )
+        except Exception:
+            return
+
+        compiled = try_compile_trt(
+            detector,
+            [trt_input],
+            {torch.float16},
+            torch_executed_ops={"torchvision::nms"},
+        )
+        if compiled is not detector:
+            if detector is self._model:
+                self._model = compiled
+            else:
+                self._model.detector = compiled
 
     def preprocess(self, tensor: Union[torch.Tensor, np.ndarray]) -> torch.Tensor:
         """Preprocess the input tensor."""

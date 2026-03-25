@@ -94,13 +94,14 @@ class _FusedModelActor:
             "has_embedding_column": str(kwargs.get("has_embedding_column", "text_embeddings_1b_v2_has_embedding")),
         }
 
-        self._page_elements_model = NemotronPageElementsV3()
+        _compile = bool(kwargs.get("compile", False))
+        self._page_elements_model = NemotronPageElementsV3(compile=_compile)
         self._ge_model = None
         if self._use_graphic_elements and self._extract_charts:
             from nemo_retriever.model.local import NemotronGraphicElementsV1
 
             self._ge_model = NemotronGraphicElementsV1()
-        self._ocr_model = NemotronOCRV1()
+        self._ocr_model = NemotronOCRV1(compile=_compile)
         self._table_structure_model = None
         if self._extract_tables and self._use_table_structure:
             from nemo_retriever.model.local import NemotronTableStructureV1
@@ -112,6 +113,7 @@ class _FusedModelActor:
             hf_cache_dir=str(kwargs["hf_cache_dir"]) if kwargs.get("hf_cache_dir") else None,
             normalize=bool(kwargs.get("normalize", True)),
             max_length=int(kwargs.get("max_length", 8192)),
+            compile=bool(kwargs.get("compile", False)),
         )
 
     def __call__(self, batch_df: Any) -> Any:

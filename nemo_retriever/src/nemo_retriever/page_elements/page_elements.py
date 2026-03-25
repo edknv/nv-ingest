@@ -759,7 +759,7 @@ class PageElementDetectionActor:
         else:
             from nemo_retriever.model.local import NemotronPageElementsV3
 
-            self._model = NemotronPageElementsV3()
+            self._model = NemotronPageElementsV3(compile=bool(self.detect_kwargs.get("compile", False)))
 
     def __call__(self, pages_df: Any, **override_kwargs: Any) -> Any:
         try:

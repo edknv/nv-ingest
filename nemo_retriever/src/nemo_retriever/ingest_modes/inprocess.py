@@ -1122,7 +1122,7 @@ class InProcessIngestor(Ingestor):
             ):
                 print("Adding page elements task")
                 pe_invoke_url = kwargs.get("page_elements_invoke_url", kwargs.get("invoke_url", ""))
-                pe_model = None if pe_invoke_url else NemotronPageElementsV3()
+                pe_model = None if pe_invoke_url else NemotronPageElementsV3(compile=bool(kwargs.get("compile", False)))
                 self._tasks.append(
                     (
                         detect_page_elements_v3,
@@ -1162,7 +1162,7 @@ class InProcessIngestor(Ingestor):
                     ge_ocr_kwargs["ocr_invoke_url"] = ocr_invoke_url
                     ge_ocr_kwargs["ocr_model"] = None
                 else:
-                    ocr_model = NemotronOCRV1(model_dir=str(ocr_model_dir)) if ocr_model_dir else NemotronOCRV1()
+                    ocr_model = NemotronOCRV1(model_dir=str(ocr_model_dir), compile=bool(kwargs.get("compile", False))) if ocr_model_dir else NemotronOCRV1(compile=bool(kwargs.get("compile", False)))
                     ge_ocr_kwargs["ocr_model"] = ocr_model
 
                 ge_ocr_kwargs.update(_stage_remote_kwargs("ocr"))
@@ -1201,7 +1201,7 @@ class InProcessIngestor(Ingestor):
                     ts_ocr_kwargs["ocr_invoke_url"] = ocr_invoke_url
                     ts_ocr_kwargs["ocr_model"] = None
                 else:
-                    ocr_model = NemotronOCRV1(model_dir=str(ocr_model_dir)) if ocr_model_dir else NemotronOCRV1()
+                    ocr_model = NemotronOCRV1(model_dir=str(ocr_model_dir), compile=bool(kwargs.get("compile", False))) if ocr_model_dir else NemotronOCRV1(compile=bool(kwargs.get("compile", False)))
                     ts_ocr_kwargs["ocr_model"] = ocr_model
 
                 ts_ocr_kwargs.update(_stage_remote_kwargs("ocr"))
@@ -1234,7 +1234,7 @@ class InProcessIngestor(Ingestor):
                         or os.environ.get("NEMOTRON_OCR_MODEL_DIR", "").strip()
                         or os.environ.get("NEMOTRON_OCR_V1_MODEL_DIR", "").strip()
                     )
-                    model = NemotronOCRV1(model_dir=str(ocr_model_dir)) if ocr_model_dir else NemotronOCRV1()
+                    model = NemotronOCRV1(model_dir=str(ocr_model_dir), compile=bool(kwargs.get("compile", False))) if ocr_model_dir else NemotronOCRV1(compile=bool(kwargs.get("compile", False)))
                     self._tasks.append((ocr_page_elements, {"model": model, **ocr_flags}))
 
     def extract_image_files(self, params: ExtractParams | None = None, **kwargs: Any) -> "InProcessIngestor":
@@ -1437,6 +1437,7 @@ class InProcessIngestor(Ingestor):
         hf_cache_dir = embed_kwargs.pop("hf_cache_dir", None)
         normalize = bool(embed_kwargs.pop("normalize", True))
         max_length = int(embed_kwargs.pop("max_length", 8192))
+        compile_model = bool(embed_kwargs.pop("compile", False))
         model_name_raw = embed_kwargs.pop("model_name", None)
 
         from nemo_retriever.model import create_local_embedder
@@ -1448,6 +1449,7 @@ class InProcessIngestor(Ingestor):
             hf_cache_dir=str(hf_cache_dir) if hf_cache_dir is not None else None,
             normalize=normalize,
             max_length=max_length,
+            compile=compile_model,
         )
         self._tasks.append((embed_text_main_text_embed, embed_kwargs))
         return self
