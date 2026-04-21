@@ -181,10 +181,7 @@ class TestGraphicElementsActor:
     def _make(self):
         from nemo_retriever.chart.chart_detection import GraphicElementsActor
 
-        return GraphicElementsActor(
-            graphic_elements_invoke_url="http://fake",
-            ocr_invoke_url="http://fake",
-        )
+        return GraphicElementsActor(graphic_elements_invoke_url="http://fake")
 
     def test_inherits(self):
         from nemo_retriever.chart.chart_detection import GraphicElementsActor

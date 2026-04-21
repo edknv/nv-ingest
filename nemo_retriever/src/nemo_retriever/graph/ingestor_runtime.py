@@ -600,7 +600,7 @@ def build_graph(
                 ocr_kwargs["extract_text"] = True
             if extract_params.extract_tables:
                 ocr_kwargs["extract_tables"] = True
-            if extract_params.extract_charts and not extract_params.use_graphic_elements:
+            if extract_params.extract_charts:
                 ocr_kwargs["extract_charts"] = True
             if extract_params.extract_infographics:
                 ocr_kwargs["extract_infographics"] = True
@@ -627,8 +627,6 @@ def build_graph(
             graphic_kwargs: dict[str, Any] = {}
             if extract_params.graphic_elements_invoke_url:
                 graphic_kwargs["graphic_elements_invoke_url"] = extract_params.graphic_elements_invoke_url
-            if extract_params.ocr_invoke_url:
-                graphic_kwargs["ocr_invoke_url"] = extract_params.ocr_invoke_url
             if extract_params.api_key:
                 graphic_kwargs["api_key"] = extract_params.api_key
 

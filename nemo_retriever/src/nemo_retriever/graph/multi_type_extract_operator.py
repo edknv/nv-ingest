@@ -74,7 +74,10 @@ def _ocr_stage_needed(extract_params: ExtractParams) -> bool:
         # (when use_table_structure=False) or to join against the
         # table_structure_v1 detections published by TableStructureActor.
         return True
-    if extract_params.extract_charts and not extract_params.use_graphic_elements:
+    if extract_params.extract_charts:
+        # OCR is always needed for chart crops: either to produce OCR-only
+        # chart text (when use_graphic_elements=False) or to join against the
+        # graphic_elements_v1 detections published by GraphicElementsActor.
         return True
     if extract_params.extract_infographics:
         return True
@@ -101,7 +104,7 @@ def _extract_params_need_local_gpu(extraction_mode: str, extract_params: Extract
     if (
         extract_params.use_graphic_elements
         and extract_params.extract_charts
-        and not _has_endpoint(extract_params.graphic_elements_invoke_url, extract_params.ocr_invoke_url)
+        and not _has_endpoint(extract_params.graphic_elements_invoke_url)
     ):
         return True
     if _ocr_stage_needed(extract_params) and not _has_endpoint(extract_params.ocr_invoke_url):
@@ -302,8 +305,6 @@ class _MultiTypeExtractBase(AbstractOperator):
             graphic_kwargs: dict[str, Any] = {}
             if extract_params.graphic_elements_invoke_url:
                 graphic_kwargs["graphic_elements_invoke_url"] = extract_params.graphic_elements_invoke_url
-            if extract_params.ocr_invoke_url:
-                graphic_kwargs["ocr_invoke_url"] = extract_params.ocr_invoke_url
             if extract_params.api_key:
                 graphic_kwargs["api_key"] = extract_params.api_key
             batch_df = self._instantiate_resolved(GraphicElementsActor, **graphic_kwargs).run(batch_df)
@@ -316,7 +317,7 @@ class _MultiTypeExtractBase(AbstractOperator):
             ocr_kwargs["extract_text"] = True
         if extract_params.extract_tables:
             ocr_kwargs["extract_tables"] = True
-        if extract_params.extract_charts and not extract_params.use_graphic_elements:
+        if extract_params.extract_charts:
             ocr_kwargs["extract_charts"] = True
         if extract_params.extract_infographics:
             ocr_kwargs["extract_infographics"] = True

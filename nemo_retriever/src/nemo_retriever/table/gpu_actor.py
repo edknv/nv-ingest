@@ -46,23 +46,13 @@ class TableStructureActor(AbstractOperator, GPUOperator):
 
         if self._table_structure_invoke_url:
             self._table_structure_model = None
-        else:
-            from nemo_retriever.model.local import NemotronTableStructureV1
-
-            self._table_structure_model = NemotronTableStructureV1()
-
-        if self._ocr_invoke_url:
-            self._ocr_model = None
-        else:
-            from nemo_retriever.model.local import NemotronOCRV1
-
-            self._ocr_model = NemotronOCRV1()
-
-        if self._table_structure_invoke_url or self._ocr_invoke_url:
             self._nim_client = NIMClient(
                 max_pool_workers=int(remote_max_pool_workers),
             )
         else:
+            from nemo_retriever.model.local import NemotronTableStructureV1
+
+            self._table_structure_model = NemotronTableStructureV1()
             self._nim_client = None
 
     def preprocess(self, data: Any, **kwargs: Any) -> Any:

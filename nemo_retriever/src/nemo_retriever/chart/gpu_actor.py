@@ -17,15 +17,14 @@ from nemo_retriever.chart.shared import graphic_elements_ocr_page_elements
 
 class GraphicElementsActor(AbstractOperator, GPUOperator):
     """
-    Ray-friendly callable that initializes both graphic-elements and OCR
-    models once per actor and runs the combined stage.
+    Ray-friendly callable that initializes the graphic-elements model once
+    per actor and runs the detection stage.
     """
 
     def __init__(
         self,
         *,
         graphic_elements_invoke_url: Optional[str] = None,
-        ocr_invoke_url: Optional[str] = None,
         invoke_url: Optional[str] = None,
         api_key: Optional[str] = None,
         request_timeout_s: float = 120.0,
@@ -35,8 +34,7 @@ class GraphicElementsActor(AbstractOperator, GPUOperator):
         inference_batch_size: int = 8,
     ) -> None:
         super().__init__()
-        self._graphic_elements_invoke_url = (graphic_elements_invoke_url or "").strip()
-        self._ocr_invoke_url = (ocr_invoke_url or invoke_url or "").strip()
+        self._graphic_elements_invoke_url = (graphic_elements_invoke_url or invoke_url or "").strip()
         self._api_key = api_key
         self._request_timeout_s = float(request_timeout_s)
         self._remote_retry = RemoteRetryParams(
@@ -48,23 +46,13 @@ class GraphicElementsActor(AbstractOperator, GPUOperator):
 
         if self._graphic_elements_invoke_url:
             self._graphic_elements_model = None
-        else:
-            from nemo_retriever.model.local import NemotronGraphicElementsV1
-
-            self._graphic_elements_model = NemotronGraphicElementsV1()
-
-        if self._ocr_invoke_url:
-            self._ocr_model = None
-        else:
-            from nemo_retriever.model.local import NemotronOCRV1
-
-            self._ocr_model = NemotronOCRV1()
-
-        if self._graphic_elements_invoke_url or self._ocr_invoke_url:
             self._nim_client = NIMClient(
                 max_pool_workers=int(remote_max_pool_workers),
             )
         else:
+            from nemo_retriever.model.local import NemotronGraphicElementsV1
+
+            self._graphic_elements_model = NemotronGraphicElementsV1()
             self._nim_client = None
 
     def preprocess(self, data: Any, **kwargs: Any) -> Any:
@@ -74,9 +62,7 @@ class GraphicElementsActor(AbstractOperator, GPUOperator):
         return graphic_elements_ocr_page_elements(
             data,
             graphic_elements_model=self._graphic_elements_model,
-            ocr_model=self._ocr_model,
             graphic_elements_invoke_url=self._graphic_elements_invoke_url,
-            ocr_invoke_url=self._ocr_invoke_url,
             api_key=self._api_key,
             request_timeout_s=self._request_timeout_s,
             remote_retry=self._remote_retry,

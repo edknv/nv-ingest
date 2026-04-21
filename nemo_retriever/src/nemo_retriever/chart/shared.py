@@ -257,6 +257,15 @@ def _counts_by_label(detections: Sequence[Dict[str, Any]]) -> Dict[str, int]:
     return out
 
 
+def _render_structure_only_text(detections: Sequence[Dict[str, Any]]) -> str:
+    """Short summary of detected graphic-element labels for the `chart` placeholder."""
+    counts = _counts_by_label(detections)
+    if not counts:
+        return ""
+    parts = [name for name in counts.keys()]
+    return "Graphic elements detected: " + ", ".join(parts) + "."
+
+
 def _remote_response_to_ge_detections(response_json: Any) -> List[Dict[str, Any]]:
     """Parse a NIM graphic-elements response into the standard detection list.
 
@@ -327,7 +336,7 @@ def _remote_response_to_ge_detections(response_json: Any) -> List[Dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
-# Combined graphic-elements + OCR core function
+# Graphic-elements detection core function
 # ---------------------------------------------------------------------------
 
 
@@ -335,9 +344,7 @@ def graphic_elements_ocr_page_elements(
     batch_df: Any,
     *,
     graphic_elements_model: Any = None,
-    ocr_model: Any = None,
     graphic_elements_invoke_url: str = "",
-    ocr_invoke_url: str = "",
     api_key: str = "",
     request_timeout_s: float = 120.0,
     remote_retry: RemoteRetryParams | None = None,
@@ -345,30 +352,28 @@ def graphic_elements_ocr_page_elements(
     **kwargs: Any,
 ) -> Any:
     """
-    Run graphic-elements + OCR on chart crops and produce structure-aware text.
+    Run graphic-elements detection on chart crops.
 
     For each row (page) in ``batch_df``:
     1. Read ``page_elements_v3`` detections and ``page_image["image_b64"]``.
     2. Crop all chart detections from the page image.
-    3. Run graphic-elements model on each crop to get element bboxes.
-    4. Run OCR on each crop to get text with bboxes.
-    5. Join the two outputs using ``join_graphic_elements_and_ocr_output()``
-       to produce semantically structured chart text.
-    6. Fall back to OCR-only text if graphic-elements returns no detections.
+    3. Run the graphic-elements model on each crop to get element bboxes.
+    4. Publish the detections to a ``graphic_elements_v1`` column so that the
+       downstream OCR stage can join them with OCR output via
+       ``use_graphic_elements=True``.
 
     Returns
     -------
     pandas.DataFrame
-        Original columns plus ``chart`` and ``graphic_elements_ocr_v1``.
+        Original columns plus:
+
+        - ``chart``: list of per-crop dicts with a structure-only ``text``
+          fallback (overwritten by the OCR stage when ``extract_charts=True``).
+        - ``graphic_elements_v1``: page-level ``{regions, timing, error}``
+          payload consumed by the OCR stage.
+        - ``graphic_elements_ocr_v1``: per-row timing/error metadata.
     """
-    from nemo_retriever.ocr.ocr import (
-        _blocks_to_text,
-        _crop_all_from_page,
-        _extract_remote_ocr_item,
-        _np_rgb_to_b64_png,
-        _parse_ocr_result,
-    )
-    from nemo_retriever.utils.table_and_chart import join_graphic_elements_and_ocr_output
+    from nemo_retriever.ocr.ocr import _crop_all_from_page, _np_rgb_to_b64_png
 
     retry = remote_retry or RemoteRetryParams(
         remote_max_pool_workers=int(kwargs.get("remote_max_pool_workers", 16)),
@@ -380,20 +385,17 @@ def graphic_elements_ocr_page_elements(
         raise NotImplementedError("graphic_elements_ocr_page_elements currently only supports pandas.DataFrame input.")
 
     ge_url = (graphic_elements_invoke_url or kwargs.get("graphic_elements_invoke_url") or "").strip()
-    ocr_url = (ocr_invoke_url or kwargs.get("ocr_invoke_url") or "").strip()
     use_remote_ge = bool(ge_url)
-    use_remote_ocr = bool(ocr_url)
 
     if not use_remote_ge and graphic_elements_model is None:
         raise ValueError("A local `graphic_elements_model` is required when `graphic_elements_invoke_url` is not set.")
-    if not use_remote_ocr and ocr_model is None:
-        raise ValueError("A local `ocr_model` is required when `ocr_invoke_url` is not set.")
 
     label_names = _labels_from_model(graphic_elements_model) if graphic_elements_model is not None else []
     inference_batch_size = int(kwargs.get("inference_batch_size", 8))
 
     num_rows = len(batch_df)
     all_chart: List[List[Dict[str, Any]]] = [[] for _ in range(num_rows)]
+    all_ge_payloads: List[Dict[str, Any]] = [{"regions": [], "timing": None, "error": None} for _ in range(num_rows)]
     all_meta: List[Dict[str, Any]] = [{"timing": None, "error": None} for _ in range(num_rows)]
 
     t0_total = time.perf_counter()
@@ -429,24 +431,29 @@ def graphic_elements_ocr_page_elements(
             for crop in crops:
                 flat_crops.append(crop)
                 crop_row_indices.append(row_i)
-                if use_remote_ge or use_remote_ocr:
+                if use_remote_ge:
                     flat_crop_b64s.append(_np_rgb_to_b64_png(crop[2]))
 
         except BaseException as e:
             print(f"Warning: chart crop collection failed for row {row_i}: {type(e).__name__}: {e}")
-            all_meta[row_i]["error"] = {
+            err = {
                 "stage": "graphic_elements_ocr_page_elements:crop",
                 "type": e.__class__.__name__,
                 "message": str(e),
                 "traceback": "".join(traceback.format_exception(type(e), e, e.__traceback__)),
             }
+            all_meta[row_i]["error"] = err
+            all_ge_payloads[row_i]["error"] = err
 
     if not flat_crops:
         elapsed = time.perf_counter() - t0_total
         for meta in all_meta:
             meta["timing"] = {"seconds": float(elapsed)}
+        for payload in all_ge_payloads:
+            payload["timing"] = {"seconds": float(elapsed)}
         out = batch_df.copy()
         out["chart"] = all_chart
+        out["graphic_elements_v1"] = all_ge_payloads
         out["graphic_elements_ocr_v1"] = all_meta
         return out
 
@@ -506,72 +513,45 @@ def graphic_elements_ocr_page_elements(
         }
         for row_i in set(crop_row_indices):
             all_meta[row_i]["error"] = err_payload
+            all_ge_payloads[row_i]["error"] = err_payload
 
     # ---------------------------------------------------------------
-    # Pass 3: Run OCR on ALL crops in one batched call.
-    # ---------------------------------------------------------------
-    ocr_results: List[Any] = [None] * n_crops
-    try:
-        if use_remote_ocr:
-            _ocr_kw = dict(
-                invoke_url=ocr_url,
-                image_b64_list=flat_crop_b64s,
-                api_key=api_key or None,
-                timeout_s=float(request_timeout_s),
-                max_batch_size=inference_batch_size,
-                max_retries=int(retry.remote_max_retries),
-                max_429_retries=int(retry.remote_max_429_retries),
-            )
-            if nim_client is not None:
-                ocr_response_items = nim_client.invoke_image_inference_batches(**_ocr_kw)
-            else:
-                ocr_response_items = invoke_image_inference_batches(
-                    **_ocr_kw,
-                    max_pool_workers=int(retry.remote_max_pool_workers),
-                )
-            if len(ocr_response_items) != n_crops:
-                raise RuntimeError(f"Expected {n_crops} OCR responses, got {len(ocr_response_items)}")
-            for ci, resp in enumerate(ocr_response_items):
-                ocr_results[ci] = _extract_remote_ocr_item(resp)
-        else:
-            for ci, (_, _, crop_array) in enumerate(flat_crops):
-                ocr_results[ci] = ocr_model.invoke(crop_array, merge_level="word")
-    except BaseException as e:
-        print(f"Warning: chart OCR batch inference failed: {type(e).__name__}: {e}")
-        err_payload = {
-            "stage": "graphic_elements_ocr_page_elements:ocr",
-            "type": e.__class__.__name__,
-            "message": str(e),
-            "traceback": "".join(traceback.format_exception(type(e), e, e.__traceback__)),
-        }
-        for row_i in set(crop_row_indices):
-            if all_meta[row_i]["error"] is None:
-                all_meta[row_i]["error"] = err_payload
-
-    # ---------------------------------------------------------------
-    # Pass 4: Stitch results back to the correct rows.
+    # Pass 3: Emit per-crop outputs.
     # ---------------------------------------------------------------
     for ci in range(n_crops):
         row_i = crop_row_indices[ci]
-        label_name, bbox, crop_array = flat_crops[ci]
+        _label_name, bbox, crop_array = flat_crops[ci]
         crop_hw = (int(crop_array.shape[0]), int(crop_array.shape[1]))
         ge_dets = ge_results[ci]
-        ocr_preds = ocr_results[ci]
+        counts = _counts_by_label(ge_dets)
 
-        text = join_graphic_elements_and_ocr_output(ge_dets, ocr_preds, crop_hw)
-
-        if not text:
-            blocks = _parse_ocr_result(ocr_preds)
-            text = _blocks_to_text(blocks)
-
-        all_chart[row_i].append({"bbox_xyxy_norm": bbox, "text": text})
+        all_chart[row_i].append(
+            {
+                "bbox_xyxy_norm": bbox,
+                "text": _render_structure_only_text(ge_dets),
+                "detections": ge_dets,
+                "counts_by_label": counts,
+            }
+        )
+        all_ge_payloads[row_i]["regions"].append(
+            {
+                "bbox_xyxy_norm": [float(x) for x in bbox],
+                "label_name": "chart",
+                "detections": ge_dets,
+                "orig_shape_hw": [crop_hw[0], crop_hw[1]],
+                "counts_by_label": counts,
+            }
+        )
 
     elapsed = time.perf_counter() - t0_total
     for meta in all_meta:
         meta["timing"] = {"seconds": float(elapsed)}
+    for payload in all_ge_payloads:
+        payload["timing"] = {"seconds": float(elapsed)}
 
     out = batch_df.copy()
     out["chart"] = all_chart
+    out["graphic_elements_v1"] = all_ge_payloads
     out["graphic_elements_ocr_v1"] = all_meta
     return out
 

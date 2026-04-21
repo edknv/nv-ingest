@@ -180,19 +180,13 @@ class TestGraphicElementsCPUActor:
 
         actor = GraphicElementsCPUActor()
         assert actor._graphic_elements_model is None
-        assert actor._ocr_model is None
         assert "nemotron-graphic-elements-v1" in actor._graphic_elements_invoke_url
-        assert "nemotron-ocr-v1" in actor._ocr_invoke_url
 
     def test_creates_with_custom_urls(self):
         from nemo_retriever.chart.cpu_actor import GraphicElementsCPUActor
 
-        actor = GraphicElementsCPUActor(
-            graphic_elements_invoke_url="http://custom1",
-            ocr_invoke_url="http://custom2",
-        )
+        actor = GraphicElementsCPUActor(graphic_elements_invoke_url="http://custom1")
         assert actor._graphic_elements_invoke_url == "http://custom1"
-        assert actor._ocr_invoke_url == "http://custom2"
 
     @patch("nemo_retriever.chart.cpu_actor.graphic_elements_ocr_page_elements")
     def test_process(self, mock_fn):

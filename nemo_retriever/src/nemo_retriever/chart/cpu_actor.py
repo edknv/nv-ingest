@@ -69,18 +69,16 @@ def _probe_endpoint(url: str, *, name: str, timeout: float = 5.0) -> None:
 class GraphicElementsCPUActor(AbstractOperator, CPUOperator):
     """CPU-only variant of :class:`GraphicElementsActor`.
 
-    Defaults to build.nvidia.com endpoints for ``nemotron-graphic-elements-v1``
-    and ``nemotron-ocr-v1``. No local GPU models are loaded.
+    Defaults to the build.nvidia.com endpoint for
+    ``nemotron-graphic-elements-v1``. No local GPU models are loaded.
     """
 
     DEFAULT_GRAPHIC_ELEMENTS_INVOKE_URL = "https://ai.api.nvidia.com/v1/cv/nvidia/nemotron-graphic-elements-v1"
-    DEFAULT_OCR_INVOKE_URL = "https://ai.api.nvidia.com/v1/cv/nvidia/nemotron-ocr-v1"
 
     def __init__(
         self,
         *,
         graphic_elements_invoke_url: Optional[str] = None,
-        ocr_invoke_url: Optional[str] = None,
         invoke_url: Optional[str] = None,
         api_key: Optional[str] = None,
         request_timeout_s: float = 120.0,
@@ -91,9 +89,8 @@ class GraphicElementsCPUActor(AbstractOperator, CPUOperator):
     ) -> None:
         super().__init__()
         self._graphic_elements_invoke_url = (
-            graphic_elements_invoke_url or self.DEFAULT_GRAPHIC_ELEMENTS_INVOKE_URL
+            graphic_elements_invoke_url or invoke_url or self.DEFAULT_GRAPHIC_ELEMENTS_INVOKE_URL
         ).strip()
-        self._ocr_invoke_url = (ocr_invoke_url or invoke_url or self.DEFAULT_OCR_INVOKE_URL).strip()
         self._api_key = api_key
         self._request_timeout_s = float(request_timeout_s)
         self._remote_retry = RemoteRetryParams(
@@ -103,18 +100,15 @@ class GraphicElementsCPUActor(AbstractOperator, CPUOperator):
         )
         self._inference_batch_size = int(inference_batch_size)
         self._graphic_elements_model = None
-        self._ocr_model = None
         self._nim_client = NIMClient(
             max_pool_workers=int(remote_max_pool_workers),
         )
 
         logger.info(
-            "GraphicElementsCPUActor initialized: graphic_elements_url=%s, ocr_url=%s",
+            "GraphicElementsCPUActor initialized: graphic_elements_url=%s",
             self._graphic_elements_invoke_url,
-            self._ocr_invoke_url,
         )
         _probe_endpoint(self._graphic_elements_invoke_url, name="graphic-elements")
-        _probe_endpoint(self._ocr_invoke_url, name="ocr")
 
     def preprocess(self, data: Any, **kwargs: Any) -> Any:
         return data
@@ -126,9 +120,7 @@ class GraphicElementsCPUActor(AbstractOperator, CPUOperator):
         result = graphic_elements_ocr_page_elements(
             data,
             graphic_elements_model=self._graphic_elements_model,
-            ocr_model=self._ocr_model,
             graphic_elements_invoke_url=self._graphic_elements_invoke_url,
-            ocr_invoke_url=self._ocr_invoke_url,
             api_key=self._api_key,
             request_timeout_s=self._request_timeout_s,
             remote_retry=self._remote_retry,

@@ -34,7 +34,6 @@ class ChartExtractionStageConfig:
 @dataclass(frozen=True)
 class GraphicElementsOCRStageConfig:
     graphic_elements_invoke_url: str = ""
-    ocr_invoke_url: str = ""
     api_key: str = ""
     request_timeout_s: float = 60.0
 
@@ -43,7 +42,6 @@ def load_graphic_elements_ocr_config_from_dict(cfg: Dict[str, Any]) -> GraphicEl
     cfg = dict(cfg or {})
     return GraphicElementsOCRStageConfig(
         graphic_elements_invoke_url=str(cfg.get("graphic_elements_invoke_url") or ""),
-        ocr_invoke_url=str(cfg.get("ocr_invoke_url") or ""),
         api_key=str(cfg.get("api_key") or ""),
         request_timeout_s=float(cfg.get("request_timeout_s", 60.0)),
     )
