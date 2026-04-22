@@ -32,6 +32,7 @@ from nemo_retriever.params import ExtractParams
 from nemo_retriever.params import HtmlChunkParams
 from nemo_retriever.params import PdfSplitParams
 from nemo_retriever.params import TextChunkParams
+from nemo_retriever.params import VideoExtractParams
 from nemo_retriever.parse.nemotron_parse import NemotronParseActor
 from nemo_retriever.pdf.extract import PDFExtractionActor
 from nemo_retriever.pdf.split import PDFSplitActor
@@ -40,6 +41,8 @@ from nemo_retriever.txt.ray_data import TxtSplitActor
 from nemo_retriever.utils.convert.to_pdf import DocToPdfConversionActor
 from nemo_retriever.graph.designer import designer_component
 from nemo_retriever.utils.ray_resource_hueristics import gather_local_resources
+from nemo_retriever.video.frame_actor import VideoFrameExtractActor
+from nemo_retriever.video.frame_ocr import VideoFrameOCRActor
 
 
 # Define file type mappings
@@ -48,7 +51,7 @@ TEXT_EXTENSIONS = {".txt"}
 HTML_EXTENSIONS = {".html"}
 AUDIO_EXTENSIONS = {".mp3", ".wav"}
 IMAGE_EXTENSIONS = SUPPORTED_IMAGE_EXTENSIONS
-VIDEO_EXTENSIONS = {".mp4"}
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv"}
 
 
 def _has_endpoint(*values: Any) -> bool:
@@ -82,6 +85,14 @@ def _ocr_stage_needed(extract_params: ExtractParams) -> bool:
 
 
 def _extract_params_need_local_gpu(extraction_mode: str, extract_params: ExtractParams | None) -> bool:
+    if extraction_mode == "video":
+        # Per-frame OCR defaults to the local Nemotron OCR v1 model, which must
+        # run on a CUDA-capable Ray actor. Only a remote ocr_invoke_url lets us
+        # stay on the CPU variant.
+        return not _has_endpoint(
+            getattr(extract_params, "ocr_invoke_url", None),
+            getattr(extract_params, "invoke_url", None),
+        )
     if extract_params is None:
         return False
     if extraction_mode not in {"pdf", "image", "auto"}:
@@ -120,6 +131,7 @@ class _MultiTypeExtractBase(AbstractOperator):
         html_params: HtmlChunkParams | None = None,
         audio_chunk_params: AudioChunkParams | None = None,
         asr_params: ASRParams | None = None,
+        video_params: VideoExtractParams | None = None,
         caption_params: CaptionParams | None = None,
         **kwargs: Any,
     ) -> None:
@@ -130,6 +142,7 @@ class _MultiTypeExtractBase(AbstractOperator):
         self.html_params = html_params or HtmlChunkParams()
         self.audio_chunk_params = audio_chunk_params or AudioChunkParams()
         self.asr_params = asr_params or ASRParams()
+        self.video_params = video_params or VideoExtractParams()
         self.caption_params = caption_params
         self._resolved_resources = None
 
@@ -162,8 +175,14 @@ class _MultiTypeExtractBase(AbstractOperator):
             audio_df = MediaChunkActor(params=self.audio_chunk_params).run(grouped["audio"])
             outputs.append(ASRActor(params=self.asr_params).run(audio_df))
         if not grouped["video"].empty:
-            video_df = MediaChunkActor(params=self.audio_chunk_params).run(grouped["video"])
-            outputs.append(ASRActor(params=self.asr_params).run(video_df))
+            video_df = grouped["video"]
+            if self.video_params.extract_audio:
+                audio_chunks_df = MediaChunkActor(params=self.audio_chunk_params).run(video_df)
+                outputs.append(ASRActor(params=self.asr_params).run(audio_chunks_df))
+            if self.video_params.extract_frames:
+                frame_pages_df = VideoFrameExtractActor(params=self.video_params).run(video_df)
+                if isinstance(frame_pages_df, pd.DataFrame) and not frame_pages_df.empty:
+                    outputs.append(self._run_video_frame_ocr_pipeline(frame_pages_df))
 
         non_empty = [df for df in outputs if isinstance(df, pd.DataFrame) and not df.empty]
         if not non_empty:
@@ -334,6 +353,28 @@ class _MultiTypeExtractBase(AbstractOperator):
 
         return batch_df
 
+    def _run_video_frame_ocr_pipeline(self, batch_df: pd.DataFrame) -> pd.DataFrame:
+        """OCR-only path for video frames.
+
+        Skips PageElementDetection / TableStructure / GraphicElements and
+        invokes OCR directly on each full frame image.
+        """
+        extract_params = self.extract_params
+        tuning = getattr(extract_params, "batch_tuning", None)
+
+        ocr_kwargs: dict[str, Any] = {}
+        if extract_params.ocr_invoke_url:
+            ocr_kwargs["ocr_invoke_url"] = extract_params.ocr_invoke_url
+        if extract_params.api_key:
+            ocr_kwargs["api_key"] = extract_params.api_key
+        inference_batch_size = getattr(extract_params, "inference_batch_size", None) or getattr(
+            tuning, "ocr_inference_batch_size", None
+        )
+        if inference_batch_size:
+            ocr_kwargs["inference_batch_size"] = int(inference_batch_size)
+
+        return self._instantiate_resolved(VideoFrameOCRActor, **ocr_kwargs).run(batch_df)
+
     def _local_resources(self):
         if self._resolved_resources is None:
             self._resolved_resources = gather_local_resources()
@@ -390,6 +431,7 @@ class MultiTypeExtractOperator(ArchetypeOperator):
         html_params: HtmlChunkParams | None = None,
         audio_chunk_params: AudioChunkParams | None = None,
         asr_params: ASRParams | None = None,
+        video_params: VideoExtractParams | None = None,
         caption_params: CaptionParams | None = None,
         **kwargs: Any,
     ) -> None:
@@ -400,6 +442,7 @@ class MultiTypeExtractOperator(ArchetypeOperator):
             html_params=html_params,
             audio_chunk_params=audio_chunk_params,
             asr_params=asr_params,
+            video_params=video_params,
             caption_params=caption_params,
             **kwargs,
         )
@@ -409,4 +452,5 @@ class MultiTypeExtractOperator(ArchetypeOperator):
         self.html_params = html_params
         self.audio_chunk_params = audio_chunk_params
         self.asr_params = asr_params
+        self.video_params = video_params
         self.caption_params = caption_params

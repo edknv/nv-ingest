@@ -31,6 +31,7 @@ from .models import TabularExtractParams
 from .models import TableParams
 from .models import TextChunkParams
 from .models import VdbUploadParams
+from .models import VideoExtractParams
 from .models import WebhookParams
 
 __all__ = [
@@ -63,5 +64,6 @@ __all__ = [
     "TableParams",
     "TextChunkParams",
     "VdbUploadParams",
+    "VideoExtractParams",
     "WebhookParams",
 ]

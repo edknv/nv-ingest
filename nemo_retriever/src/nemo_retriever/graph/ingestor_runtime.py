@@ -339,6 +339,7 @@ def _resolve_execution_inputs(
     html_params: Any | None,
     audio_chunk_params: Any | None,
     asr_params: Any | None,
+    video_params: Any | None,
     dedup_params: Any | None,
     split_params: Any | None,
     caption_params: Any | None,
@@ -371,6 +372,7 @@ def _resolve_execution_inputs(
             html_params,
             audio_chunk_params,
             asr_params,
+            video_params,
             dedup_params,
             split_params,
             caption_params,
@@ -388,6 +390,7 @@ def _resolve_execution_inputs(
         execution_plan.html_params,
         execution_plan.audio_chunk_params,
         execution_plan.asr_params,
+        getattr(execution_plan, "video_params", None),
         stage_map.get("dedup"),
         stage_map.get("split"),
         stage_map.get("caption"),
@@ -402,7 +405,10 @@ def _should_build_audio_graph(
     *,
     extract_params: Any | None,
     asr_params: Any | None,
+    video_params: Any | None = None,
 ) -> bool:
+    if video_params is not None:
+        return False
     method = str(getattr(extract_params, "method", "") or "").strip().lower()
     if method == "audio":
         return True
@@ -496,6 +502,7 @@ def build_graph(
     html_params: Any | None = None,
     audio_chunk_params: Any | None = None,
     asr_params: Any | None = None,
+    video_params: Any | None = None,
     dedup_params: Any | None = None,
     embed_params: Any | None = None,
     split_params: Any | None = None,
@@ -513,6 +520,7 @@ def build_graph(
         html_params,
         audio_chunk_params,
         asr_params,
+        video_params,
         dedup_params,
         split_params,
         caption_params,
@@ -528,6 +536,7 @@ def build_graph(
         html_params=html_params,
         audio_chunk_params=audio_chunk_params,
         asr_params=asr_params,
+        video_params=video_params,
         dedup_params=dedup_params,
         split_params=split_params,
         caption_params=caption_params,
@@ -540,9 +549,10 @@ def build_graph(
     if _should_build_audio_graph(
         extract_params=extract_params,
         asr_params=asr_params,
+        video_params=video_params,
     ):
         graph = Graph() >> MediaChunkActor(params=audio_chunk_params) >> ASRActor(params=asr_params)
-    elif extraction_mode in {"text", "html", "audio", "image", "auto"}:
+    elif extraction_mode in {"text", "html", "audio", "image", "video", "auto"}:
         graph = Graph() >> MultiTypeExtractOperator(
             extraction_mode=extraction_mode,
             extract_params=extract_params,
@@ -550,6 +560,7 @@ def build_graph(
             html_params=html_params,
             audio_chunk_params=audio_chunk_params,
             asr_params=asr_params,
+            video_params=video_params,
             caption_params=caption_params,
         )
     else:

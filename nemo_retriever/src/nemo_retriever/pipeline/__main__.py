@@ -47,6 +47,7 @@ from nemo_retriever.params import (
     ExtractParams,
     StoreParams,
     TextChunkParams,
+    VideoExtractParams,
 )
 from nemo_retriever.params.models import BatchTuningParams
 from nemo_retriever.utils.input_files import resolve_input_patterns
@@ -68,6 +69,7 @@ _PANEL_EMBED = "Embedding"
 _PANEL_DEDUP_CAPTION = "Dedup and Caption"
 _PANEL_STORE_CHUNK = "Storage and Text Chunking"
 _PANEL_AUDIO = "Audio"
+_PANEL_VIDEO = "Video"
 _PANEL_RAY = "Ray / Batch Tuning"
 _PANEL_LANCEDB = "LanceDB and Outputs"
 _PANEL_EVAL = "Evaluation (Recall / BEIR)"
@@ -198,7 +200,7 @@ def _resolve_file_patterns(input_path: Path, input_type: str) -> list[str]:
     if not input_path.is_dir():
         raise typer.BadParameter(f"Path does not exist: {input_path}")
 
-    if input_type not in {"pdf", "doc", "txt", "html", "image", "audio"}:
+    if input_type not in {"pdf", "doc", "txt", "html", "image", "audio", "video"}:
         raise typer.BadParameter(f"Unsupported --input-type: {input_type!r}")
 
     patterns = resolve_input_patterns(input_path, input_type)
@@ -385,6 +387,11 @@ def _build_ingestor(
     segment_audio: bool,
     audio_split_type: str,
     audio_split_interval: int,
+    video_split_interval: int,
+    video_frame_position: str,
+    video_frame_format: str,
+    video_extract_frames: bool,
+    video_extract_audio: bool,
 ) -> GraphIngestor:
     """Construct a :class:`GraphIngestor` with all requested stages attached."""
 
@@ -411,6 +418,20 @@ def _build_ingestor(
         ingestor = ingestor.extract_audio(
             params=AudioChunkParams(split_type=audio_split_type, split_interval=int(audio_split_interval)),
             asr_params=asr_params,
+        )
+    elif input_type == "video":
+        asr_params = asr_params_from_env().model_copy(update={"segment_audio": bool(segment_audio)})
+        ingestor = ingestor.extract_video(
+            params=VideoExtractParams(
+                split_type="time",
+                split_interval=int(video_split_interval),
+                frame_position=video_frame_position,
+                frame_format=video_frame_format,
+                extract_frames=bool(video_extract_frames),
+                extract_audio=bool(video_extract_audio),
+            ),
+            asr_params=asr_params,
+            extract_params=extract_params,
         )
     else:
         # "pdf" or "doc"
@@ -586,7 +607,7 @@ def run(
     input_type: str = typer.Option(
         "pdf",
         "--input-type",
-        help="Input type: 'pdf', 'doc', 'txt', 'html', 'image', or 'audio'.",
+        help="Input type: 'pdf', 'doc', 'txt', 'html', 'image', 'audio', or 'video'.",
         rich_help_panel=_PANEL_IO,
     ),
     debug: bool = typer.Option(
@@ -751,6 +772,38 @@ def run(
     audio_match_tolerance_secs: float = typer.Option(
         2.0, "--audio-match-tolerance-secs", min=0.0, rich_help_panel=_PANEL_AUDIO
     ),
+    # --- Video ---------------------------------------------------------
+    video_split_interval: int = typer.Option(
+        120,
+        "--video-split-interval",
+        min=1,
+        help="Seconds per video segment (one frame per segment).",
+        rich_help_panel=_PANEL_VIDEO,
+    ),
+    video_frame_position: str = typer.Option(
+        "middle",
+        "--video-frame-position",
+        help="Which frame to pull per segment: 'first', 'middle', 'last'.",
+        rich_help_panel=_PANEL_VIDEO,
+    ),
+    video_frame_format: str = typer.Option(
+        "jpeg",
+        "--video-frame-format",
+        help="Intermediate frame format before PNG re-encode: 'jpeg' or 'png'.",
+        rich_help_panel=_PANEL_VIDEO,
+    ),
+    video_extract_frames: bool = typer.Option(
+        True,
+        "--video-extract-frames/--no-video-extract-frames",
+        help="Run the per-frame OCR branch.",
+        rich_help_panel=_PANEL_VIDEO,
+    ),
+    video_extract_audio: bool = typer.Option(
+        True,
+        "--video-extract-audio/--no-video-extract-audio",
+        help="Run the ASR branch alongside frames.",
+        rich_help_panel=_PANEL_VIDEO,
+    ),
     # --- LanceDB / outputs ---------------------------------------------
     lancedb_uri: str = typer.Option(LANCEDB_URI, "--lancedb-uri", rich_help_panel=_PANEL_LANCEDB),
     save_intermediate: Optional[Path] = typer.Option(
@@ -837,6 +890,10 @@ def run(
             raise ValueError(f"Unsupported --recall-match-mode: {recall_match_mode!r}")
         if audio_split_type not in {"size", "time", "frame"}:
             raise ValueError(f"Unsupported --audio-split-type: {audio_split_type!r}")
+        if video_frame_position not in {"first", "middle", "last"}:
+            raise ValueError(f"Unsupported --video-frame-position: {video_frame_position!r}")
+        if video_frame_format not in {"jpeg", "png"}:
+            raise ValueError(f"Unsupported --video-frame-format: {video_frame_format!r}")
         if evaluation_mode not in {"recall", "beir", "qa"}:
             raise ValueError(f"Unsupported --evaluation-mode: {evaluation_mode!r}")
         if evaluation_mode == "qa" and eval_config is None:
@@ -976,6 +1033,11 @@ def run(
             segment_audio=segment_audio,
             audio_split_type=audio_split_type,
             audio_split_interval=audio_split_interval,
+            video_split_interval=video_split_interval,
+            video_frame_position=video_frame_position,
+            video_frame_format=video_frame_format,
+            video_extract_frames=video_extract_frames,
+            video_extract_audio=video_extract_audio,
         )
 
         # --- Execute ---------------------------------------------------

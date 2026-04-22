@@ -197,12 +197,32 @@ def _infer_vector_dim(rows: Sequence[Dict[str, Any]]) -> int:
 
 
 def create_lancedb_index(table: Any, *, cfg: LanceDBConfig, text_column: str = "text") -> None:
-    """Create vector (IVF_HNSW_SQ) and optionally FTS indices on a LanceDB table."""
+    """Create vector (IVF_HNSW_SQ) and optionally FTS indices on a LanceDB table.
+
+    ``num_partitions`` is capped at the current row count so the underlying
+    KMeans trainer doesn't fail with "cannot train K centroids with N vectors"
+    on small corpora.
+    """
+    requested_partitions = int(cfg.num_partitions)
+    try:
+        row_count = int(table.count_rows())
+    except Exception:
+        row_count = 0
+    effective_partitions = requested_partitions
+    if row_count > 0 and row_count < requested_partitions:
+        effective_partitions = max(1, row_count)
+        logger.warning(
+            "Capping LanceDB num_partitions from %d to %d (table has %d rows).",
+            requested_partitions,
+            effective_partitions,
+            row_count,
+        )
+
     try:
         table.create_index(
             index_type=cfg.index_type,
             metric=cfg.metric,
-            num_partitions=int(cfg.num_partitions),
+            num_partitions=effective_partitions,
             num_sub_vectors=int(cfg.num_sub_vectors),
             vector_column_name="vector",
         )
