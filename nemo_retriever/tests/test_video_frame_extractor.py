@@ -392,3 +392,48 @@ def test_video_frame_position_first_vs_middle(tmp_path: Path):
     )
     assert df_first.iloc[0]["metadata"]["frame_position_seconds"] == pytest.approx(0.0)
     assert df_mid.iloc[0]["metadata"]["frame_position_seconds"] == pytest.approx(1.0)
+
+
+def test_graph_pipeline_infers_input_type_from_extension(tmp_path: Path):
+    """_infer_input_type maps common extensions to their input-type label."""
+    from nemo_retriever.examples.graph_pipeline import _infer_input_type
+
+    cases = {
+        "clip.mp4": "video",
+        "clip.mov": "video",
+        "clip.mkv": "video",
+        "sample.wav": "audio",
+        "doc.pdf": "pdf",
+        "slide.pptx": "doc",
+        "note.txt": "txt",
+        "page.html": "html",
+        "img.png": "image",
+    }
+    for name, expected in cases.items():
+        p = tmp_path / name
+        p.write_bytes(b"")
+        assert _infer_input_type(p) == expected, f"{name} → {expected}"
+
+
+def test_graph_pipeline_infers_input_type_from_directory(tmp_path: Path):
+    """A directory of one type resolves; a mix raises typer.BadParameter."""
+    import typer
+    from nemo_retriever.examples.graph_pipeline import _infer_input_type
+
+    videos = tmp_path / "videos"
+    videos.mkdir()
+    (videos / "a.mp4").write_bytes(b"")
+    (videos / "b.mkv").write_bytes(b"")
+    assert _infer_input_type(videos) == "video"
+
+    mixed = tmp_path / "mixed"
+    mixed.mkdir()
+    (mixed / "a.mp4").write_bytes(b"")
+    (mixed / "b.pdf").write_bytes(b"")
+    with pytest.raises(typer.BadParameter, match="mixed input types"):
+        _infer_input_type(mixed)
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    with pytest.raises(typer.BadParameter, match="No supported files"):
+        _infer_input_type(empty)

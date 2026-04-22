@@ -167,6 +167,55 @@ def _count_input_units(result_df) -> int:
     return int(len(result_df.index))
 
 
+_EXTENSION_TO_INPUT_TYPE: dict[str, str] = {
+    ".pdf": "pdf",
+    ".docx": "doc",
+    ".pptx": "doc",
+    ".txt": "txt",
+    ".html": "html",
+    ".jpg": "image",
+    ".jpeg": "image",
+    ".png": "image",
+    ".tiff": "image",
+    ".tif": "image",
+    ".bmp": "image",
+    ".mp3": "audio",
+    ".wav": "audio",
+    ".m4a": "audio",
+    ".mp4": "video",
+    ".mov": "video",
+    ".avi": "video",
+    ".mkv": "video",
+}
+
+
+def _infer_input_type(input_path: Path) -> str:
+    """Detect --input-type from a file extension or from files in a directory.
+
+    Raises typer.BadParameter on unsupported extensions, empty directories, or
+    directories with mixed media types (caller must pass --input-type in that case).
+    """
+    path = Path(input_path)
+    if path.is_file():
+        ext = path.suffix.lower()
+        inferred = _EXTENSION_TO_INPUT_TYPE.get(ext)
+        if inferred is None:
+            raise typer.BadParameter(f"Cannot infer --input-type from extension {ext!r}; pass --input-type explicitly.")
+        return inferred
+    if not path.is_dir():
+        raise typer.BadParameter(f"Path does not exist: {path}")
+
+    found: set[str] = set()
+    for ext, t in _EXTENSION_TO_INPUT_TYPE.items():
+        if any(path.rglob(f"*{ext}")):
+            found.add(t)
+    if not found:
+        raise typer.BadParameter(f"No supported files found under {path}; pass --input-type explicitly.")
+    if len(found) > 1:
+        raise typer.BadParameter(f"Directory contains mixed input types {sorted(found)}; pass --input-type explicitly.")
+    return found.pop()
+
+
 def _resolve_file_patterns(input_path: Path, input_type: str) -> list[str]:
     import glob as _glob
 
@@ -206,10 +255,11 @@ def main(
     ),
     debug: bool = typer.Option(False, "--debug/--no-debug", help="Enable debug-level logging."),
     dpi: int = typer.Option(300, "--dpi", min=72, help="Render DPI for PDF page images."),
-    input_type: str = typer.Option(
-        "pdf",
+    input_type: Optional[str] = typer.Option(
+        None,
         "--input-type",
-        help="Input type: 'pdf', 'doc', 'txt', 'html', 'image', 'audio', or 'video'.",
+        help="Input type: 'pdf', 'doc', 'txt', 'html', 'image', 'audio', or 'video'. "
+        "Auto-detected from the file extension (or from files under a directory) when omitted.",
     ),
     method: str = typer.Option("pdfium", "--method", help="PDF text extraction method."),
     extract_text: bool = typer.Option(True, "--extract-text/--no-extract-text"),
@@ -389,6 +439,9 @@ def main(
             logger.warning("Forcing embed GPUs to 0.0 because --embed-invoke-url is set.")
             embed_gpus_per_actor = 0.0
 
+        if input_type is None:
+            input_type = _infer_input_type(Path(input_path))
+            logger.info("Auto-detected --input-type=%s from %s", input_type, input_path)
         file_patterns = _resolve_file_patterns(Path(input_path), input_type)
 
         # ------------------------------------------------------------------
