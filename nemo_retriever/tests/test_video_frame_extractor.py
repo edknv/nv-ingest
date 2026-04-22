@@ -84,8 +84,9 @@ def test_video_frames_path_to_pages_df_produces_image_schema(tmp_path: Path):
     assert meta["source_video"] == str(video)
     assert meta["source_path"] == str(video)
     assert meta["segment_index"] == 0
-    assert meta["segment_start_seconds"] == pytest.approx(0.0)
-    assert meta["segment_end_seconds"] == pytest.approx(2.0)
+    # recall.core._hit_to_audio_segment_key reads these exact keys.
+    assert meta["segment_start"] == pytest.approx(0.0)
+    assert meta["segment_end"] == pytest.approx(2.0)
     assert meta["modality"] == "video_frame"
     assert meta["frame_format"] == "jpeg"
     assert meta["needs_ocr_for_text"] is True
@@ -96,7 +97,7 @@ def test_video_frames_path_to_pages_df_produces_image_schema(tmp_path: Path):
 
     assert df.iloc[1]["metadata"]["segment_index"] == 1
     assert df.iloc[1]["page_number"] == 2
-    assert df.iloc[1]["metadata"]["segment_start_seconds"] == pytest.approx(2.0)
+    assert df.iloc[1]["metadata"]["segment_start"] == pytest.approx(2.0)
 
 
 @pytest.mark.skipif(not _ffmpeg_available(), reason="ffmpeg not available")

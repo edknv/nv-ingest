@@ -250,8 +250,11 @@ def _frame_bytes_to_page_row(
             "source_path": source_path,
             "source_video": source_path,
             "segment_index": segment_index,
-            "segment_start_seconds": segment_start,
-            "segment_end_seconds": segment_end,
+            # Match the audio-segment evaluator's expected keys. See
+            # nemo_retriever.recall.core._hit_to_audio_segment_key, which reads
+            # metadata["segment_start"] / metadata["segment_end"] in seconds.
+            "segment_start": float(segment_start),
+            "segment_end": float(segment_end),
             "frame_position_seconds": frame_position_sec,
             "frame_format": frame_format,
             "modality": "video_frame",
