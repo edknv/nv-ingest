@@ -109,6 +109,10 @@ multimedia = [
 # opt-in so non-audio users don't pay the install cost.
 audio = [
   "nemo_toolkit[asr]>=2.0",
+  # Pin torchaudio as an explicit dep so [tool.uv.sources] applies and we
+  # get the cu130-matching build (transitive-only deps don't always get the
+  # source override).
+  "torchaudio~=2.10.0",
   "nemo_retriever[multimedia]",
 ]
 
@@ -156,12 +160,18 @@ nemotron-page-elements-v3 = { index = "test-pypi" }
 nemotron-graphic-elements-v1 = { index = "test-pypi" }
 nemotron-table-structure-v1 = { index = "test-pypi" }
 nemotron-ocr = { index = "test-pypi" }
-# On Linux, resolve torch/torchvision from the CUDA wheel index.
+# On Linux, resolve torch/torchvision/torchaudio from the CUDA wheel index.
 # On Mac, fall through to PyPI to get CPU wheels.
+# torchaudio is pulled in transitively by the [audio] extra (nemo_toolkit[asr]);
+# without this override, uv would resolve the default cu128 build and trip
+# torchaudio's CUDA-version-mismatch check against torch's cu130 wheel.
 torch = [
   { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 torchvision = [
+  { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchaudio = [
   { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 vllm = [
