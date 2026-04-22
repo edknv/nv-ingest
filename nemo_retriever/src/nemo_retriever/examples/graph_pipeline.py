@@ -442,6 +442,17 @@ def main(
         if input_type is None:
             input_type = _infer_input_type(Path(input_path))
             logger.info("Auto-detected --input-type=%s from %s", input_type, input_path)
+
+        if input_type in {"video", "audio"}:
+            from nemo_retriever.audio.media_interface import is_media_available
+
+            if not is_media_available():
+                raise typer.BadParameter(
+                    f"--input-type={input_type!r} requires ffmpeg on this host. Install with:\n"
+                    "    sudo apt-get install -y ffmpeg      # system binary (provides ffprobe)\n"
+                    "    uv pip install ffmpeg-python         # Python bindings\n"
+                    "Both are required; neither alone is sufficient."
+                )
         file_patterns = _resolve_file_patterns(Path(input_path), input_type)
 
         # ------------------------------------------------------------------
