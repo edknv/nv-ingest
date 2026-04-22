@@ -19,3 +19,20 @@ def test_multi_type_grouping_against_repo_data_folder() -> None:
 
     assert set(grouped) == {"pdf", "image", "text", "html", "audio", "video"}
     assert any(files for files in grouped.values()), f"No supported files were found in {data_folder}"
+
+
+def test_expanded_video_extensions_dispatch_to_video(tmp_path: Path) -> None:
+    extract_op = MultiTypeExtractOperator()
+
+    for ext in (".mp4", ".mov", ".avi", ".mkv"):
+        (tmp_path / f"sample{ext}").write_bytes(b"")
+
+    grouped = extract_op.preprocess(str(tmp_path))
+
+    assert set(grouped["video"]) == {
+        str(tmp_path / "sample.mp4"),
+        str(tmp_path / "sample.mov"),
+        str(tmp_path / "sample.avi"),
+        str(tmp_path / "sample.mkv"),
+    }
+    assert not grouped["audio"]

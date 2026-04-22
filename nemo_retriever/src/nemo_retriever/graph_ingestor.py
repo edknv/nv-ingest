@@ -45,6 +45,7 @@ from nemo_retriever.params import (
     HtmlChunkParams,
     StoreParams,
     TextChunkParams,
+    VideoExtractParams,
 )
 from nemo_retriever.utils.remote_auth import resolve_remote_api_key
 
@@ -143,6 +144,7 @@ class GraphIngestor(ingestor):
         self._html_params: Any = None
         self._audio_chunk_params: Any = None
         self._asr_params: Any = None
+        self._video_params: Any = None
         self._embed_params: Any = None
         self._split_params: Any = None
         self._caption_params: Any = None
@@ -204,6 +206,38 @@ class GraphIngestor(ingestor):
         self._extraction_mode = "audio"
         self._audio_chunk_params = _coerce(params, kwargs, default_factory=AudioChunkParams)
         self._asr_params = asr_params or ASRParams()
+        self._record_stage("extract")
+        return self
+
+    def extract_video(
+        self,
+        params: Optional[VideoExtractParams] = None,
+        *,
+        asr_params: Optional[ASRParams] = None,
+        audio_chunk_params: Optional[AudioChunkParams] = None,
+        extract_params: Optional[ExtractParams] = None,
+        **kwargs: Any,
+    ) -> "GraphIngestor":
+        """Configure video extraction (extraction_mode='video').
+
+        Runs both per-segment frame extraction (feeding the image detection
+        pipeline) and audio transcription (MediaChunkActor + ASRActor). Either
+        branch can be toggled off via ``VideoExtractParams(extract_frames=False)``
+        or ``VideoExtractParams(extract_audio=False)``.
+
+        ``extract_params`` supplies OCR endpoint / API-key credentials used by
+        the per-frame OCR stage; pass an ``ExtractParams(api_key=...,
+        ocr_invoke_url=...)`` when the hosted NIM requires authentication.
+        """
+        self._extraction_mode = "video"
+        self._video_params = _coerce(params, kwargs, default_factory=VideoExtractParams)
+        self._audio_chunk_params = audio_chunk_params or AudioChunkParams(
+            split_type="time",
+            split_interval=self._video_params.split_interval,
+        )
+        self._asr_params = asr_params or ASRParams()
+        if extract_params is not None:
+            self._extract_params = _resolve_api_key(extract_params)
         self._record_stage("extract")
         return self
 
@@ -300,6 +334,7 @@ class GraphIngestor(ingestor):
                 html_params=self._html_params,
                 audio_chunk_params=self._audio_chunk_params,
                 asr_params=self._asr_params,
+                video_params=self._video_params,
                 embed_params=self._embed_params,
                 split_params=self._split_params,
                 caption_params=self._caption_params,
@@ -343,6 +378,7 @@ class GraphIngestor(ingestor):
                 html_params=self._html_params,
                 audio_chunk_params=self._audio_chunk_params,
                 asr_params=self._asr_params,
+                video_params=self._video_params,
                 embed_params=self._embed_params,
                 split_params=self._split_params,
                 caption_params=self._caption_params,

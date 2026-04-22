@@ -53,6 +53,7 @@ from nemo_retriever.params import EmbedParams
 from nemo_retriever.params import ExtractParams
 from nemo_retriever.params import StoreParams
 from nemo_retriever.params import TextChunkParams
+from nemo_retriever.params import VideoExtractParams
 from nemo_retriever.model import VL_EMBED_MODEL, VL_RERANK_MODEL
 from nemo_retriever.params.models import BatchTuningParams
 from nemo_retriever.utils.input_files import resolve_input_patterns
@@ -175,7 +176,7 @@ def _resolve_file_patterns(input_path: Path, input_type: str) -> list[str]:
     if not input_path.is_dir():
         raise typer.BadParameter(f"Path does not exist: {input_path}")
 
-    if input_type not in {"pdf", "doc", "txt", "html", "image", "audio"}:
+    if input_type not in {"pdf", "doc", "txt", "html", "image", "audio", "video"}:
         raise typer.BadParameter(f"Unsupported --input-type: {input_type!r}")
 
     patterns = resolve_input_patterns(input_path, input_type)
@@ -206,7 +207,9 @@ def main(
     debug: bool = typer.Option(False, "--debug/--no-debug", help="Enable debug-level logging."),
     dpi: int = typer.Option(300, "--dpi", min=72, help="Render DPI for PDF page images."),
     input_type: str = typer.Option(
-        "pdf", "--input-type", help="Input type: 'pdf', 'doc', 'txt', 'html', 'image', or 'audio'."
+        "pdf",
+        "--input-type",
+        help="Input type: 'pdf', 'doc', 'txt', 'html', 'image', 'audio', or 'video'.",
     ),
     method: str = typer.Option("pdfium", "--method", help="PDF text extraction method."),
     extract_text: bool = typer.Option(True, "--extract-text/--no-extract-text"),
@@ -296,6 +299,21 @@ def main(
     segment_audio: bool = typer.Option(False, "--segment-audio/--no-segment-audio"),
     audio_split_type: str = typer.Option("size", "--audio-split-type"),
     audio_split_interval: int = typer.Option(500000, "--audio-split-interval", min=1),
+    video_split_interval: int = typer.Option(
+        120, "--video-split-interval", min=1, help="Seconds per video segment (one frame per segment)."
+    ),
+    video_frame_position: str = typer.Option(
+        "middle", "--video-frame-position", help="Which frame to pull per segment: 'first', 'middle', 'last'."
+    ),
+    video_frame_format: str = typer.Option(
+        "jpeg", "--video-frame-format", help="Intermediate frame format before PNG re-encode: 'jpeg' or 'png'."
+    ),
+    video_extract_frames: bool = typer.Option(
+        True, "--video-extract-frames/--no-video-extract-frames", help="Run the per-frame OCR branch."
+    ),
+    video_extract_audio: bool = typer.Option(
+        True, "--video-extract-audio/--no-video-extract-audio", help="Run the ASR branch alongside frames."
+    ),
     evaluation_mode: str = typer.Option("recall", "--evaluation-mode"),
     reranker: Optional[bool] = typer.Option(False, "--reranker/--no-reranker"),
     reranker_model_name: str = typer.Option(VL_RERANK_MODEL, "--reranker-model-name"),
@@ -321,6 +339,10 @@ def main(
             raise ValueError(f"Unsupported --recall-match-mode: {recall_match_mode!r}")
         if audio_split_type not in {"size", "time", "frame"}:
             raise ValueError(f"Unsupported --audio-split-type: {audio_split_type!r}")
+        if video_frame_position not in {"first", "middle", "last"}:
+            raise ValueError(f"Unsupported --video-frame-position: {video_frame_position!r}")
+        if video_frame_format not in {"jpeg", "png"}:
+            raise ValueError(f"Unsupported --video-frame-format: {video_frame_format!r}")
         if evaluation_mode not in {"recall", "beir"}:
             raise ValueError(f"Unsupported --evaluation-mode: {evaluation_mode!r}")
 
@@ -494,6 +516,20 @@ def main(
             ingestor = ingestor.extract_audio(
                 params=AudioChunkParams(split_type=audio_split_type, split_interval=int(audio_split_interval)),
                 asr_params=asr_params,
+            )
+        elif input_type == "video":
+            asr_params = asr_params_from_env().model_copy(update={"segment_audio": bool(segment_audio)})
+            ingestor = ingestor.extract_video(
+                params=VideoExtractParams(
+                    split_type="time",
+                    split_interval=int(video_split_interval),
+                    frame_position=video_frame_position,
+                    frame_format=video_frame_format,
+                    extract_frames=bool(video_extract_frames),
+                    extract_audio=bool(video_extract_audio),
+                ),
+                asr_params=asr_params,
+                extract_params=extract_params,
             )
         else:
             # "pdf" or "doc"

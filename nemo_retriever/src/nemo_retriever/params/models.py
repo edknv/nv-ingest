@@ -117,6 +117,21 @@ class ASRParams(_ParamsModel):
     segment_audio: bool = False
 
 
+class VideoExtractParams(_ParamsModel):
+    """Params for video segmentation and per-segment frame extraction.
+
+    Governs the frame-extraction branch of the video pipeline. The parallel
+    ASR branch is configured via the existing AudioChunkParams / ASRParams.
+    """
+
+    split_type: Literal["size", "time", "frame"] = "time"
+    split_interval: int = 120
+    frame_position: Literal["first", "middle", "last"] = "middle"
+    frame_format: Literal["jpeg", "png"] = "jpeg"
+    extract_frames: bool = True
+    extract_audio: bool = True
+
+
 class LanceDbParams(_ParamsModel):
     lancedb_uri: str = "lancedb"
     table_name: str = "nv-ingest"
