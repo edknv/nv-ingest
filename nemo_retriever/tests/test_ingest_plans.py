@@ -13,7 +13,7 @@ from nemo_retriever.graph.cpu_operator import CPUOperator
 from nemo_retriever.graph.gpu_operator import GPUOperator
 from nemo_retriever.graph_ingestor import GraphIngestor
 from nemo_retriever.ingest_plans import BaseIngestPlan
-from nemo_retriever.params import ASRParams
+from nemo_retriever.params import TranscriptionParams
 from nemo_retriever.params import AudioChunkParams
 from nemo_retriever.params import BatchTuningParams
 from nemo_retriever.params import CaptionParams
@@ -344,7 +344,7 @@ def test_build_inprocess_graph_supports_audio_execution_plan() -> None:
     plan.set_extraction(
         mode="audio",
         audio_chunk_params=AudioChunkParams(split_type="size", split_interval=42),
-        asr_params=ASRParams(audio_endpoints=("localhost:50051", None)),
+        transcription_params=TranscriptionParams(audio_endpoints=("localhost:50051", None)),
     )
 
     graph = build_inprocess_graph(execution_plan=plan.build_execution_plan())
@@ -357,7 +357,7 @@ def test_build_inprocess_graph_supports_audio_execution_plan() -> None:
             break
         node = node.children[0]
 
-    assert names == ["MediaChunkActor", "ASRActor"]
+    assert names == ["MediaChunkActor", "TranscriptionActor"]
 
 
 @pytest.mark.skipif(not is_media_available(), reason="ffmpeg not available")
@@ -375,4 +375,4 @@ def test_build_graph_uses_explicit_audio_graph_for_audio_extract_method() -> Non
             break
         node = node.children[0]
 
-    assert names == ["MediaChunkActor", "ASRActor"]
+    assert names == ["MediaChunkActor", "TranscriptionActor"]

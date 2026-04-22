@@ -36,7 +36,7 @@ from nemo_retriever.graph.ingestor_runtime import batch_tuning_to_node_overrides
 from nemo_retriever.utils.ray_resource_hueristics import gather_cluster_resources
 from nemo_retriever.ingestor import ingestor
 from nemo_retriever.params import (
-    ASRParams,
+    TranscriptionParams,
     AudioChunkParams,
     CaptionParams,
     DedupParams,
@@ -143,7 +143,7 @@ class GraphIngestor(ingestor):
         self._text_params: Any = None
         self._html_params: Any = None
         self._audio_chunk_params: Any = None
-        self._asr_params: Any = None
+        self._transcription_params: Any = None
         self._video_params: Any = None
         self._embed_params: Any = None
         self._split_params: Any = None
@@ -199,13 +199,13 @@ class GraphIngestor(ingestor):
         self,
         params: Optional[AudioChunkParams] = None,
         *,
-        asr_params: Optional[ASRParams] = None,
+        transcription_params: Optional[TranscriptionParams] = None,
         **kwargs: Any,
     ) -> "GraphIngestor":
         """Configure audio extraction (extraction_mode='audio')."""
         self._extraction_mode = "audio"
         self._audio_chunk_params = _coerce(params, kwargs, default_factory=AudioChunkParams)
-        self._asr_params = asr_params or ASRParams()
+        self._transcription_params = transcription_params or TranscriptionParams()
         self._record_stage("extract")
         return self
 
@@ -213,7 +213,7 @@ class GraphIngestor(ingestor):
         self,
         params: Optional[VideoExtractParams] = None,
         *,
-        asr_params: Optional[ASRParams] = None,
+        transcription_params: Optional[TranscriptionParams] = None,
         audio_chunk_params: Optional[AudioChunkParams] = None,
         extract_params: Optional[ExtractParams] = None,
         **kwargs: Any,
@@ -221,7 +221,7 @@ class GraphIngestor(ingestor):
         """Configure video extraction (extraction_mode='video').
 
         Runs both per-segment frame extraction (feeding the image detection
-        pipeline) and audio transcription (MediaChunkActor + ASRActor). Either
+        pipeline) and audio transcription (MediaChunkActor + TranscriptionActor). Either
         branch can be toggled off via ``VideoExtractParams(extract_frames=False)``
         or ``VideoExtractParams(extract_audio=False)``.
 
@@ -235,7 +235,7 @@ class GraphIngestor(ingestor):
             split_type="time",
             split_interval=self._video_params.split_interval,
         )
-        self._asr_params = asr_params or ASRParams()
+        self._transcription_params = transcription_params or TranscriptionParams()
         if extract_params is not None:
             self._extract_params = _resolve_api_key(extract_params)
         self._record_stage("extract")
@@ -333,7 +333,7 @@ class GraphIngestor(ingestor):
                 text_params=self._text_params,
                 html_params=self._html_params,
                 audio_chunk_params=self._audio_chunk_params,
-                asr_params=self._asr_params,
+                transcription_params=self._transcription_params,
                 video_params=self._video_params,
                 embed_params=self._embed_params,
                 split_params=self._split_params,
@@ -377,7 +377,7 @@ class GraphIngestor(ingestor):
                 text_params=self._text_params,
                 html_params=self._html_params,
                 audio_chunk_params=self._audio_chunk_params,
-                asr_params=self._asr_params,
+                transcription_params=self._transcription_params,
                 video_params=self._video_params,
                 embed_params=self._embed_params,
                 split_params=self._split_params,

@@ -44,7 +44,7 @@ from typing import Optional, TextIO
 
 import typer
 
-from nemo_retriever.audio import asr_params_from_env
+from nemo_retriever.audio import transcription_params_from_env
 from nemo_retriever.graph_ingestor import GraphIngestor
 from nemo_retriever.params import AudioChunkParams
 from nemo_retriever.params import CaptionParams
@@ -576,13 +576,13 @@ def main(
         elif input_type == "image":
             ingestor = ingestor.extract_image_files(extract_params)
         elif input_type == "audio":
-            asr_params = asr_params_from_env().model_copy(update={"segment_audio": bool(segment_audio)})
+            transcription_params = transcription_params_from_env().model_copy(update={"segment_audio": bool(segment_audio)})
             ingestor = ingestor.extract_audio(
                 params=AudioChunkParams(split_type=audio_split_type, split_interval=int(audio_split_interval)),
-                asr_params=asr_params,
+                transcription_params=transcription_params,
             )
         elif input_type == "video":
-            asr_params = asr_params_from_env().model_copy(update={"segment_audio": bool(segment_audio)})
+            transcription_params = transcription_params_from_env().model_copy(update={"segment_audio": bool(segment_audio)})
             ingestor = ingestor.extract_video(
                 params=VideoExtractParams(
                     split_type="time",
@@ -592,7 +592,7 @@ def main(
                     extract_frames=bool(video_extract_frames),
                     extract_audio=bool(video_extract_audio),
                 ),
-                asr_params=asr_params,
+                transcription_params=transcription_params,
                 extract_params=extract_params,
             )
         else:

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Audio pipeline: media chunking (MediaChunkActor) and ASR (ASRActor).
+Audio pipeline: media chunking (MediaChunkActor) and ASR (TranscriptionActor).
 
 Provides the same semantics as nv-ingest-api dataloader + Parakeet for
 batch, inprocess, fused, and online run modes.
@@ -11,21 +11,22 @@ batch, inprocess, fused, and online run modes.
 
 from __future__ import annotations
 
-from nemo_retriever.audio.asr_actor import ASRActor, ASRCPUActor
-from nemo_retriever.audio.asr_actor import asr_params_from_env
+from nemo_retriever.audio.transcription_actor import TranscriptionActor, TranscriptionCPUActor, TranscriptionGPUActor
+from nemo_retriever.audio.transcription_actor import transcription_params_from_env
 from nemo_retriever.audio.chunk_actor import MediaChunkActor
 from nemo_retriever.audio.media_interface import MediaInterface
-from nemo_retriever.params import ASRParams
+from nemo_retriever.params import TranscriptionParams
 from nemo_retriever.params import AudioChunkParams
 
 from .cli import app
 
 __all__ = [
-    "ASRActor",
-    "ASRCPUActor",
-    "ASRParams",
+    "TranscriptionActor",
+    "TranscriptionCPUActor",
+    "TranscriptionGPUActor",
+    "TranscriptionParams",
     "app",
-    "asr_params_from_env",
+    "transcription_params_from_env",
     "AudioChunkParams",
     "MediaChunkActor",
     "MediaInterface",

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from .params import ASRParams
+from .params import TranscriptionParams
 from .params import AudioChunkParams
 from .params import CaptionParams
 from .params import DedupParams
@@ -39,7 +39,7 @@ class IngestExecutionPlan:
     text_params: TextChunkParams | None = None
     html_params: HtmlChunkParams | None = None
     audio_chunk_params: AudioChunkParams | None = None
-    asr_params: ASRParams | None = None
+    transcription_params: TranscriptionParams | None = None
     stages: tuple[PlannedStage, ...] = ()
     sinks: tuple[PlannedSink, ...] = ()
 
@@ -63,7 +63,7 @@ class BaseIngestPlan:
     text_params: TextChunkParams | None = None
     html_params: HtmlChunkParams | None = None
     audio_chunk_params: AudioChunkParams | None = None
-    asr_params: ASRParams | None = None
+    transcription_params: TranscriptionParams | None = None
     split_params: TextChunkParams | None = None
     dedup_params: DedupParams | None = None
     caption_params: CaptionParams | None = None
@@ -80,14 +80,14 @@ class BaseIngestPlan:
         text_params: TextChunkParams | None = None,
         html_params: HtmlChunkParams | None = None,
         audio_chunk_params: AudioChunkParams | None = None,
-        asr_params: ASRParams | None = None,
+        transcription_params: TranscriptionParams | None = None,
     ) -> None:
         self.extraction_mode = mode
         self.extract_params = extract_params
         self.text_params = text_params
         self.html_params = html_params
         self.audio_chunk_params = audio_chunk_params
-        self.asr_params = asr_params
+        self.transcription_params = transcription_params
 
     def has_extraction(self) -> bool:
         return any(
@@ -139,7 +139,7 @@ class BaseIngestPlan:
             text_params=self.text_params,
             html_params=self.html_params,
             audio_chunk_params=self.audio_chunk_params,
-            asr_params=self.asr_params,
+            transcription_params=self.transcription_params,
             stages=stages,
             sinks=sinks,
         )

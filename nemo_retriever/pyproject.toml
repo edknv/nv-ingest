@@ -6,9 +6,14 @@ build-backend = "setuptools.build_meta"
 managed = true
 package = true
 no-build-package = ["nemotron-ocr"]
-# fastparquet 2026.3.0 has no wheel for Linux x86_64 (manylinux); constrain to last version that does.
+# Force version ranges across the resolution, overriding transitive caps from dependencies.
+# - fastparquet 2026.3.0 has no wheel for Linux x86_64 (manylinux); constrain to last version that does.
+# - transformers: nemo_toolkit[asr] (pulled by the [audio] extra) caps transformers below 4.49,
+#   but the [local] extra and our local model wrappers require >=4.57.6. Pin here so resolving
+#   any extra combination lands on the same version.
 override-dependencies = [
   "fastparquet>=2024.11.0,<2026",
+  "transformers>=4.57.6,<5",
 ]
 
 [project]
@@ -91,12 +96,20 @@ local = [
 ]
 
 # ── Multimedia — audio/ASR and SVG rendering ────────────────────────────────
-# soundfile + scipy enable local Parakeet ASR on audio/video content.
+# soundfile + scipy enable audio loading/resampling for local ASR on audio/video content.
 # cairosvg enables SVG-to-image rendering (requires libcairo system library).
 multimedia = [
   "soundfile>=0.12.0",
   "scipy>=1.11.0",
   "cairosvg>=2.7.0",
+]
+
+# ── Local NeMo ASR — nvidia/nemotron-speech-streaming-en-0.6b ───────────────
+# Heavy dependency tree (pytorch-lightning, librosa, webdataset, ...); keep
+# opt-in so non-audio users don't pay the install cost.
+audio = [
+  "nemo_toolkit[asr]>=2.0",
+  "nemo_retriever[multimedia]",
 ]
 
 # ── Independent extras ───────────────────────────────────────────────────────
