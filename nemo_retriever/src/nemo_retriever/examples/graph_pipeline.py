@@ -26,7 +26,7 @@ patches or imports them from this module.
 
 from __future__ import annotations
 
-from nemo_retriever.audio import asr_params_from_env
+from nemo_retriever.audio import transcription_params_from_env
 from nemo_retriever.graph_ingestor import GraphIngestor
 from nemo_retriever.pipeline import __main__ as _pipeline_main
 from nemo_retriever.vector_store.lancedb_store import handle_lancedb
@@ -41,7 +41,7 @@ __all__ = [
     "_ensure_lancedb_table",
     "_resolve_file_patterns",
     "app",
-    "asr_params_from_env",
+    "transcription_params_from_env",
     "handle_lancedb",
 ]
 

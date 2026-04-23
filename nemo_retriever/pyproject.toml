@@ -6,9 +6,17 @@ build-backend = "setuptools.build_meta"
 managed = true
 package = true
 no-build-package = ["nemotron-ocr"]
-# fastparquet 2026.3.0 has no wheel for Linux x86_64 (manylinux); constrain to last version that does.
+# Force version ranges across the resolution, overriding transitive caps from dependencies.
+# NOTE: these only apply to `uv lock` / `uv sync` / `uv pip compile`; `uv pip install`
+# (pip-compat mode) ignores them. Pin in `[project.dependencies]` instead when a cap
+# needs to hold for both install paths (see the numpy entry there).
+# - fastparquet 2026.3.0 has no wheel for Linux x86_64 (manylinux); constrain to last version that does.
+# - transformers: nemo_toolkit[asr] (pulled by the [audio] extra) caps transformers below 4.49,
+#   but the [local] extra and our local model wrappers require >=4.57.6. Pin here so resolving
+#   any extra combination lands on the same version.
 override-dependencies = [
   "fastparquet>=2024.11.0,<2026",
+  "transformers>=4.57.6,<5",
 ]
 
 [project]
@@ -50,7 +58,12 @@ dependencies = [
   "pydantic>=2.8.0",
   "rich>=13.7.0",
   "universal-pathlib>=0.2.0",
-  "numpy>=1.26.0",
+  # Upper-cap numpy at <2.3: numba (pulled via nemo_toolkit[asr] in the [audio]
+  # extra) refuses to import with numpy>=2.3. vllm (via opencv-python-headless
+  # >=4.13) meanwhile requires numpy>=2, so we can't just cap at <2 either.
+  # The [2.0, 2.3) window satisfies both; nemo_toolkit's leftover np.sctypes
+  # usage is handled by a shim in nemotron_speech_streaming_asr.py.
+  "numpy>=1.26.0,<2.3",
   "debugpy>=1.8.0",
   # Core ingest packages
   "nv-ingest-api",
@@ -92,12 +105,24 @@ local = [
 ]
 
 # ── Multimedia — audio/ASR and SVG rendering ────────────────────────────────
-# soundfile + scipy enable local Parakeet ASR on audio/video content.
+# soundfile + scipy enable audio loading/resampling for local ASR on audio/video content.
 # cairosvg enables SVG-to-image rendering (requires libcairo system library).
 multimedia = [
   "soundfile>=0.12.0",
   "scipy>=1.11.0",
   "cairosvg>=2.7.0",
+]
+
+# ── Local NeMo ASR — nvidia/nemotron-speech-streaming-en-0.6b ───────────────
+# Heavy dependency tree (pytorch-lightning, librosa, webdataset, ...); keep
+# opt-in so non-audio users don't pay the install cost.
+audio = [
+  "nemo_toolkit[asr]>=2.0",
+  # Pin torchaudio as an explicit dep so [tool.uv.sources] applies and we
+  # get the cu130-matching build (transitive-only deps don't always get the
+  # source override).
+  "torchaudio~=2.10.0",
+  "nemo_retriever[multimedia]",
 ]
 
 # ── Independent extras ───────────────────────────────────────────────────────
@@ -146,12 +171,18 @@ nemotron-page-elements-v3 = { index = "test-pypi" }
 nemotron-graphic-elements-v1 = { index = "test-pypi" }
 nemotron-table-structure-v1 = { index = "test-pypi" }
 nemotron-ocr = { index = "test-pypi" }
-# On Linux, resolve torch/torchvision from the CUDA wheel index.
+# On Linux, resolve torch/torchvision/torchaudio from the CUDA wheel index.
 # On Mac, fall through to PyPI to get CPU wheels.
+# torchaudio is pulled in transitively by the [audio] extra (nemo_toolkit[asr]);
+# without this override, uv would resolve the default cu128 build and trip
+# torchaudio's CUDA-version-mismatch check against torch's cu130 wheel.
 torch = [
   { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 torchvision = [
+  { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchaudio = [
   { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 vllm = [

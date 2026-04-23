@@ -20,7 +20,7 @@ from nemo_retriever.audio.chunk_actor import _chunk_one
 from nemo_retriever.audio.media_interface import MediaInterface
 from nemo_retriever.audio.media_interface import is_media_available
 from nemo_retriever.graph_ingestor import GraphIngestor
-from nemo_retriever.params import ASRParams
+from nemo_retriever.params import TranscriptionParams
 from nemo_retriever.params import AudioChunkParams
 
 
@@ -59,13 +59,13 @@ def test_inprocess_audio_pipeline_with_mocked_asr(tmp_path: Path):
     mock_client = MagicMock()
     mock_client.infer.return_value = ([], "inprocess mock transcript")
 
-    with patch("nemo_retriever.audio.asr_actor._get_client", return_value=mock_client):
+    with patch("nemo_retriever.audio.transcription_actor._get_client", return_value=mock_client):
         ingestor = (
             GraphIngestor(run_mode="inprocess", documents=[])
             .files([str(wav)])
             .extract_audio(
                 params=AudioChunkParams(split_type="size", split_interval=500_000),
-                asr_params=ASRParams(audio_endpoints=("localhost:50051", None)),
+                transcription_params=TranscriptionParams(audio_endpoints=("localhost:50051", None)),
             )
         )
         results = ingestor.ingest()
@@ -92,13 +92,13 @@ def test_inprocess_audio_pipeline_with_mocked_segmented_asr(tmp_path: Path):
         "First sentence. Second sentence!",
     )
 
-    with patch("nemo_retriever.audio.asr_actor._get_client", return_value=mock_client):
+    with patch("nemo_retriever.audio.transcription_actor._get_client", return_value=mock_client):
         ingestor = (
             GraphIngestor(run_mode="inprocess", documents=[])
             .files([str(wav)])
             .extract_audio(
                 params=AudioChunkParams(split_type="size", split_interval=500_000),
-                asr_params=ASRParams(audio_endpoints=("localhost:50051", None), segment_audio=True),
+                transcription_params=TranscriptionParams(audio_endpoints=("localhost:50051", None), segment_audio=True),
             )
         )
         results = ingestor.ingest()
@@ -115,21 +115,21 @@ def test_inprocess_audio_pipeline_with_mocked_segmented_asr(tmp_path: Path):
 
 @pytest.mark.skipif(not is_media_available(), reason="ffmpeg not available")
 def test_inprocess_audio_pipeline_local_asr_mocked(tmp_path: Path):
-    """Inprocess with audio_endpoints=(None, None) uses local ASR; mock ParakeetCTC1B1ASR so no real model."""
+    """Inprocess with audio_endpoints=(None, None) uses local ASR; mock NemotronSpeechStreamingASR so no real model."""
     wav = tmp_path / "small.wav"
     _make_small_wav(wav, duration_sec=0.5)
 
     mock_model = MagicMock()
     mock_model.transcribe.return_value = ["local asr mock transcript"]
 
-    with patch("nemo_retriever.audio.asr_actor._get_client") as mock_get_client:
-        with patch("nemo_retriever.model.local.ParakeetCTC1B1ASR", return_value=mock_model):
+    with patch("nemo_retriever.audio.transcription_actor._get_client") as mock_get_client:
+        with patch("nemo_retriever.model.local.NemotronSpeechStreamingASR", return_value=mock_model):
             ingestor = (
                 GraphIngestor(run_mode="inprocess", documents=[])
                 .files([str(wav)])
                 .extract_audio(
                     params=AudioChunkParams(split_type="size", split_interval=500_000),
-                    asr_params=ASRParams(audio_endpoints=(None, None)),
+                    transcription_params=TranscriptionParams(audio_endpoints=(None, None)),
                 )
             )
             results = ingestor.ingest()

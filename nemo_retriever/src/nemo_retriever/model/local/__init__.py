@@ -7,8 +7,8 @@ Local model implementations for slim-gest.
 
 This module contains implementations of locally-runnable models that extend
 the BaseModel abstract class. Exports are lazy-loaded so that importing a
-single submodule (e.g. parakeet_ctc_1_1b_asr) does not pull in torch-dependent
-modules, allowing unit tests with minimal deps to run.
+single submodule (e.g. nemotron_speech_streaming_asr) does not pull in
+torch-dependent modules, allowing unit tests with minimal deps to run.
 """
 
 __all__ = [
@@ -21,7 +21,7 @@ __all__ = [
     "NemotronRerankV2",
     "NemotronRerankVLV2",
     "NemotronVLMCaptioner",
-    "ParakeetCTC1B1ASR",
+    "NemotronSpeechStreamingASR",
 ]
 
 
@@ -62,8 +62,8 @@ def __getattr__(name: str):
         from .nemotron_vlm_captioner import NemotronVLMCaptioner
 
         return NemotronVLMCaptioner
-    if name == "ParakeetCTC1B1ASR":
-        from .parakeet_ctc_1_1b_asr import ParakeetCTC1B1ASR
+    if name == "NemotronSpeechStreamingASR":
+        from .nemotron_speech_streaming_asr import NemotronSpeechStreamingASR
 
-        return ParakeetCTC1B1ASR
+        return NemotronSpeechStreamingASR
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

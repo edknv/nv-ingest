@@ -12,7 +12,7 @@ from typing import Any
 
 import pandas as pd
 
-from nemo_retriever.audio import ASRActor
+from nemo_retriever.audio import TranscriptionActor
 from nemo_retriever.audio import MediaChunkActor
 from nemo_retriever.chart.chart_detection import GraphicElementsActor
 from nemo_retriever.graph.abstract_operator import AbstractOperator
@@ -25,7 +25,7 @@ from nemo_retriever.graph.operator_archetype import ArchetypeOperator
 from nemo_retriever.graph.operator_resolution import resolve_operator_class
 from nemo_retriever.ocr.ocr import OCRActor
 from nemo_retriever.page_elements.page_elements import PageElementDetectionActor
-from nemo_retriever.params import ASRParams
+from nemo_retriever.params import TranscriptionParams
 from nemo_retriever.params import AudioChunkParams
 from nemo_retriever.params import CaptionParams
 from nemo_retriever.params import ExtractParams
@@ -119,7 +119,7 @@ class _MultiTypeExtractBase(AbstractOperator):
         text_params: TextChunkParams | None = None,
         html_params: HtmlChunkParams | None = None,
         audio_chunk_params: AudioChunkParams | None = None,
-        asr_params: ASRParams | None = None,
+        transcription_params: TranscriptionParams | None = None,
         caption_params: CaptionParams | None = None,
         **kwargs: Any,
     ) -> None:
@@ -129,7 +129,7 @@ class _MultiTypeExtractBase(AbstractOperator):
         self.text_params = text_params or TextChunkParams()
         self.html_params = html_params or HtmlChunkParams()
         self.audio_chunk_params = audio_chunk_params or AudioChunkParams()
-        self.asr_params = asr_params or ASRParams()
+        self.transcription_params = transcription_params or TranscriptionParams()
         self.caption_params = caption_params
         self._resolved_resources = None
 
@@ -160,10 +160,10 @@ class _MultiTypeExtractBase(AbstractOperator):
             outputs.append(HtmlSplitActor(params=self.html_params).run(grouped["html"]))
         if not grouped["audio"].empty:
             audio_df = MediaChunkActor(params=self.audio_chunk_params).run(grouped["audio"])
-            outputs.append(ASRActor(params=self.asr_params).run(audio_df))
+            outputs.append(TranscriptionActor(params=self.transcription_params).run(audio_df))
         if not grouped["video"].empty:
             video_df = MediaChunkActor(params=self.audio_chunk_params).run(grouped["video"])
-            outputs.append(ASRActor(params=self.asr_params).run(video_df))
+            outputs.append(TranscriptionActor(params=self.transcription_params).run(video_df))
 
         non_empty = [df for df in outputs if isinstance(df, pd.DataFrame) and not df.empty]
         if not non_empty:
@@ -389,7 +389,7 @@ class MultiTypeExtractOperator(ArchetypeOperator):
         text_params: TextChunkParams | None = None,
         html_params: HtmlChunkParams | None = None,
         audio_chunk_params: AudioChunkParams | None = None,
-        asr_params: ASRParams | None = None,
+        transcription_params: TranscriptionParams | None = None,
         caption_params: CaptionParams | None = None,
         **kwargs: Any,
     ) -> None:
@@ -399,7 +399,7 @@ class MultiTypeExtractOperator(ArchetypeOperator):
             text_params=text_params,
             html_params=html_params,
             audio_chunk_params=audio_chunk_params,
-            asr_params=asr_params,
+            transcription_params=transcription_params,
             caption_params=caption_params,
             **kwargs,
         )
@@ -408,5 +408,5 @@ class MultiTypeExtractOperator(ArchetypeOperator):
         self.text_params = text_params
         self.html_params = html_params
         self.audio_chunk_params = audio_chunk_params
-        self.asr_params = asr_params
+        self.transcription_params = transcription_params
         self.caption_params = caption_params

@@ -78,6 +78,27 @@ def test_audio_path_to_chunks_df(tmp_path: Path):
     assert df["source_path"].iloc[0] == str(wav.resolve())
 
 
+@pytest.mark.skipif(not is_media_available(), reason="ffmpeg not available")
+def test_media_chunk_actor_writes_segment_times(tmp_path: Path):
+    """Chunker must emit metadata.segment_start / segment_end so downstream ASR
+    rows carry the keys recall.core._hit_to_audio_segment_key expects."""
+    wav = tmp_path / "multi.wav"
+    # 0.8 s split into ~0.2 s chunks to get several rows.
+    _make_small_wav(wav, duration_sec=0.8)
+    params = AudioChunkParams(split_type="time", split_interval=1)
+    df = audio_path_to_chunks_df(str(wav), params=params)
+
+    assert len(df) >= 1
+    prev_end = 0.0
+    for _, row in df.iterrows():
+        meta = row["metadata"]
+        assert "segment_start" in meta and "segment_end" in meta
+        # Cumulative offsets must be monotone and end >= start.
+        assert meta["segment_start"] == pytest.approx(prev_end, abs=1e-3)
+        assert meta["segment_end"] >= meta["segment_start"]
+        prev_end = meta["segment_end"]
+
+
 def test_media_chunk_actor_requires_ffmpeg():
     """Without ffmpeg, MediaChunkActor.__init__ raises."""
     pytest.importorskip("ffmpeg")

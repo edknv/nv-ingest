@@ -2,7 +2,7 @@
 # All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from .models import ASRParams
+from .models import TranscriptionParams
 from .models import AudioChunkParams
 from .models import BatchTuningParams
 from .models import CaptionParams
@@ -34,7 +34,7 @@ from .models import VdbUploadParams
 from .models import WebhookParams
 
 __all__ = [
-    "ASRParams",
+    "TranscriptionParams",
     "AudioChunkParams",
     "BatchTuningParams",
     "CaptionParams",

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Benchmark MediaChunkActor + ASRActor throughput (chunk rows per second).
+Benchmark MediaChunkActor + TranscriptionActor throughput (chunk rows per second).
 
 Supports --mock-asr to avoid loading Parakeet/GPU; measures chunking + actor overhead.
 """
@@ -17,8 +17,8 @@ import pandas as pd
 import ray.data as rd
 import typer
 
-from nemo_retriever.audio.asr_actor import ASRActor
-from nemo_retriever.audio.asr_actor import asr_params_from_env
+from nemo_retriever.audio.transcription_actor import TranscriptionActor
+from nemo_retriever.audio.transcription_actor import transcription_params_from_env
 from nemo_retriever.audio.chunk_actor import MediaChunkActor
 from nemo_retriever.audio.media_interface import is_media_available
 from nemo_retriever.params import AudioChunkParams
@@ -39,7 +39,7 @@ def make_seed_audio_row(audio_path: Path) -> Dict[str, Any]:
     return {"path": str(p)}
 
 
-class MockASRActor:
+class MockTranscriptionActor:
     """Returns fixed transcript per chunk row so benchmark runs without Parakeet/GPU."""
 
     def __call__(self, batch_df: pd.DataFrame) -> pd.DataFrame:
@@ -52,7 +52,7 @@ class MockASRActor:
         return out
 
 
-app = typer.Typer(help="Benchmark audio extraction (MediaChunkActor + ASRActor) throughput (chunk rows/sec).")
+app = typer.Typer(help="Benchmark audio extraction (MediaChunkActor + TranscriptionActor) throughput (chunk rows/sec).")
 
 
 def run_benchmark(
@@ -85,9 +85,9 @@ def run_benchmark(
     def _map(ds: rd.Dataset, worker_count: int, batch_size: int) -> rd.Dataset:
         chunk_actor = MediaChunkActor(params=chunk_params)
         if mock_asr:
-            asr_actor = MockASRActor()
+            asr_actor = MockTranscriptionActor()
         else:
-            asr_actor = ASRActor(params=asr_params_from_env())
+            asr_actor = TranscriptionActor(params=transcription_params_from_env())
 
         ds = ds.map_batches(
             chunk_actor,

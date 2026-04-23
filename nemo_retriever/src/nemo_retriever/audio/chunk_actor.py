@@ -99,6 +99,11 @@ def _chunk_one(source_path: str, params: AudioChunkParams, interface: MediaInter
             return []
 
         rows: List[Dict[str, Any]] = []
+        # Accumulate absolute segment offsets across chunks so downstream
+        # time-window retrieval (recall.core._hit_to_audio_segment_key) has
+        # the metadata.segment_start / metadata.segment_end keys it expects,
+        # regardless of whether ASR runs with --segment-audio.
+        segment_start_acc = 0.0
         for idx, chunk_path in enumerate(files):
             _, _, duration = interface.probe_media(
                 Path(chunk_path),
@@ -106,10 +111,13 @@ def _chunk_one(source_path: str, params: AudioChunkParams, interface: MediaInter
                 params.split_type,
             )
             duration = duration if duration is not None else 0.0
+            segment_end_acc = segment_start_acc + duration
             meta = {
                 "source_path": source_path,
                 "chunk_index": idx,
                 "duration": duration,
+                "segment_start": float(segment_start_acc),
+                "segment_end": float(segment_end_acc),
             }
             chunk_bytes: bytes
             try:
@@ -129,6 +137,7 @@ def _chunk_one(source_path: str, params: AudioChunkParams, interface: MediaInter
                     "bytes": chunk_bytes,
                 }
             )
+            segment_start_acc = segment_end_acc
         return rows
 
 

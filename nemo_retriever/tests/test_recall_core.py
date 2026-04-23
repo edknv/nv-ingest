@@ -48,24 +48,24 @@ def test_is_hit_at_k_modes(match_mode: str, golden: str, retrieved: list[str], k
     assert is_hit_at_k(golden, retrieved, k, match_mode=match_mode) is expected
 
 
-def test_hit_to_audio_segment_key_converts_millis_to_seconds() -> None:
+def test_hit_to_audio_segment_key_passes_through_segment_times() -> None:
     hit = {
         "source_id": "/tmp/sample_clip.mp3",
         "metadata": (
-            "{'source_path': '/tmp/sample_clip.mp3', 'duration': 79.67, " "'segment_start': 320, 'segment_end': 4880}"
+            "{'source_path': '/tmp/sample_clip.mp3', 'duration': 79.67, " "'segment_start': 1.25, 'segment_end': 4.88}"
         ),
     }
 
-    assert _hit_to_audio_segment_key(hit) == "sample_clip\t0.320000\t4.880000"
+    assert _hit_to_audio_segment_key(hit) == "sample_clip\t1.250000\t4.880000"
 
 
-def test_hit_to_audio_segment_key_normalizes_content_metadata_times() -> None:
+def test_hit_to_audio_segment_key_reads_content_metadata_times() -> None:
     hit = {
         "source_id": "/tmp/sample_clip.mp3",
         "metadata": (
             "{'source_path': '/tmp/sample_clip.mp3', 'duration': 79.67, "
-            "'content_metadata': {'start_time': 320, 'end_time': 4880}}"
+            "'content_metadata': {'start_time': 1.25, 'end_time': 4.88}}"
         ),
     }
 
-    assert _hit_to_audio_segment_key(hit) == "sample_clip\t0.320000\t4.880000"
+    assert _hit_to_audio_segment_key(hit) == "sample_clip\t1.250000\t4.880000"

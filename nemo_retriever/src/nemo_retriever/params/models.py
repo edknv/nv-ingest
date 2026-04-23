@@ -142,7 +142,7 @@ class AudioChunkParams(_ParamsModel):
     video_audio_separate: bool = False
 
 
-class ASRParams(_ParamsModel):
+class TranscriptionParams(_ParamsModel):
     """Params for ASR (Parakeet/Riva gRPC or local transformers backend)."""
 
     audio_endpoints: Tuple[Optional[str], Optional[str]] = (None, None)

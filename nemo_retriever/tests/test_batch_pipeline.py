@@ -47,7 +47,7 @@ class _FakeIngestor:
     def __init__(self) -> None:
         self.extract_params = None
         self.audio_extract_params = None
-        self.audio_asr_params = None
+        self.audio_transcription_params = None
         self.embed_params = None
         self.file_patterns = None
 
@@ -63,9 +63,9 @@ class _FakeIngestor:
         self.extract_params = params
         return self
 
-    def extract_audio(self, params=None, asr_params=None):
+    def extract_audio(self, params=None, transcription_params=None):
         self.audio_extract_params = params
-        self.audio_asr_params = asr_params
+        self.audio_transcription_params = transcription_params
         return self
 
     def extract_txt(self, params):
@@ -177,7 +177,9 @@ def test_batch_pipeline_routes_audio_input_to_audio_ingestor(tmp_path, monkeypat
         "ray",
         SimpleNamespace(shutdown=lambda: None, is_initialized=lambda: True),
     )
-    monkeypatch.setattr(pipeline_main, "asr_params_from_env", lambda: SimpleNamespace(model_copy=lambda update: update))
+    monkeypatch.setattr(
+        pipeline_main, "transcription_params_from_env", lambda: SimpleNamespace(model_copy=lambda update: update)
+    )
 
     class _FakeTable:
         def count_rows(self) -> int:
@@ -214,7 +216,7 @@ def test_batch_pipeline_routes_audio_input_to_audio_ingestor(tmp_path, monkeypat
     assert isinstance(fake_ingestor.file_patterns, list)
     assert fake_ingestor.audio_extract_params.split_type == "time"
     assert fake_ingestor.audio_extract_params.split_interval == 45
-    assert fake_ingestor.audio_asr_params["segment_audio"] is True
+    assert fake_ingestor.audio_transcription_params["segment_audio"] is True
 
 
 def test_batch_pipeline_routes_beir_mode_to_evaluator(tmp_path, monkeypatch) -> None:

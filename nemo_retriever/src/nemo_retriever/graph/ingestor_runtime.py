@@ -11,7 +11,7 @@ from typing import cast
 from typing import Any
 
 from nemo_retriever.caption.caption import CaptionActor
-from nemo_retriever.audio import ASRActor
+from nemo_retriever.audio import TranscriptionActor
 from nemo_retriever.audio import MediaChunkActor
 from nemo_retriever.chart.chart_detection import GraphicElementsActor
 from nemo_retriever.dedup.dedup import dedup_images
@@ -338,7 +338,7 @@ def _resolve_execution_inputs(
     text_params: Any | None,
     html_params: Any | None,
     audio_chunk_params: Any | None,
-    asr_params: Any | None,
+    transcription_params: Any | None,
     dedup_params: Any | None,
     split_params: Any | None,
     caption_params: Any | None,
@@ -370,7 +370,7 @@ def _resolve_execution_inputs(
             text_params,
             html_params,
             audio_chunk_params,
-            asr_params,
+            transcription_params,
             dedup_params,
             split_params,
             caption_params,
@@ -387,7 +387,7 @@ def _resolve_execution_inputs(
         execution_plan.text_params,
         execution_plan.html_params,
         execution_plan.audio_chunk_params,
-        execution_plan.asr_params,
+        execution_plan.transcription_params,
         stage_map.get("dedup"),
         stage_map.get("split"),
         stage_map.get("caption"),
@@ -401,12 +401,12 @@ def _resolve_execution_inputs(
 def _should_build_audio_graph(
     *,
     extract_params: Any | None,
-    asr_params: Any | None,
+    transcription_params: Any | None,
 ) -> bool:
     method = str(getattr(extract_params, "method", "") or "").strip().lower()
     if method == "audio":
         return True
-    if asr_params is not None:
+    if transcription_params is not None:
         return True
     return False
 
@@ -495,7 +495,7 @@ def build_graph(
     text_params: Any | None = None,
     html_params: Any | None = None,
     audio_chunk_params: Any | None = None,
-    asr_params: Any | None = None,
+    transcription_params: Any | None = None,
     dedup_params: Any | None = None,
     embed_params: Any | None = None,
     split_params: Any | None = None,
@@ -512,7 +512,7 @@ def build_graph(
         text_params,
         html_params,
         audio_chunk_params,
-        asr_params,
+        transcription_params,
         dedup_params,
         split_params,
         caption_params,
@@ -527,7 +527,7 @@ def build_graph(
         text_params=text_params,
         html_params=html_params,
         audio_chunk_params=audio_chunk_params,
-        asr_params=asr_params,
+        transcription_params=transcription_params,
         dedup_params=dedup_params,
         split_params=split_params,
         caption_params=caption_params,
@@ -539,9 +539,9 @@ def build_graph(
 
     if _should_build_audio_graph(
         extract_params=extract_params,
-        asr_params=asr_params,
+        transcription_params=transcription_params,
     ):
-        graph = Graph() >> MediaChunkActor(params=audio_chunk_params) >> ASRActor(params=asr_params)
+        graph = Graph() >> MediaChunkActor(params=audio_chunk_params) >> TranscriptionActor(params=transcription_params)
     elif extraction_mode in {"text", "html", "audio", "image", "auto"}:
         graph = Graph() >> MultiTypeExtractOperator(
             extraction_mode=extraction_mode,
@@ -549,7 +549,7 @@ def build_graph(
             text_params=text_params,
             html_params=html_params,
             audio_chunk_params=audio_chunk_params,
-            asr_params=asr_params,
+            transcription_params=transcription_params,
             caption_params=caption_params,
         )
     else:
