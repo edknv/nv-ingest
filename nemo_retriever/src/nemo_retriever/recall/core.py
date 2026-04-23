@@ -113,26 +113,24 @@ def _normalize_audio_segment_times(
     start_time: Any,
     end_time: Any,
     *,
-    duration_hint_secs: Any = None,
+    duration_hint_secs: Any = None,  # retained for API compatibility; no longer used
 ) -> tuple[float, float] | None:
+    """Return ``(start, end)`` in seconds.
+
+    Earlier audio-stage code stored segment times in milliseconds; the
+    millisecond-detection heuristic that used to live here compared
+    ``end_val`` against the *chunk* duration, which fires incorrectly for any
+    chunk past index 0 (segment_end is an absolute offset in the file, not
+    relative to the chunk), silently dividing valid seconds by 1000 and
+    making ``hit_midpoint`` ≈ gold_start / 1000 — no query window ever hits.
+    MediaChunkActor now stores seconds directly (see
+    ``chunk_actor.py``'s ``segment_start_acc`` accumulator), so we just
+    coerce to float and return.
+    """
     try:
-        start_val = float(start_time)
-        end_val = float(end_time)
+        return float(start_time), float(end_time)
     except (TypeError, ValueError):
         return None
-
-    duration_secs: float | None
-    try:
-        duration_secs = float(duration_hint_secs) if duration_hint_secs is not None else None
-    except (TypeError, ValueError):
-        duration_secs = None
-
-    # Audio stage metadata currently stores segment times in milliseconds.
-    # Normalize those to seconds when they obviously exceed the chunk duration.
-    if duration_secs is not None and duration_secs > 0 and end_val > (duration_secs + 1.0):
-        return start_val / 1000.0, end_val / 1000.0
-
-    return start_val, end_val
 
 
 def _normalize_audio_query_df(df: pd.DataFrame) -> pd.DataFrame:
