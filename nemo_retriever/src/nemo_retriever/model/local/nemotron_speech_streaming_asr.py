@@ -24,6 +24,14 @@ logger = logging.getLogger(__name__)
 
 MODEL_ID = "nvidia/nemotron-speech-streaming-en-0.6b"
 
+# NeMo's audio preprocessor runs a centered STFT with n_fft=512, which pads
+# the input by 256 samples on each side. torch.nn.functional.pad refuses any
+# padding >= the input length, so clips shorter than ~0.5 s crash the batch.
+# Pad anything below 1 s of 16 kHz audio with trailing silence — chunker tails
+# can be arbitrarily short (ffmpeg rounds segment boundaries up) and users
+# calling transcribe() directly make no length guarantees either.
+_MIN_SAMPLES = 16000
+
 
 # nemo_toolkit[asr] 2.1.0's audio preprocessor uses np.sctypes (removed in
 # numpy 2.0); NeMo's own [all]/[nlp]/[multimodal] extras pin numpy<2 for this,
@@ -126,6 +134,8 @@ class NemotronSpeechStreamingASR:
         valid_arrays: List[np.ndarray] = []
         for i, audio in enumerate(audios):
             if audio is not None and audio.size > 0:
+                if audio.shape[0] < _MIN_SAMPLES:
+                    audio = np.pad(audio, (0, _MIN_SAMPLES - audio.shape[0]), mode="constant")
                 valid_idx.append(i)
                 valid_arrays.append(audio)
 
