@@ -257,7 +257,7 @@ datasets:
     input_type: audio
     segment_audio: true
     audio_split_type: time
-    audio_split_interval: 36000
+    audio_split_interval: 15
     recall_required: true
     recall_match_mode: audio_segment
     recall_adapter: none
