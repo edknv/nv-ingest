@@ -20,6 +20,7 @@ from nemo_retriever.graph.content_transforms import (
     _CONTENT_COLUMNS,
     collapse_content_to_page_rows,
     explode_content_to_rows,
+    merge_video_modalities_per_time_window,
 )
 from nemo_retriever.graph.multi_type_extract_operator import MultiTypeExtractOperator
 from nemo_retriever.text_embed.operators import _BatchEmbedActor
@@ -457,6 +458,20 @@ def _append_ordered_transform_stages(
         elif stage_name == "split" and split_params is not None:
             graph = graph >> TextChunkActor(split_params)
         elif stage_name == "embed" and embed_params is not None:
+            # Video mode emits parallel transcript (audio-chunk) rows and
+            # OCR (video-frame) rows. Merge them per (source_video,
+            # segment_index) so each time-window becomes one multimodal
+            # embedding row. Requires both branches to use matching
+            # split_type='time' + split_interval; otherwise indexes don't
+            # align and the merge degrades to a no-op passthrough.
+            if extraction_mode == "video":
+                graph = graph >> UDFOperator(
+                    partial(
+                        merge_video_modalities_per_time_window,
+                        modality=embed_params.embed_modality,
+                    ),
+                    name="MergeVideoModalitiesPerTimeWindow",
+                )
             needs_content_reshape = reshape_for_modal_content and extraction_mode in {"pdf", "image", "auto"}
             if needs_content_reshape:
                 content_columns = (_CONTENT_COLUMNS + ("images",)) if caption_params is not None else _CONTENT_COLUMNS

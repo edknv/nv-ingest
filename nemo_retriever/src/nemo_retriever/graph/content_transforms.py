@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Sequence
+import ast
+import json
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
 
@@ -15,6 +17,25 @@ from nemo_retriever.ocr.ocr import _crop_b64_image_by_norm_bbox
 from nemo_retriever.params.models import IMAGE_MODALITIES
 
 _CONTENT_COLUMNS = ("table", "chart", "infographic")
+
+
+def _parse_metadata(value: Any) -> Dict[str, Any]:
+    """Best-effort parse of a metadata value that may be dict, JSON string, or repr string."""
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str):
+        return {}
+    text = value.strip()
+    if not text:
+        return {}
+    for fn in (json.loads, ast.literal_eval):
+        try:
+            parsed = fn(text)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+    return {}
 
 
 def _combine_text_with_content(row: Any, text_column: str, content_columns: Sequence[str]) -> str:
@@ -185,3 +206,154 @@ def collapse_content_to_page_rows(
 
     batch_df["_embed_modality"] = modality
     return batch_df
+
+
+def _video_bucket_key(row: Any) -> Optional[Tuple[str, int]]:
+    """Return ``(source_video, segment_index)`` for a video-pipeline row, else None.
+
+    Handles both branches of the video pipeline:
+      - TranscriptionActor rows: ``metadata.source_path`` + ``metadata.chunk_index``
+      - VideoFrameExtractActor/OCR rows: ``metadata.source_video`` + ``metadata.segment_index``
+
+    Both branches compute ``num_splits = ceil(duration / split_interval)`` from
+    the same ffprobe-derived duration, so the integer indexes align provided
+    both branches use matching ``split_type='time'`` and ``split_interval``.
+    """
+    md = _parse_metadata(row.get("metadata"))
+    source = (
+        md.get("source_video")
+        or md.get("source_path")
+        or row.get("source_id")
+        or row.get("source_path")
+        or row.get("path")
+    )
+    if not isinstance(source, str) or not source.strip():
+        return None
+    idx = md.get("segment_index")
+    if idx is None:
+        idx = md.get("chunk_index")
+    if idx is None:
+        idx = row.get("chunk_index")
+    if idx is None:
+        return None
+    try:
+        return str(source), int(idx)
+    except (TypeError, ValueError):
+        return None
+
+
+def merge_video_modalities_per_time_window(
+    batch_df: Any,
+    *,
+    text_column: str = "text",
+    modality: str = "text",
+) -> Any:
+    """Collapse video-pipeline rows so each ``(source_video, segment_index)`` becomes one row.
+
+    Video extraction emits two parallel row streams per source video:
+      - one transcript row per audio chunk (``TranscriptionActor``)
+      - one OCR row per video frame (``VideoFrameExtractActor`` + ``VideoFrameOCRActor``)
+
+    Downstream dense retrieval otherwise treats them as independent documents.
+    This UDF groups them by ``(source_video, segment_index)`` and emits a
+    single merged row with:
+
+      - ``text``  = transcript + "\\n\\n" + OCR text for that window
+      - ``page_image`` = the frame image from the video branch (if present),
+        so ``embed_modality="text_image"`` can embed text+image jointly
+      - ``metadata`` union (segment_start / segment_end span the window)
+
+    Rows that can't be bucketed (missing source / segment index) pass through
+    unchanged so non-video mixed inputs aren't accidentally dropped.
+    """
+    if not isinstance(batch_df, pd.DataFrame) or batch_df.empty:
+        return batch_df
+
+    buckets: Dict[Tuple[str, int], List[int]] = {}
+    passthrough_indices: List[int] = []
+    for i, row in batch_df.iterrows():
+        key = _video_bucket_key(row)
+        if key is None:
+            passthrough_indices.append(i)
+        else:
+            buckets.setdefault(key, []).append(i)
+
+    if not buckets:
+        return batch_df
+
+    keep_image = modality in IMAGE_MODALITIES or "image" in str(modality).lower()
+
+    def _pick_frame_image(rows: pd.DataFrame) -> Any:
+        """Return the first non-empty page_image in the group (the video-frame row's)."""
+        if "page_image" not in rows.columns:
+            return None
+        for value in rows["page_image"]:
+            if isinstance(value, dict):
+                if value.get("image_b64") or value.get("stored_image_uri"):
+                    return value
+        return None
+
+    merged_rows: List[Dict[str, Any]] = []
+    for (source, idx), indices in buckets.items():
+        rows = batch_df.loc[indices]
+
+        texts: List[str] = []
+        for text in rows[text_column] if text_column in rows.columns else []:
+            if isinstance(text, str) and text.strip():
+                texts.append(text.strip())
+        merged_text = "\n\n".join(texts)
+
+        base = _deep_copy_row(rows.iloc[0].to_dict())
+        base[text_column] = merged_text
+
+        if keep_image:
+            frame_image = _pick_frame_image(rows)
+            if frame_image is not None:
+                base["page_image"] = frame_image
+
+        # Union time-window metadata across group
+        starts: List[float] = []
+        ends: List[float] = []
+        merged_meta = _parse_metadata(base.get("metadata"))
+        for _, r in rows.iterrows():
+            md = _parse_metadata(r.get("metadata"))
+            for k, v in md.items():
+                merged_meta.setdefault(k, v)
+            s, e = md.get("segment_start"), md.get("segment_end")
+            if isinstance(s, (int, float)):
+                starts.append(float(s))
+            if isinstance(e, (int, float)):
+                ends.append(float(e))
+        if starts:
+            merged_meta["segment_start"] = min(starts)
+        if ends:
+            merged_meta["segment_end"] = max(ends)
+        merged_meta.setdefault("source_video", source)
+        merged_meta.setdefault("segment_index", idx)
+        base["metadata"] = merged_meta
+
+        merged_rows.append(base)
+
+    # Preserve any rows that didn't fit the video schema (e.g. cross-modal batches)
+    for i in passthrough_indices:
+        merged_rows.append(_deep_copy_row(batch_df.loc[i].to_dict()))
+
+    out = pd.DataFrame(merged_rows).reset_index(drop=True)
+
+    # Populate the columns the embed actor reads, mirroring
+    # ``collapse_content_to_page_rows`` so downstream behaviour is identical
+    # for video-mode rows.
+    if keep_image and "page_image" in out.columns:
+        out["_image_b64"] = out["page_image"].apply(
+            lambda page_image: resolve_image_b64(page_image) if isinstance(page_image, dict) else None
+        )
+    elif keep_image:
+        out["_image_b64"] = None
+
+    if "page_image" in out.columns:
+        out["_stored_image_uri"] = out["page_image"].apply(
+            lambda page_image: page_image.get("stored_image_uri") if isinstance(page_image, dict) else None
+        )
+
+    out["_embed_modality"] = modality
+    return out
