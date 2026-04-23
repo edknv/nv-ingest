@@ -7,17 +7,16 @@ managed = true
 package = true
 no-build-package = ["nemotron-ocr"]
 # Force version ranges across the resolution, overriding transitive caps from dependencies.
+# NOTE: these only apply to `uv lock` / `uv sync` / `uv pip compile`; `uv pip install`
+# (pip-compat mode) ignores them. Pin in `[project.dependencies]` instead when a cap
+# needs to hold for both install paths (see the numpy entry there).
 # - fastparquet 2026.3.0 has no wheel for Linux x86_64 (manylinux); constrain to last version that does.
 # - transformers: nemo_toolkit[asr] (pulled by the [audio] extra) caps transformers below 4.49,
 #   but the [local] extra and our local model wrappers require >=4.57.6. Pin here so resolving
 #   any extra combination lands on the same version.
-# - numpy: nemo_toolkit[asr]'s preprocessing code uses np.sctypes (removed in numpy 2.0).
-#   NeMo's [all]/[nlp]/[multimodal] extras pin numpy<2 for this reason, but [asr] was missed
-#   upstream. Pin <2 globally so ASR works offline with the pre-cached .nemo checkpoint.
 override-dependencies = [
   "fastparquet>=2024.11.0,<2026",
   "transformers>=4.57.6,<5",
-  "numpy>=1.26,<2",
 ]
 
 [project]
@@ -58,7 +57,12 @@ dependencies = [
   "pydantic>=2.8.0",
   "rich>=13.7.0",
   "universal-pathlib>=0.2.0",
-  "numpy>=1.26.0",
+  # Upper-cap numpy at <2.3: numba (pulled via nemo_toolkit[asr] in the [audio]
+  # extra) refuses to import with numpy>=2.3. vllm (via opencv-python-headless
+  # >=4.13) meanwhile requires numpy>=2, so we can't just cap at <2 either.
+  # The [2.0, 2.3) window satisfies both; nemo_toolkit's leftover np.sctypes
+  # usage is handled by a shim in nemotron_speech_streaming_asr.py.
+  "numpy>=1.26.0,<2.3",
   "debugpy>=1.8.0",
   # Core ingest packages
   "nv-ingest-api",

@@ -25,6 +25,21 @@ logger = logging.getLogger(__name__)
 MODEL_ID = "nvidia/nemotron-speech-streaming-en-0.6b"
 
 
+# nemo_toolkit[asr] 2.1.0's audio preprocessor uses np.sctypes (removed in
+# numpy 2.0); NeMo's own [all]/[nlp]/[multimodal] extras pin numpy<2 for this,
+# but [asr] was missed upstream. We can't cap numpy on our side because vllm
+# (via opencv-python-headless>=4.13) requires numpy>=2, so shim the attribute
+# back in before nemo_asr imports.
+if not hasattr(np, "sctypes"):
+    np.sctypes = {  # type: ignore[attr-defined]
+        "int": [np.int8, np.int16, np.int32, np.int64],
+        "uint": [np.uint8, np.uint16, np.uint32, np.uint64],
+        "float": [np.float16, np.float32, np.float64],
+        "complex": [np.complex64, np.complex128],
+        "others": [bool, object, bytes, str, np.void],
+    }
+
+
 try:
     import nemo.collections.asr as _nemo_asr
 
