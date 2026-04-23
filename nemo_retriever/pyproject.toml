@@ -11,9 +11,13 @@ no-build-package = ["nemotron-ocr"]
 # - transformers: nemo_toolkit[asr] (pulled by the [audio] extra) caps transformers below 4.49,
 #   but the [local] extra and our local model wrappers require >=4.57.6. Pin here so resolving
 #   any extra combination lands on the same version.
+# - numpy: nemo_toolkit[asr]'s preprocessing code uses np.sctypes (removed in numpy 2.0).
+#   NeMo's [all]/[nlp]/[multimodal] extras pin numpy<2 for this reason, but [asr] was missed
+#   upstream. Pin <2 globally so ASR works offline with the pre-cached .nemo checkpoint.
 override-dependencies = [
   "fastparquet>=2024.11.0,<2026",
   "transformers>=4.57.6,<5",
+  "numpy>=1.26,<2",
 ]
 
 [project]

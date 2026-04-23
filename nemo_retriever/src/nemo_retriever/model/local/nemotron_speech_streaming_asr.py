@@ -44,9 +44,17 @@ def _require_nemo() -> None:
 
 
 def _hypothesis_text(item: Any) -> str:
-    """Extract the transcript string from a NeMo output element."""
+    """Extract the transcript string from a NeMo output element.
+
+    NeMo's ``ASRModel.transcribe`` return shape is decoder- and version-
+    dependent: RNN-T may return ``Hypothesis`` objects; CTC or newer releases
+    return plain ``str``; some paths wrap per-utterance output in a one-item
+    list. Handle all three by unwrapping and falling back to ``.text``.
+    """
     if item is None:
         return ""
+    if isinstance(item, (list, tuple)):
+        return _hypothesis_text(item[0]) if item else ""
     text = getattr(item, "text", None)
     if text is None:
         text = item
@@ -67,9 +75,22 @@ class NemotronSpeechStreamingASR:
         _require_nemo()
 
         import torch
+        from huggingface_hub import try_to_load_from_cache
 
         assert _nemo_asr is not None  # for type checkers
-        model = _nemo_asr.models.ASRModel.from_pretrained(model_name=self._model_name)
+
+        # NeMo's ASRModel.from_pretrained() calls HfApi.file_exists() unconditionally
+        # before consulting the cache, which raises OfflineModeIsEnabled under
+        # HF_HUB_OFFLINE=1 even when the .nemo checkpoint is fully cached. When the
+        # file is already local, load it via restore_from() to bypass the HF API
+        # probe; fall back to from_pretrained() only when a first-time download
+        # is actually needed.
+        filename = f"{self._model_name.split('/')[-1]}.nemo"
+        cached = try_to_load_from_cache(repo_id=self._model_name, filename=filename)
+        if isinstance(cached, str):
+            model = _nemo_asr.models.ASRModel.restore_from(cached)
+        else:
+            model = _nemo_asr.models.ASRModel.from_pretrained(model_name=self._model_name)
         model.eval()
         device = self._device or ("cuda" if torch.cuda.is_available() else "cpu")
         if device.startswith("cuda") and torch.cuda.is_available():
@@ -112,6 +133,12 @@ class NemotronSpeechStreamingASR:
         finally:
             for p in tmp_paths:
                 Path(p).unlink(missing_ok=True)
+
+        # Newer NeMo releases return ``(best_hypotheses, all_hypotheses)`` as a
+        # 2-tuple; older releases return the ``best_hypotheses`` list directly.
+        # Unwrap the tuple form so we always iterate the per-utterance list.
+        if isinstance(outputs, tuple) and outputs and isinstance(outputs[0], (list, tuple)):
+            outputs = outputs[0]
 
         if not isinstance(outputs, (list, tuple)) or len(outputs) < len(valid_idx):
             logger.warning(
