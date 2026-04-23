@@ -125,8 +125,13 @@ class NemotronSpeechStreamingASR:
                     tmp_paths.append(f.name)
                 write_wav_16k(audio, tmp_paths[-1])
 
+            # RNN-T joint-network memory is O(B * T * U * V); with long
+            # per-chunk audio (hours, in streaming configs) a Ray batch of even
+            # a few utterances blows past 80 GiB. Transcribe one at a time —
+            # NeMo's streaming decoder is already serialised internally and
+            # there's no real throughput win from batching here.
             with gpu_inference_range("NemotronSpeechStreaming06B", batch_size=len(valid_arrays)):
-                outputs = self._model.transcribe(tmp_paths, batch_size=len(tmp_paths))
+                outputs = self._model.transcribe(tmp_paths, batch_size=1)
         except Exception as e:
             logger.warning("ASR (nemo) batch failed: %s", e)
             return result
