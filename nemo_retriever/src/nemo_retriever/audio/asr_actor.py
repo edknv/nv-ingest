@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-TranscriptionActor: Ray Data map_batches callable for speech-to-text.
+ASRActor: Ray Data map_batches callable for speech-to-text.
 
 Supports remote (Parakeet/Riva gRPC NIM) or local
 (nvidia/parakeet-ctc-1.1b via HuggingFace Transformers). When
@@ -33,10 +33,10 @@ from nemo_retriever.graph.cpu_operator import CPUOperator
 from nemo_retriever.graph.designer import designer_component
 from nemo_retriever.graph.gpu_operator import GPUOperator
 from nemo_retriever.graph.operator_archetype import ArchetypeOperator
-from nemo_retriever.params import TranscriptionParams
+from nemo_retriever.params import ASRParams
 
 
-def _use_remote(params: TranscriptionParams) -> bool:
+def _use_remote(params: ASRParams) -> bool:
     """True if at least one of audio_endpoints is set (use remote gRPC client)."""
     grpc = (params.audio_endpoints[0] or "").strip()
     http = (params.audio_endpoints[1] or "").strip()
@@ -51,22 +51,22 @@ DEFAULT_NGC_ASR_GRPC_ENDPOINT = "grpc.nvcf.nvidia.com:443"
 DEFAULT_NGC_ASR_FUNCTION_ID = "1598d209-5e27-4d3c-8079-4751568b1081"
 
 
-def transcription_params_from_env(
+def asr_params_from_env(
     *,
     grpc_endpoint_var: str = "AUDIO_GRPC_ENDPOINT",
     auth_token_var: str = "NGC_API_KEY",
     function_id_var: str = "AUDIO_FUNCTION_ID",
     default_grpc_endpoint: Optional[str] = DEFAULT_NGC_ASR_GRPC_ENDPOINT,
     default_function_id: Optional[str] = DEFAULT_NGC_ASR_FUNCTION_ID,
-) -> TranscriptionParams:
+) -> ASRParams:
     """
-    Build TranscriptionParams from environment variables for cloud/NGC ASR.
+    Build ASRParams from environment variables for cloud/NGC ASR.
 
     - AUDIO_GRPC_ENDPOINT: gRPC endpoint (default: grpc.nvcf.nvidia.com:443 for NGC).
     - NGC_API_KEY: Bearer token for NGC/NVCF (required for cloud).
     - AUDIO_FUNCTION_ID: NVCF function ID for the Parakeet NIM (default: same as nv-ingest libmode).
 
-    Returns TranscriptionParams with auth_token and function_id set from env when present.
+    Returns ASRParams with auth_token and function_id set from env when present.
     When NGC_API_KEY is set but AUDIO_FUNCTION_ID is not, uses the nv-ingest default Parakeet NIM function ID.
     Local ASR uses the HuggingFace nvidia/parakeet-ctc-1.1b model.
     """
@@ -86,7 +86,7 @@ def transcription_params_from_env(
     else:
         grpc_endpoint = ""  # Local ASR (nvidia/parakeet-ctc-1.1b via Transformers)
 
-    return TranscriptionParams(
+    return ASRParams(
         audio_endpoints=(grpc_endpoint or None, None),
         audio_infer_protocol="grpc",
         function_id=function_id,
@@ -105,10 +105,10 @@ except ImportError:
     _PARAKEET_AVAILABLE = False
 
 
-def _get_client(params: TranscriptionParams):  # noqa: ANN201
+def _get_client(params: ASRParams):  # noqa: ANN201
     if not _PARAKEET_AVAILABLE or create_audio_inference_client is None:
         raise RuntimeError(
-            "TranscriptionActor requires nv-ingest-api (Parakeet client). "
+            "ASRActor requires nv-ingest-api (Parakeet client). "
             "Install with: pip install nv-ingest-api (or add nv-ingest-api to dependencies)."
         )
     grpc_endpoint = (params.audio_endpoints[0] or "").strip() or None
@@ -133,7 +133,7 @@ def _create_local_model():  # noqa: ANN201
     return ParakeetCTC1B1ASR()
 
 
-class _TranscriptionBaseActor(AbstractOperator):
+class _ASRBaseActor(AbstractOperator):
     """
     Ray Data map_batches callable: chunk rows (path/bytes) -> rows with text (transcript).
 
@@ -148,13 +148,13 @@ class _TranscriptionBaseActor(AbstractOperator):
 
     def __init__(
         self,
-        params: TranscriptionParams | None = None,
+        params: ASRParams | None = None,
         *,
         client: Any = None,
         model: Any = None,
     ) -> None:
         super().__init__(params=params)
-        self._params = params or TranscriptionParams()
+        self._params = params or ASRParams()
         self._client = client
         self._model = model
 
@@ -380,7 +380,7 @@ class _TranscriptionBaseActor(AbstractOperator):
             return self._build_output_rows(row, transcript)
 
 
-class TranscriptionCPUActor(_TranscriptionBaseActor, CPUOperator):
+class ASRCPUActor(_ASRBaseActor, CPUOperator):
     """CPU actor for ASR.
 
     Uses remote Parakeet (gRPC) when endpoints are configured; otherwise falls
@@ -388,8 +388,8 @@ class TranscriptionCPUActor(_TranscriptionBaseActor, CPUOperator):
     (slowly — the local model is designed to run on GPU).
     """
 
-    def __init__(self, params: TranscriptionParams | None = None) -> None:
-        resolved_params = params or TranscriptionParams()
+    def __init__(self, params: ASRParams | None = None) -> None:
+        resolved_params = params or ASRParams()
         client = _get_client(resolved_params) if _use_remote(resolved_params) else None
         model = None if client is not None else _create_local_model()
         super().__init__(params=resolved_params, client=client, model=model)
@@ -402,46 +402,44 @@ class TranscriptionCPUActor(_TranscriptionBaseActor, CPUOperator):
     description="Performs automatic speech recognition on audio chunks",
     category_color="#ff6b6b",
 )
-class TranscriptionGPUActor(_TranscriptionBaseActor, GPUOperator):
+class ASRGPUActor(_ASRBaseActor, GPUOperator):
     """GPU actor for ASR using the local Parakeet model."""
 
-    def __init__(self, params: TranscriptionParams | None = None) -> None:
-        resolved_params = params or TranscriptionParams()
+    def __init__(self, params: ASRParams | None = None) -> None:
+        resolved_params = params or ASRParams()
         if _use_remote(resolved_params):
-            raise ValueError(
-                "TranscriptionGPUActor does not support remote endpoints. Use TranscriptionCPUActor instead."
-            )
+            raise ValueError("ASRGPUActor does not support remote endpoints. Use ASRCPUActor instead.")
         super().__init__(params=resolved_params, client=None, model=_create_local_model())
 
 
-class TranscriptionActor(ArchetypeOperator):
+class ASRActor(ArchetypeOperator):
     """Graph-facing ASR archetype resolved to the best concrete runtime implementation."""
 
-    _cpu_variant_class = TranscriptionCPUActor
-    _gpu_variant_class = TranscriptionGPUActor
+    _cpu_variant_class = ASRCPUActor
+    _gpu_variant_class = ASRGPUActor
 
     @classmethod
     def prefers_cpu_variant(cls, operator_kwargs: dict[str, Any] | None = None) -> bool:
         params = (operator_kwargs or {}).get("params")
-        return isinstance(params, TranscriptionParams) and _use_remote(params)
+        return isinstance(params, ASRParams) and _use_remote(params)
 
-    def __init__(self, params: TranscriptionParams | None = None) -> None:
-        resolved_params = params or TranscriptionParams()
+    def __init__(self, params: ASRParams | None = None) -> None:
+        resolved_params = params or ASRParams()
         super().__init__(params=resolved_params)
         self._params = resolved_params
 
 
-def apply_transcription_to_df(
+def apply_asr_to_df(
     batch_df: pd.DataFrame,
-    transcription_params: Optional[dict] = None,
+    asr_params: Optional[dict] = None,
     **kwargs: Any,
 ) -> pd.DataFrame:
     """
     Inprocess helper: apply ASR to a DataFrame of chunk rows; returns DataFrame with text column set.
 
-    Used by InProcessIngestor when _pipeline_type == "audio". transcription_params can be a dict
-    to construct TranscriptionParams (e.g. from model_dump()).
+    Used by InProcessIngestor when _pipeline_type == "audio". asr_params can be a dict
+    to construct ASRParams (e.g. from model_dump()).
     """
-    params = TranscriptionParams(**(transcription_params or {}))
-    actor = TranscriptionActor(params=params)
+    params = ASRParams(**(asr_params or {}))
+    actor = ASRActor(params=params)
     return actor(batch_df)

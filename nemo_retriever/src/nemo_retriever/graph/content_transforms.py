@@ -212,7 +212,7 @@ def _video_bucket_key(row: Any) -> Optional[Tuple[str, int]]:
     """Return ``(source_video, segment_index)`` for a video-pipeline row, else None.
 
     Handles both branches of the video pipeline:
-      - TranscriptionActor rows: ``metadata.source_path`` + ``metadata.chunk_index``
+      - ASRActor rows: ``metadata.source_path`` + ``metadata.chunk_index``
       - VideoFrameExtractActor/OCR rows: ``metadata.source_video`` + ``metadata.segment_index``
 
     Both branches compute ``num_splits = ceil(duration / split_interval)`` from
@@ -251,7 +251,7 @@ def merge_video_modalities_per_time_window(
     """Collapse video-pipeline rows so each ``(source_video, segment_index)`` becomes one row.
 
     Video extraction emits two parallel row streams per source video:
-      - one transcript row per audio chunk (``TranscriptionActor``)
+      - one transcript row per audio chunk (``ASRActor``)
       - one OCR row per video frame (``VideoFrameExtractActor`` + ``VideoFrameOCRActor``)
 
     Downstream dense retrieval otherwise treats them as independent documents.

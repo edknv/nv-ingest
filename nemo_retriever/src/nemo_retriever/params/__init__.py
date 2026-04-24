@@ -2,7 +2,7 @@
 # All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from .models import TranscriptionParams
+from .models import ASRParams
 from .models import AudioChunkParams
 from .models import BatchTuningParams
 from .models import CaptionParams
@@ -33,7 +33,7 @@ from .models import VdbUploadParams
 from .models import VideoExtractParams
 
 __all__ = [
-    "TranscriptionParams",
+    "ASRParams",
     "AudioChunkParams",
     "BatchTuningParams",
     "CaptionParams",

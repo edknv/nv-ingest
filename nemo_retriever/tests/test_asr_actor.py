@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Unit tests for nemo_retriever.audio: TranscriptionActor (with mocked Parakeet client).
+Unit tests for nemo_retriever.audio: ASRActor (with mocked Parakeet client).
 
 Avoids importing nemo_retriever.model (and thus torch) by not eagerly loading
 the model package; local-ASR tests inject a fake nemo_retriever.model.local
@@ -18,9 +18,9 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
-from nemo_retriever.audio.transcription_actor import TranscriptionActor, TranscriptionCPUActor, TranscriptionGPUActor
-from nemo_retriever.audio.transcription_actor import apply_transcription_to_df
-from nemo_retriever.params import TranscriptionParams
+from nemo_retriever.audio.asr_actor import ASRActor, ASRCPUActor, ASRGPUActor
+from nemo_retriever.audio.asr_actor import apply_asr_to_df
+from nemo_retriever.params import ASRParams
 
 
 def _install_fake_local_module(mock_model):
@@ -44,12 +44,12 @@ def _restore_local_module(prev_local):
 
 
 def test_asr_actor_empty_batch():
-    with patch("nemo_retriever.audio.transcription_actor._get_client") as mock_get:
+    with patch("nemo_retriever.audio.asr_actor._get_client") as mock_get:
         mock_client = MagicMock()
         mock_get.return_value = mock_client
 
-        params = TranscriptionParams(audio_endpoints=("localhost:50051", None))
-        actor = TranscriptionActor(params=params)
+        params = ASRParams(audio_endpoints=("localhost:50051", None))
+        actor = ASRActor(params=params)
         empty = pd.DataFrame(columns=["path", "bytes"])
         out = actor(empty)
 
@@ -60,13 +60,13 @@ def test_asr_actor_empty_batch():
 
 
 def test_asr_actor_mock_transcribe():
-    with patch("nemo_retriever.audio.transcription_actor._get_client") as mock_get:
+    with patch("nemo_retriever.audio.asr_actor._get_client") as mock_get:
         mock_client = MagicMock()
         mock_client.infer.return_value = ([], "hello world transcript")
         mock_get.return_value = mock_client
 
-        params = TranscriptionParams(audio_endpoints=("localhost:50051", None))
-        actor = TranscriptionActor(params=params)
+        params = ASRParams(audio_endpoints=("localhost:50051", None))
+        actor = ASRActor(params=params)
         raw = b"\x00\x00\x00\x00"
         batch = pd.DataFrame(
             [
@@ -92,8 +92,8 @@ def test_asr_actor_mock_transcribe():
         assert call_arg == base64.b64encode(raw).decode("ascii")
 
 
-def test_apply_transcription_to_df():
-    with patch("nemo_retriever.audio.transcription_actor._get_client") as mock_get:
+def test_apply_asr_to_df():
+    with patch("nemo_retriever.audio.asr_actor._get_client") as mock_get:
         mock_client = MagicMock()
         mock_client.infer.return_value = ([], "applied transcript")
         mock_get.return_value = mock_client
@@ -111,14 +111,14 @@ def test_apply_transcription_to_df():
                 }
             ]
         )
-        out = apply_transcription_to_df(batch, transcription_params={"audio_endpoints": ("localhost:50051", None)})
+        out = apply_asr_to_df(batch, asr_params={"audio_endpoints": ("localhost:50051", None)})
         assert isinstance(out, pd.DataFrame)
         assert len(out) == 1
         assert out["text"].iloc[0] == "applied transcript"
 
 
 def test_asr_actor_remote_segment_audio():
-    with patch("nemo_retriever.audio.transcription_actor._get_client") as mock_get:
+    with patch("nemo_retriever.audio.asr_actor._get_client") as mock_get:
         mock_client = MagicMock()
         mock_client.infer.return_value = (
             [
@@ -129,8 +129,8 @@ def test_asr_actor_remote_segment_audio():
         )
         mock_get.return_value = mock_client
 
-        params = TranscriptionParams(audio_endpoints=("localhost:50051", None), segment_audio=True)
-        actor = TranscriptionActor(params=params)
+        params = ASRParams(audio_endpoints=("localhost:50051", None), segment_audio=True)
+        actor = ASRActor(params=params)
         batch = pd.DataFrame(
             [
                 {
@@ -159,8 +159,8 @@ def test_asr_actor_remote_segment_audio():
         assert out["metadata"].iloc[1]["segment_end"] == 2.5
 
 
-def test_apply_transcription_to_df_segment_audio():
-    with patch("nemo_retriever.audio.transcription_actor._get_client") as mock_get:
+def test_apply_asr_to_df_segment_audio():
+    with patch("nemo_retriever.audio.asr_actor._get_client") as mock_get:
         mock_client = MagicMock()
         mock_client.infer.return_value = (
             [
@@ -184,9 +184,9 @@ def test_apply_transcription_to_df_segment_audio():
                 }
             ]
         )
-        out = apply_transcription_to_df(
+        out = apply_asr_to_df(
             batch,
-            transcription_params={"audio_endpoints": ("localhost:50051", None), "segment_audio": True},
+            asr_params={"audio_endpoints": ("localhost:50051", None), "segment_audio": True},
         )
         assert isinstance(out, pd.DataFrame)
         assert len(out) == 2
@@ -195,14 +195,14 @@ def test_apply_transcription_to_df_segment_audio():
 
 
 def test_local_asr_does_not_call_get_client():
-    """When audio_endpoints are both null, TranscriptionCPUActor uses local model and does not call _get_client."""
+    """When audio_endpoints are both null, ASRCPUActor uses local model and does not call _get_client."""
     mock_model = MagicMock()
     mock_model.transcribe.return_value = ["mocked local transcript"]
     prev_local = _install_fake_local_module(mock_model)
     try:
-        with patch("nemo_retriever.audio.transcription_actor._get_client") as mock_get:
-            params = TranscriptionParams(audio_endpoints=(None, None))
-            actor = TranscriptionCPUActor(params=params)
+        with patch("nemo_retriever.audio.asr_actor._get_client") as mock_get:
+            params = ASRParams(audio_endpoints=(None, None))
+            actor = ASRCPUActor(params=params)
 
             mock_get.assert_not_called()
             assert actor._client is None
@@ -233,13 +233,13 @@ def test_local_asr_does_not_call_get_client():
         _restore_local_module(prev_local)
 
 
-def test_local_asr_apply_transcription_to_df():
-    """apply_transcription_to_df with audio_endpoints=(None, None) uses local model via the GPU variant when mocked."""
+def test_local_asr_apply_asr_to_df():
+    """apply_asr_to_df with audio_endpoints=(None, None) uses local model via the GPU variant when mocked."""
     mock_model = MagicMock()
     mock_model.transcribe.return_value = ["apply local text"]
     prev_local = _install_fake_local_module(mock_model)
     try:
-        with patch("nemo_retriever.audio.transcription_actor._get_client") as mock_get:
+        with patch("nemo_retriever.audio.asr_actor._get_client") as mock_get:
             batch = pd.DataFrame(
                 [
                     {
@@ -253,7 +253,7 @@ def test_local_asr_apply_transcription_to_df():
                     }
                 ]
             )
-            out = apply_transcription_to_df(batch, transcription_params={"audio_endpoints": (None, None)})
+            out = apply_asr_to_df(batch, asr_params={"audio_endpoints": (None, None)})
 
             mock_get.assert_not_called()
             assert len(out) == 1
@@ -263,12 +263,12 @@ def test_local_asr_apply_transcription_to_df():
 
 
 def test_asr_gpu_actor_uses_local_model():
-    """TranscriptionGPUActor loads the local model and never constructs a remote client."""
+    """ASRGPUActor loads the local model and never constructs a remote client."""
     mock_model = MagicMock()
     prev_local = _install_fake_local_module(mock_model)
     try:
-        with patch("nemo_retriever.audio.transcription_actor._get_client") as mock_get:
-            actor = TranscriptionGPUActor(params=TranscriptionParams(audio_endpoints=(None, None)))
+        with patch("nemo_retriever.audio.asr_actor._get_client") as mock_get:
+            actor = ASRGPUActor(params=ASRParams(audio_endpoints=(None, None)))
             mock_get.assert_not_called()
             assert actor._client is None
             assert actor._model is mock_model
@@ -277,17 +277,17 @@ def test_asr_gpu_actor_uses_local_model():
 
 
 def test_asr_gpu_actor_rejects_remote_endpoints():
-    """Constructing TranscriptionGPUActor with a configured remote endpoint raises ValueError."""
+    """Constructing ASRGPUActor with a configured remote endpoint raises ValueError."""
     with pytest.raises(ValueError, match="does not support remote endpoints"):
-        TranscriptionGPUActor(params=TranscriptionParams(audio_endpoints=("localhost:50051", None)))
+        ASRGPUActor(params=ASRParams(audio_endpoints=("localhost:50051", None)))
 
 
 def test_asr_archetype_prefers_cpu_when_remote():
-    """TranscriptionActor.prefers_cpu_variant is True iff remote endpoints are configured."""
-    remote_params = TranscriptionParams(audio_endpoints=("localhost:50051", None))
-    local_params = TranscriptionParams(audio_endpoints=(None, None))
+    """ASRActor.prefers_cpu_variant is True iff remote endpoints are configured."""
+    remote_params = ASRParams(audio_endpoints=("localhost:50051", None))
+    local_params = ASRParams(audio_endpoints=(None, None))
 
-    assert TranscriptionActor.prefers_cpu_variant({"params": remote_params}) is True
-    assert TranscriptionActor.prefers_cpu_variant({"params": local_params}) is False
-    assert TranscriptionActor.prefers_cpu_variant(None) is False
-    assert TranscriptionActor.prefers_cpu_variant({}) is False
+    assert ASRActor.prefers_cpu_variant({"params": remote_params}) is True
+    assert ASRActor.prefers_cpu_variant({"params": local_params}) is False
+    assert ASRActor.prefers_cpu_variant(None) is False
+    assert ASRActor.prefers_cpu_variant({}) is False

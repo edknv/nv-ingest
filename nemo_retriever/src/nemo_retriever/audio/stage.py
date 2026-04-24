@@ -20,11 +20,11 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 import typer
 
-from nemo_retriever.audio.transcription_actor import apply_transcription_to_df
-from nemo_retriever.audio.transcription_actor import transcription_params_from_env
+from nemo_retriever.audio.asr_actor import apply_asr_to_df
+from nemo_retriever.audio.asr_actor import asr_params_from_env
 from nemo_retriever.audio.chunk_actor import audio_path_to_chunks_df
 from nemo_retriever.audio.media_interface import is_media_available
-from nemo_retriever.params import TranscriptionParams
+from nemo_retriever.params import ASRParams
 from nemo_retriever.params import AudioChunkParams
 
 logger = logging.getLogger(__name__)
@@ -117,14 +117,14 @@ def discover(
 def _run_extract_one(
     source_path: str,
     chunk_params: AudioChunkParams,
-    transcription_params: TranscriptionParams,
+    asr_params: ASRParams,
 ) -> pd.DataFrame:
     """Chunk one file and run ASR; return DataFrame with path, source_path, duration, chunk_index, text, metadata."""
     chunk_df = audio_path_to_chunks_df(source_path, params=chunk_params)
     if chunk_df.empty:
         return chunk_df
-    asr_kw = transcription_params.model_dump(mode="python")
-    return apply_transcription_to_df(chunk_df, transcription_params=asr_kw)
+    asr_kw = asr_params.model_dump(mode="python")
+    return apply_asr_to_df(chunk_df, asr_params=asr_kw)
 
 
 @app.command("extract")
@@ -219,15 +219,15 @@ def extract(
     )
 
     if use_env_asr:
-        transcription_params = transcription_params_from_env()
+        asr_params = asr_params_from_env()
         if audio_grpc_endpoint is not None:
-            transcription_params = transcription_params.model_copy(
-                update={"audio_endpoints": (audio_grpc_endpoint, transcription_params.audio_endpoints[1])}
+            asr_params = asr_params.model_copy(
+                update={"audio_endpoints": (audio_grpc_endpoint, asr_params.audio_endpoints[1])}
             )
         if auth_token is not None:
-            transcription_params = transcription_params.model_copy(update={"auth_token": auth_token})
+            asr_params = asr_params.model_copy(update={"auth_token": auth_token})
     else:
-        transcription_params = TranscriptionParams(
+        asr_params = ASRParams(
             audio_endpoints=(audio_grpc_endpoint or "", None),
             auth_token=auth_token,
         )
@@ -245,7 +245,7 @@ def extract(
         sys.stderr.flush()
         raise typer.Exit(code=2)
 
-    asr_mode = "remote" if (transcription_params.audio_endpoints[0] or "").strip() else "local (Parakeet)"
+    asr_mode = "remote" if (asr_params.audio_endpoints[0] or "").strip() else "local (Parakeet)"
     typer.echo(f"Found {len(paths)} file(s) matching {patterns}. ASR: {asr_mode}.", err=True)
     sys.stderr.flush()
 
@@ -255,7 +255,7 @@ def extract(
     written: List[Path] = []
     for i, p in enumerate(paths):
         try:
-            df = _run_extract_one(str(p), chunk_params, transcription_params)
+            df = _run_extract_one(str(p), chunk_params, asr_params)
         except Exception as e:
             logger.exception("Extraction failed for %s: %s", p, e)
             typer.echo(f"Extraction failed for {p}: {e}", err=True)

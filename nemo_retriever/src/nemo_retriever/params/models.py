@@ -107,7 +107,7 @@ class AudioChunkParams(_ParamsModel):
     video_audio_separate: bool = False
 
 
-class TranscriptionParams(_ParamsModel):
+class ASRParams(_ParamsModel):
     """Params for ASR (Parakeet/Riva gRPC or local transformers backend)."""
 
     audio_endpoints: Tuple[Optional[str], Optional[str]] = (None, None)
@@ -121,7 +121,7 @@ class VideoExtractParams(_ParamsModel):
     """Params for video segmentation and per-segment frame extraction.
 
     Governs the frame-extraction branch of the video pipeline. The parallel
-    ASR branch is configured via the existing AudioChunkParams / TranscriptionParams.
+    ASR branch is configured via the existing AudioChunkParams / ASRParams.
     """
 
     split_type: Literal["size", "time", "frame"] = "time"

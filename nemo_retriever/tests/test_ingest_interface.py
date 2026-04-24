@@ -3,7 +3,7 @@ import pytest
 from nemo_retriever.graph_ingestor import GraphIngestor
 from nemo_retriever.ingestor import IngestorCreateParams, _merge_params, create_ingestor
 from nemo_retriever.params import (
-    TranscriptionParams,
+    ASRParams,
     AudioChunkParams,
     CaptionParams,
     DedupParams,
@@ -61,7 +61,7 @@ def test_graph_ingestor_action_methods_materialize_default_params() -> None:
 
     ingestor.extract_audio()
     assert isinstance(ingestor._audio_chunk_params, AudioChunkParams)
-    assert isinstance(ingestor._transcription_params, TranscriptionParams)
+    assert isinstance(ingestor._asr_params, ASRParams)
 
     ingestor.dedup()
     assert isinstance(ingestor._dedup_params, DedupParams)
