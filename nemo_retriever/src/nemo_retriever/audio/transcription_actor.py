@@ -6,15 +6,15 @@
 TranscriptionActor: Ray Data map_batches callable for speech-to-text.
 
 Supports remote (Parakeet/Riva gRPC NIM) or local
-(nvidia/nemotron-speech-streaming-en-0.6b via NVIDIA NeMo). When
+(nvidia/parakeet-ctc-1.1b via HuggingFace Transformers). When
 audio_endpoints are both null/empty, uses the local model; otherwise uses the
 remote client.
 
 Consumes chunk rows (path, bytes, source_path, duration, chunk_index, metadata)
 and produces rows with text (transcript) for downstream embed/VDB. For now,
 ``segment_audio=True`` only fans out rows when using a hosted/remote Parakeet
-client, because the local NeMo transcripts are emitted as single strings per
-chunk without sentence-level timing information.
+client, because the local Parakeet CTC transcripts are emitted as single
+strings per chunk without sentence-level timing information.
 """
 
 from __future__ import annotations
@@ -68,7 +68,7 @@ def transcription_params_from_env(
 
     Returns TranscriptionParams with auth_token and function_id set from env when present.
     When NGC_API_KEY is set but AUDIO_FUNCTION_ID is not, uses the nv-ingest default Parakeet NIM function ID.
-    Local ASR uses the NeMo nvidia/nemotron-speech-streaming-en-0.6b checkpoint.
+    Local ASR uses the HuggingFace nvidia/parakeet-ctc-1.1b model.
     """
     import os
 
@@ -77,14 +77,14 @@ def transcription_params_from_env(
     if auth_token and function_id is None and default_function_id:
         function_id = default_function_id
 
-    # Only use remote (NGC) endpoint when credentials are set; otherwise use local NeMo ASR.
+    # Only use remote (NGC) endpoint when credentials are set; otherwise use local Parakeet.
     grpc_from_env = (os.environ.get(grpc_endpoint_var) or "").strip()
     if grpc_from_env:
         grpc_endpoint = grpc_from_env
     elif auth_token or function_id:
         grpc_endpoint = default_grpc_endpoint or ""
     else:
-        grpc_endpoint = ""  # Local ASR (nvidia/nemotron-speech-streaming-en-0.6b via NeMo)
+        grpc_endpoint = ""  # Local ASR (nvidia/parakeet-ctc-1.1b via Transformers)
 
     return TranscriptionParams(
         audio_endpoints=(grpc_endpoint or None, None),
@@ -128,9 +128,9 @@ def _get_client(params: TranscriptionParams):  # noqa: ANN201
 
 
 def _create_local_model():  # noqa: ANN201
-    from nemo_retriever.model.local import NemotronSpeechStreamingASR
+    from nemo_retriever.model.local import ParakeetCTC1B1ASR
 
-    return NemotronSpeechStreamingASR()
+    return ParakeetCTC1B1ASR()
 
 
 class _TranscriptionBaseActor(AbstractOperator):
@@ -138,8 +138,8 @@ class _TranscriptionBaseActor(AbstractOperator):
     Ray Data map_batches callable: chunk rows (path/bytes) -> rows with text (transcript).
 
     When ``client`` is provided, uses remote Parakeet (Riva ASR) via gRPC.
-    When ``model`` is provided, uses a local NeMo ASR wrapper. Subclasses pick
-    which injection to perform.
+    When ``model`` is provided, uses the local Parakeet CTC wrapper. Subclasses
+    pick which injection to perform.
 
     Output rows have path, text, page_number, metadata for downstream embed.
     When ``params.segment_audio`` is enabled for remote Parakeet,
@@ -273,7 +273,7 @@ class _TranscriptionBaseActor(AbstractOperator):
             return None
 
     def _transcribe_local(self, raw: bytes, path: Optional[str]) -> Optional[str]:
-        """Use local NeMo model to transcribe; path or temp file with raw bytes."""
+        """Use local Parakeet model to transcribe; path or temp file with raw bytes."""
         if self._model is None:
             return None
         path_to_use = path
@@ -384,7 +384,7 @@ class TranscriptionCPUActor(_TranscriptionBaseActor, CPUOperator):
     """CPU actor for ASR.
 
     Uses remote Parakeet (gRPC) when endpoints are configured; otherwise falls
-    back to the local NeMo model so CPU-only environments continue to work
+    back to the local Parakeet model so CPU-only environments continue to work
     (slowly — the local model is designed to run on GPU).
     """
 
@@ -403,12 +403,14 @@ class TranscriptionCPUActor(_TranscriptionBaseActor, CPUOperator):
     category_color="#ff6b6b",
 )
 class TranscriptionGPUActor(_TranscriptionBaseActor, GPUOperator):
-    """GPU actor for ASR using the local NeMo model."""
+    """GPU actor for ASR using the local Parakeet model."""
 
     def __init__(self, params: TranscriptionParams | None = None) -> None:
         resolved_params = params or TranscriptionParams()
         if _use_remote(resolved_params):
-            raise ValueError("TranscriptionGPUActor does not support remote endpoints. Use TranscriptionCPUActor instead.")
+            raise ValueError(
+                "TranscriptionGPUActor does not support remote endpoints. Use TranscriptionCPUActor instead."
+            )
         super().__init__(params=resolved_params, client=None, model=_create_local_model())
 
 

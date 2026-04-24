@@ -24,13 +24,13 @@ from nemo_retriever.params import TranscriptionParams
 
 
 def _install_fake_local_module(mock_model):
-    """Install a fake ``nemo_retriever.model.local`` whose NemotronSpeechStreamingASR yields mock_model.
+    """Install a fake ``nemo_retriever.model.local`` whose ParakeetCTC1B1ASR yields mock_model.
 
     Returns the previous module (if any) so callers can restore it.
     """
     mock_class = MagicMock(return_value=mock_model)
     mock_local = MagicMock()
-    mock_local.NemotronSpeechStreamingASR = mock_class
+    mock_local.ParakeetCTC1B1ASR = mock_class
     prev_local = sys.modules.get("nemo_retriever.model.local")
     sys.modules["nemo_retriever.model.local"] = mock_local
     return prev_local

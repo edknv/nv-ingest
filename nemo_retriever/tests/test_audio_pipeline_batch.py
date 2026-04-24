@@ -115,7 +115,7 @@ def test_inprocess_audio_pipeline_with_mocked_segmented_asr(tmp_path: Path):
 
 @pytest.mark.skipif(not is_media_available(), reason="ffmpeg not available")
 def test_inprocess_audio_pipeline_local_asr_mocked(tmp_path: Path):
-    """Inprocess with audio_endpoints=(None, None) uses local ASR; mock NemotronSpeechStreamingASR so no real model."""
+    """Inprocess with audio_endpoints=(None, None) uses local ASR; mock ParakeetCTC1B1ASR so no real model."""
     wav = tmp_path / "small.wav"
     _make_small_wav(wav, duration_sec=0.5)
 
@@ -123,7 +123,7 @@ def test_inprocess_audio_pipeline_local_asr_mocked(tmp_path: Path):
     mock_model.transcribe.return_value = ["local asr mock transcript"]
 
     with patch("nemo_retriever.audio.transcription_actor._get_client") as mock_get_client:
-        with patch("nemo_retriever.model.local.NemotronSpeechStreamingASR", return_value=mock_model):
+        with patch("nemo_retriever.model.local.ParakeetCTC1B1ASR", return_value=mock_model):
             ingestor = (
                 GraphIngestor(run_mode="inprocess", documents=[])
                 .files([str(wav)])
