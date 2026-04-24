@@ -46,6 +46,7 @@ import typer
 
 from nemo_retriever.audio import asr_params_from_env
 from nemo_retriever.graph_ingestor import GraphIngestor
+from nemo_retriever.params import ASRParams
 from nemo_retriever.params import AudioChunkParams
 from nemo_retriever.params import CaptionParams
 from nemo_retriever.params import DedupParams
@@ -349,6 +350,27 @@ def main(
     segment_audio: bool = typer.Option(False, "--segment-audio/--no-segment-audio"),
     audio_split_type: str = typer.Option("size", "--audio-split-type"),
     audio_split_interval: int = typer.Option(500000, "--audio-split-interval", min=1),
+    audio_grpc_endpoint: Optional[str] = typer.Option(
+        None,
+        "--audio-grpc-endpoint",
+        help="gRPC endpoint for a remote Parakeet NIM (e.g. 'localhost:50051' or "
+        "'grpc.nvcf.nvidia.com:443'). Overrides $AUDIO_GRPC_ENDPOINT. When set, "
+        "the local ASR model is skipped.",
+    ),
+    audio_http_endpoint: Optional[str] = typer.Option(
+        None, "--audio-http-endpoint", help="HTTP endpoint for remote ASR (rarely used; most NIMs speak gRPC)."
+    ),
+    audio_api_key: Optional[str] = typer.Option(
+        None, "--audio-api-key", help="Bearer token for NGC/NVCF ASR. Overrides $NGC_API_KEY."
+    ),
+    audio_function_id: Optional[str] = typer.Option(
+        None,
+        "--audio-function-id",
+        help="NVCF function ID for the Parakeet NIM. Overrides $AUDIO_FUNCTION_ID.",
+    ),
+    audio_infer_protocol: Optional[str] = typer.Option(
+        None, "--audio-infer-protocol", help="'grpc' (default) or 'http' — transport for remote ASR."
+    ),
     video_split_interval: int = typer.Option(
         120, "--video-split-interval", min=1, help="Seconds per video segment (one frame per segment)."
     ),
@@ -568,6 +590,26 @@ def main(
         ingestor = GraphIngestor(run_mode=run_mode, ray_address=ray_address, node_overrides=node_overrides or None)
         ingestor = ingestor.files(file_patterns)
 
+        # Build ASRParams from env vars, then layer CLI overrides on top. Any
+        # CLI flag that's None is ignored so env-var defaults still win when
+        # the user didn't pass the flag explicitly.
+        def _resolve_asr_params() -> ASRParams:
+            base = asr_params_from_env()
+            base_grpc, base_http = base.audio_endpoints
+            grpc = audio_grpc_endpoint if audio_grpc_endpoint is not None else base_grpc
+            http = audio_http_endpoint if audio_http_endpoint is not None else base_http
+            updates: dict = {
+                "segment_audio": bool(segment_audio),
+                "audio_endpoints": (grpc or None, http or None),
+            }
+            if audio_api_key is not None:
+                updates["auth_token"] = audio_api_key or None
+            if audio_function_id is not None:
+                updates["function_id"] = audio_function_id or None
+            if audio_infer_protocol is not None:
+                updates["audio_infer_protocol"] = audio_infer_protocol
+            return base.model_copy(update=updates)
+
         # Extraction stage
         if input_type == "txt":
             ingestor = ingestor.extract_txt(text_chunk_params)
@@ -576,13 +618,13 @@ def main(
         elif input_type == "image":
             ingestor = ingestor.extract_image_files(extract_params)
         elif input_type == "audio":
-            asr_params = asr_params_from_env().model_copy(update={"segment_audio": bool(segment_audio)})
+            asr_params = _resolve_asr_params()
             ingestor = ingestor.extract_audio(
                 params=AudioChunkParams(split_type=audio_split_type, split_interval=int(audio_split_interval)),
                 asr_params=asr_params,
             )
         elif input_type == "video":
-            asr_params = asr_params_from_env().model_copy(update={"segment_audio": bool(segment_audio)})
+            asr_params = _resolve_asr_params()
             ingestor = ingestor.extract_video(
                 params=VideoExtractParams(
                     split_type="time",
