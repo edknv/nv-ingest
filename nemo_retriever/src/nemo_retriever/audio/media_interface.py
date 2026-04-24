@@ -90,6 +90,37 @@ def _effective_cores() -> int:
     return int(max((os.cpu_count() or 4) * 0.2, 4))
 
 
+def _coerce_float(value: Any) -> Optional[float]:
+    """Return float(value) if it parses to a positive number, else None."""
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _resolve_duration(probe: dict, stream: dict, file_size: int) -> Optional[float]:
+    """Best-effort duration lookup tolerant of incomplete ffprobe output.
+
+    Order: container-level ``format.duration`` → stream-level ``duration`` →
+    audio-bitrate fallback (``file_size * 8 / bit_rate``). Some MP3s omit
+    ``format.duration`` entirely (no Xing/VBRI header), so we can't rely on it.
+    """
+    fmt = probe.get("format") or {}
+    duration = _coerce_float(fmt.get("duration"))
+    if duration is not None:
+        return duration
+    duration = _coerce_float(stream.get("duration"))
+    if duration is not None:
+        return duration
+    bitrate = _coerce_float(fmt.get("bit_rate")) or _coerce_float(stream.get("bit_rate"))
+    if bitrate is not None and file_size > 0:
+        return (file_size * 8) / bitrate
+    return None
+
+
 class _LoaderInterface(ABC):
     @abstractmethod
     def split(self, input_path: str, output_dir: str, split_interval: int = 0) -> Any:
@@ -123,20 +154,36 @@ class MediaInterface(_LoaderInterface):
                 probe = _probe("pipe:", format=path_file.suffix, file_handle=file_handle)
             else:
                 probe = _probe(str(path_file), format=path_file.suffix)
-            if probe["streams"][0]["codec_type"] == "video":
-                sample_rate = float(probe["streams"][0]["avg_frame_rate"].split("/")[0])
-                duration = float(probe["format"]["duration"])
-            elif probe["streams"][0]["codec_type"] == "audio":
-                sample_rate = float(probe["streams"][0]["sample_rate"])
-                bitrate = probe["format"]["bit_rate"]
-                duration = (file_size * 8) / float(bitrate)
+
+            streams = probe.get("streams") or []
+            audio_stream = next((s for s in streams if s.get("codec_type") == "audio"), None)
+            video_stream = next((s for s in streams if s.get("codec_type") == "video"), None)
+
+            # Choose which stream defines sample-rate/duration. MP3s often
+            # include an embedded cover-art "video" stream as streams[0], so
+            # for audio-suffixed files we always prefer the audio stream.
+            audio_exts = {".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".opus"}
+            use_audio = path_file.suffix.lower() in audio_exts or (audio_stream is not None and video_stream is None)
+
+            if use_audio:
+                if audio_stream is None:
+                    raise ValueError(f"No audio stream found in {path_file}")
+                sample_rate = float(audio_stream["sample_rate"])
+                duration = _resolve_duration(probe, audio_stream, file_size)
+            elif video_stream is not None:
+                sample_rate = float(video_stream["avg_frame_rate"].split("/")[0])
+                duration = _resolve_duration(probe, video_stream, file_size)
             else:
-                raise ValueError(f"Unknown codec_type: {probe['streams'][0]}")
+                raise ValueError(f"No usable audio/video stream in {path_file}")
+
+            if duration is None:
+                raise ValueError(f"Could not determine duration for {path_file}")
+
             num_splits = self.find_num_splits(file_size, sample_rate, duration, split_interval, split_type)
         except ffmpeg.Error as e:
             logger.error("FFmpeg error for file %s: %s", path_file, e.stderr.decode())
-        except ValueError as e:
-            logger.error("Error finding splits for file %s: %s", path_file, e)
+        except (ValueError, KeyError) as e:
+            logger.error("Error probing media %s: %s", path_file, e)
         return (probe, num_splits, duration)
 
     def get_audio_from_video(
