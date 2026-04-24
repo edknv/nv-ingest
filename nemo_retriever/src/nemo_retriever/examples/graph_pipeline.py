@@ -357,9 +357,6 @@ def main(
         "'grpc.nvcf.nvidia.com:443'). Overrides $AUDIO_GRPC_ENDPOINT. When set, "
         "the local ASR model is skipped.",
     ),
-    audio_http_endpoint: Optional[str] = typer.Option(
-        None, "--audio-http-endpoint", help="HTTP endpoint for remote ASR (rarely used; most NIMs speak gRPC)."
-    ),
     audio_api_key: Optional[str] = typer.Option(
         None, "--audio-api-key", help="Bearer token for NGC/NVCF ASR. Overrides $NGC_API_KEY."
     ),
@@ -367,9 +364,6 @@ def main(
         None,
         "--audio-function-id",
         help="NVCF function ID for the Parakeet NIM. Overrides $AUDIO_FUNCTION_ID.",
-    ),
-    audio_infer_protocol: Optional[str] = typer.Option(
-        None, "--audio-infer-protocol", help="'grpc' (default) or 'http' — transport for remote ASR."
     ),
     video_split_interval: int = typer.Option(
         120, "--video-split-interval", min=1, help="Seconds per video segment (one frame per segment)."
@@ -597,17 +591,16 @@ def main(
             base = asr_params_from_env()
             base_grpc, base_http = base.audio_endpoints
             grpc = audio_grpc_endpoint if audio_grpc_endpoint is not None else base_grpc
-            http = audio_http_endpoint if audio_http_endpoint is not None else base_http
             updates: dict = {
                 "segment_audio": bool(segment_audio),
-                "audio_endpoints": (grpc or None, http or None),
+                # Parakeet is gRPC-only; the HTTP slot is preserved as-is
+                # (it's always None/empty in practice).
+                "audio_endpoints": (grpc or None, base_http),
             }
             if audio_api_key is not None:
                 updates["auth_token"] = audio_api_key or None
             if audio_function_id is not None:
                 updates["function_id"] = audio_function_id or None
-            if audio_infer_protocol is not None:
-                updates["audio_infer_protocol"] = audio_infer_protocol
             return base.model_copy(update=updates)
 
         # Extraction stage

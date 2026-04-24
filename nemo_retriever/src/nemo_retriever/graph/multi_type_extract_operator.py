@@ -177,7 +177,12 @@ class _MultiTypeExtractBase(AbstractOperator):
         if not grouped["video"].empty:
             video_df = grouped["video"]
             if self.video_params.extract_audio:
-                audio_chunks_df = MediaChunkActor(params=self.audio_chunk_params).run(video_df)
+                # Force audio-only demux for video inputs so MediaInterface.split
+                # strips the video tracks and produces MP3 chunks instead of
+                # full MP4 containers. Parakeet's server uses libsndfile, which
+                # can't decode MP4 → raises "Format not recognised".
+                video_audio_params = self.audio_chunk_params.model_copy(update={"audio_only": True})
+                audio_chunks_df = MediaChunkActor(params=video_audio_params).run(video_df)
                 outputs.append(ASRActor(params=self.asr_params).run(audio_chunks_df))
             if self.video_params.extract_frames:
                 frame_pages_df = VideoFrameExtractActor(params=self.video_params).run(video_df)
