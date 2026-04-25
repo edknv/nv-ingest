@@ -359,20 +359,9 @@ class _MultiTypeExtractBase(AbstractOperator):
         Skips PageElementDetection / TableStructure / GraphicElements and
         invokes OCR directly on each full frame image.
         """
-        extract_params = self.extract_params
-        tuning = getattr(extract_params, "batch_tuning", None)
+        from nemo_retriever.graph.ingestor_runtime import _video_frame_ocr_kwargs
 
-        ocr_kwargs: dict[str, Any] = {}
-        if extract_params.ocr_invoke_url:
-            ocr_kwargs["ocr_invoke_url"] = extract_params.ocr_invoke_url
-        if extract_params.api_key:
-            ocr_kwargs["api_key"] = extract_params.api_key
-        inference_batch_size = getattr(extract_params, "inference_batch_size", None) or getattr(
-            tuning, "ocr_inference_batch_size", None
-        )
-        if inference_batch_size:
-            ocr_kwargs["inference_batch_size"] = int(inference_batch_size)
-
+        ocr_kwargs = _video_frame_ocr_kwargs(self.extract_params)
         return self._instantiate_resolved(VideoFrameOCRActor, **ocr_kwargs).run(batch_df)
 
     def _local_resources(self):

@@ -33,7 +33,6 @@ from nemo_retriever.graph import InprocessExecutor, RayDataExecutor
 from nemo_retriever.graph.executor import (
     ensure_ray_initialized,
     expand_globs,
-    read_binary_seed_dataset,
 )
 from nemo_retriever.graph.ingestor_runtime import (
     batch_tuning_to_node_overrides,
@@ -350,32 +349,8 @@ class GraphIngestor(ingestor):
                 webhook_params=self._webhook_params,
                 stage_order=post_extract_order,
             )
-            # Derive per-node Ray scheduling config from BatchTuningParams plus
-            # cluster-scaled heuristic defaults, then let any explicit
-            # node_overrides passed to __init__ take precedence.
-            effective_allow_no_gpu = self._allow_no_gpu or cluster_resources.available_gpu_count() == 0
-            derived_overrides = batch_tuning_to_node_overrides(
-                self._extract_params,
-                self._embed_params,
-                cluster_resources=cluster_resources,
-                allow_no_gpu=effective_allow_no_gpu,
-                caption_params=self._caption_params,
-            )
-            merged_overrides: Dict[str, Dict[str, Any]] = {}
-            for node_name in set(derived_overrides) | set(self._node_overrides):
-                merged_overrides[node_name] = {
-                    **derived_overrides.get(node_name, {}),
-                    **self._node_overrides.get(node_name, {}),
-                }
-            executor = RayDataExecutor(
-                graph,
-                ray_address=self._ray_address,
-                batch_size=self._batch_size,
-                num_cpus=self._num_cpus,
-                num_gpus=self._num_gpus,
-                node_overrides=merged_overrides,
-                rich_progress=self._rich_progress,
-            )
+            merged_overrides = self._compute_merged_overrides(cluster_resources)
+            executor = self._make_ray_executor(graph, merged_overrides)
             result = executor.ingest(self._documents)
             self._rd_dataset = result
             return result
@@ -418,58 +393,29 @@ class GraphIngestor(ingestor):
 
         if self._run_mode == "batch":
             import ray
+            import ray.data as rd
 
             ensure_ray_initialized(self._ray_address)
             cluster_resources = gather_cluster_resources(ray)
-            effective_allow_no_gpu = self._allow_no_gpu or cluster_resources.available_gpu_count() == 0
-            derived_overrides = batch_tuning_to_node_overrides(
-                self._extract_params,
-                self._embed_params,
-                cluster_resources=cluster_resources,
-                allow_no_gpu=effective_allow_no_gpu,
-                caption_params=self._caption_params,
-            )
-            merged_overrides: Dict[str, Dict[str, Any]] = {}
-            for node_name in set(derived_overrides) | set(self._node_overrides):
-                merged_overrides[node_name] = {
-                    **derived_overrides.get(node_name, {}),
-                    **self._node_overrides.get(node_name, {}),
-                }
+            merged_overrides = self._compute_merged_overrides(cluster_resources)
 
-            ds_raw = read_binary_seed_dataset(self._documents)
-            # Build branch and post pipelines lazily so the entire DAG materializes once at the
-            # end. This avoids re-reading source files per branch and collapses progress output
-            # into a single Ray Data plan.
-            branch_datasets = []
-            for sub_graph in (plan.frame_graph, plan.audio_graph):
-                if sub_graph is None:
-                    continue
-                branch_executor = RayDataExecutor(
-                    sub_graph,
-                    ray_address=self._ray_address,
-                    batch_size=self._batch_size,
-                    num_cpus=self._num_cpus,
-                    num_gpus=self._num_gpus,
-                    node_overrides=merged_overrides,
-                    rich_progress=self._rich_progress,
-                )
-                branch_datasets.append(branch_executor.ingest(ds_raw, materialize=False))
+            # Video actors only consume `path`; building the seed without reading file
+            # bytes saves 2x I/O across the two branches and avoids parking the input
+            # in Ray's object store.
+            ds_raw = rd.from_items([{"path": p} for p in expand_globs(self._documents)])
+            # Branches stay lazy so the union materializes as a single Ray Data plan.
+            branch_datasets = [
+                self._make_ray_executor(sub_graph, merged_overrides).ingest(ds_raw, materialize=False)
+                for sub_graph in (plan.frame_graph, plan.audio_graph)
+                if sub_graph is not None
+            ]
 
             ds_combined = branch_datasets[0]
             if len(branch_datasets) > 1:
                 ds_combined = ds_combined.union(*branch_datasets[1:])
 
             if plan.post_graph.roots:
-                post_executor = RayDataExecutor(
-                    plan.post_graph,
-                    ray_address=self._ray_address,
-                    batch_size=self._batch_size,
-                    num_cpus=self._num_cpus,
-                    num_gpus=self._num_gpus,
-                    node_overrides=merged_overrides,
-                    rich_progress=self._rich_progress,
-                )
-                result = post_executor.ingest(ds_combined)
+                result = self._make_ray_executor(plan.post_graph, merged_overrides).ingest(ds_combined)
             else:
                 result = ds_combined.materialize()
 
@@ -479,7 +425,7 @@ class GraphIngestor(ingestor):
         # Inprocess path: serialize the two branches, concat, then run post.
         import pandas as pd
 
-        df_raw = InprocessExecutor._load_files(expand_globs(self._documents))
+        df_raw = pd.DataFrame({"path": expand_globs(self._documents)})
         branch_dfs: List[Any] = []
         for sub_graph in (plan.frame_graph, plan.audio_graph):
             if sub_graph is None:
@@ -488,21 +434,50 @@ class GraphIngestor(ingestor):
             if isinstance(df, pd.DataFrame) and not df.empty:
                 branch_dfs.append(df)
 
-        if not branch_dfs:
-            df_combined = pd.DataFrame()
-        elif len(branch_dfs) == 1:
-            df_combined = branch_dfs[0]
-        else:
-            df_combined = pd.concat(branch_dfs, ignore_index=True, sort=False)
-
         self._rd_dataset = None
-        if plan.post_graph.roots and not df_combined.empty:
+        if not branch_dfs:
+            return pd.DataFrame()
+
+        df_combined = branch_dfs[0] if len(branch_dfs) == 1 else pd.concat(branch_dfs, ignore_index=True, sort=False)
+        if plan.post_graph.roots:
             return InprocessExecutor(plan.post_graph, show_progress=self._show_progress).ingest(df_combined)
         return df_combined
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _compute_merged_overrides(self, cluster_resources: Any) -> Dict[str, Dict[str, Any]]:
+        effective_allow_no_gpu = self._allow_no_gpu or cluster_resources.available_gpu_count() == 0
+        derived_overrides = batch_tuning_to_node_overrides(
+            self._extract_params,
+            self._embed_params,
+            cluster_resources=cluster_resources,
+            allow_no_gpu=effective_allow_no_gpu,
+            caption_params=self._caption_params,
+        )
+        merged_overrides: Dict[str, Dict[str, Any]] = {}
+        for node_name in set(derived_overrides) | set(self._node_overrides):
+            merged_overrides[node_name] = {
+                **derived_overrides.get(node_name, {}),
+                **self._node_overrides.get(node_name, {}),
+            }
+        return merged_overrides
+
+    def _make_ray_executor(
+        self,
+        graph: Any,
+        merged_overrides: Dict[str, Dict[str, Any]],
+    ) -> RayDataExecutor:
+        return RayDataExecutor(
+            graph,
+            ray_address=self._ray_address,
+            batch_size=self._batch_size,
+            num_cpus=self._num_cpus,
+            num_gpus=self._num_gpus,
+            node_overrides=merged_overrides,
+            rich_progress=self._rich_progress,
+        )
 
     @staticmethod
     def _has_error(v: Any) -> bool:

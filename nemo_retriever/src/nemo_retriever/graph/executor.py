@@ -65,7 +65,7 @@ def ensure_ray_initialized(ray_address: Optional[str] = None) -> None:
     """Initialize Ray with the same runtime env the executor uses, if not already running."""
     import ray
 
-    if not (ray_address or not ray.is_initialized()):
+    if ray_address is None and ray.is_initialized():
         return
     venv = os.path.dirname(os.path.dirname(sys.executable))
     venv_bin = os.path.join(venv, "bin")
@@ -154,21 +154,12 @@ class InprocessExecutor(AbstractExecutor):
         pandas.DataFrame
             The result after all operators have been applied.
         """
-        import glob as _glob
-
         import pandas as pd
 
         if isinstance(data, pd.DataFrame):
             df = data
-        elif isinstance(data, str):
-            df = self._load_files([data])
-        elif isinstance(data, list):
-            # Expand globs
-            expanded: List[str] = []
-            for pattern in data:
-                matches = _glob.glob(pattern, recursive=True)
-                expanded.extend(sorted(matches) if matches else [pattern])
-            df = self._load_files(expanded)
+        elif isinstance(data, (str, list)):
+            df = self._load_files(expand_globs(data))
         else:
             raise TypeError(
                 f"data must be a pandas.DataFrame, file path, or list of paths, " f"got {type(data).__name__}"
