@@ -32,6 +32,61 @@ logger = logging.getLogger(__name__)
 _DEFAULT_GPU_OPERATOR_NUM_GPUS = OCR_GPUS_PER_ACTOR
 
 
+def expand_globs(paths: Any) -> List[str]:
+    """Expand glob patterns to a sorted list of file paths.
+
+    Accepts a single pattern or a list of patterns. Patterns that match no
+    files pass through unchanged so callers see the original input on error.
+    """
+    import glob as _glob
+
+    if isinstance(paths, str):
+        patterns = [paths]
+    elif isinstance(paths, list):
+        patterns = list(paths)
+    else:
+        raise TypeError(f"paths must be a string or list of strings, got {type(paths).__name__}")
+    expanded: List[str] = []
+    for pattern in patterns:
+        matches = _glob.glob(pattern, recursive=True)
+        expanded.extend(sorted(matches) if matches else [pattern])
+    return expanded
+
+
+def read_binary_seed_dataset(paths: Any) -> Any:
+    """Build a Ray Dataset of binary file contents from glob patterns or a list of paths."""
+    import ray.data as rd
+
+    expanded = expand_globs(paths)
+    return rd.read_binary_files(expanded, include_paths=True)
+
+
+def ensure_ray_initialized(ray_address: Optional[str] = None) -> None:
+    """Initialize Ray with the same runtime env the executor uses, if not already running."""
+    import ray
+
+    if not (ray_address or not ray.is_initialized()):
+        return
+    venv = os.path.dirname(os.path.dirname(sys.executable))
+    venv_bin = os.path.join(venv, "bin")
+    pypath = os.pathsep.join(p for p in sys.path if p)
+    ray_env_vars: dict[str, str] = {
+        "VIRTUAL_ENV": venv,
+        "PATH": venv_bin + os.pathsep + os.environ.get("PATH", ""),
+        "PYTHONPATH": pypath,
+    }
+    for _fwd_key in ("HF_TOKEN", "HF_HOME", "HUGGING_FACE_HUB_TOKEN", "NVIDIA_API_KEY"):
+        if os.environ.get(_fwd_key):
+            ray_env_vars[_fwd_key] = os.environ[_fwd_key]
+    ray_env_vars["HF_HUB_OFFLINE"] = os.environ.get("HF_HUB_OFFLINE", "1")
+    runtime_env = {"env_vars": ray_env_vars}
+    ray.init(
+        address=ray_address,
+        ignore_reinit_error=True,
+        runtime_env=runtime_env,
+    )
+
+
 class AbstractExecutor(ABC):
     """Base class for pipeline executors.
 
@@ -226,8 +281,6 @@ class RayDataExecutor(AbstractExecutor):
         ray.data.Dataset
             The materialized result dataset.
         """
-        import glob as _glob
-
         import ray
         import ray.data as rd
 
@@ -236,25 +289,7 @@ class RayDataExecutor(AbstractExecutor):
                 f"data must be a path/glob string, list of globs, or ray.data.Dataset, " f"got {type(data).__name__}"
             )
 
-        if self._ray_address or not ray.is_initialized():
-            venv = os.path.dirname(os.path.dirname(sys.executable))
-            venv_bin = os.path.join(venv, "bin")
-            pypath = os.pathsep.join(p for p in sys.path if p)
-            ray_env_vars: dict[str, str] = {
-                "VIRTUAL_ENV": venv,
-                "PATH": venv_bin + os.pathsep + os.environ.get("PATH", ""),
-                "PYTHONPATH": pypath,
-            }
-            for _fwd_key in ("HF_TOKEN", "HF_HOME", "HUGGING_FACE_HUB_TOKEN", "NVIDIA_API_KEY"):
-                if os.environ.get(_fwd_key):
-                    ray_env_vars[_fwd_key] = os.environ[_fwd_key]
-            ray_env_vars["HF_HUB_OFFLINE"] = os.environ.get("HF_HUB_OFFLINE", "1")
-            runtime_env = {"env_vars": ray_env_vars}
-            ray.init(
-                address=self._ray_address,
-                ignore_reinit_error=True,
-                runtime_env=runtime_env,
-            )
+        ensure_ray_initialized(self._ray_address)
 
         ctx = rd.DataContext.get_current()
         ctx.enable_rich_progress_bars = True
@@ -266,13 +301,8 @@ class RayDataExecutor(AbstractExecutor):
 
         if isinstance(data, rd.Dataset):
             ds = data
-        elif isinstance(data, (str, list)):
-            paths = [data] if isinstance(data, str) else list(data)
-            expanded: List[str] = []
-            for pattern in paths:
-                matches = _glob.glob(pattern, recursive=True)
-                expanded.extend(sorted(matches) if matches else [pattern])
-            ds = rd.read_binary_files(expanded, include_paths=True)
+        else:
+            ds = read_binary_seed_dataset(data)
         nodes = self._linearize(resolved_graph)
         for node in nodes:
             overrides = dict(self._node_overrides.get(node.name, {}))

@@ -201,6 +201,73 @@ def test_video_branch_runs_ocr_only_pipeline(tmp_path: Path, monkeypatch):
     assert result["metadata"].apply(lambda m: m["modality"]).unique().tolist() == ["video_frame"]
 
 
+@pytest.mark.skipif(not _ffmpeg_available(), reason="ffmpeg not available")
+def test_video_frame_graph_runs_ocr_only_pipeline(tmp_path: Path, monkeypatch):
+    """The new chained frame graph (VideoFrameExtractActor → VideoFrameOCRActor)
+    omits PageElementDetection / OCR / TableStructure / GraphicElements."""
+    from nemo_retriever.graph.executor import InprocessExecutor
+    from nemo_retriever.graph.ingestor_runtime import build_video_frame_extract_graph
+    from nemo_retriever.params import ExtractParams
+
+    video = tmp_path / "route.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=green:s=320x240:d=3",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            str(video),
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+    video_params = VideoExtractParams(split_interval=1, extract_audio=False)
+    # Force the OCR archetype to its CPU variant so we can patch the remote NIM client
+    # without loading the local Nemotron model.
+    extract_params = ExtractParams(method="pdfium", ocr_invoke_url="http://fake/ocr", api_key="secret")
+    graph = build_video_frame_extract_graph(video_params, extract_params)
+    assert graph is not None
+    stage_names = [node.name for node in InprocessExecutor._linearize(graph)]
+    assert stage_names == ["VideoFrameExtractActor", "VideoFrameOCRActor"]
+    forbidden = {"PageElementDetectionActor", "OCRActor", "TableStructureActor", "GraphicElementsActor"}
+    assert forbidden.isdisjoint(stage_names)
+
+    nim_calls: list[int] = []
+
+    def _fake_invoke(self, **kwargs):
+        nim_calls.append(len(kwargs["image_b64_list"]))
+        return [
+            {
+                "text_detections": [
+                    {
+                        "text_prediction": {"text": f"ocr_segment_{i}"},
+                        "bounding_box": {"points": [{"x": 0, "y": 0}]},
+                    }
+                ]
+            }
+            for i, _ in enumerate(kwargs["image_b64_list"])
+        ]
+
+    monkeypatch.setattr("nemo_retriever.nim.nim.NIMClient.invoke_image_inference_batches", _fake_invoke)
+
+    batch = pd.DataFrame([{"path": str(video), "bytes": video.read_bytes()}])
+    result = InprocessExecutor(graph, show_progress=False).ingest(batch)
+
+    assert nim_calls == [3]
+    assert result["text"].tolist() == ["ocr_segment_0", "ocr_segment_1", "ocr_segment_2"]
+    assert result["metadata"].apply(lambda m: m["modality"]).unique().tolist() == ["video_frame"]
+
+
 def test_video_frame_ocr_cpu_actor_writes_text(monkeypatch):
     """VideoFrameOCRCPUActor invokes the OCR NIM once per frame and writes text."""
     from nemo_retriever.video.frame_ocr import VideoFrameOCRCPUActor

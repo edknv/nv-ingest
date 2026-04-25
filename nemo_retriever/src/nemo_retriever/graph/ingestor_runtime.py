@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from functools import partial
 from typing import cast
 from typing import Any
@@ -31,6 +32,8 @@ from nemo_retriever.pdf.extract import PDFExtractionActor
 from nemo_retriever.pdf.split import PDFSplitActor
 from nemo_retriever.txt.ray_data import TextChunkActor
 from nemo_retriever.utils.convert.to_pdf import DocToPdfConversionActor
+from nemo_retriever.video.frame_actor import VideoFrameExtractActor
+from nemo_retriever.video.frame_ocr import VideoFrameOCRActor
 from nemo_retriever.ingest_plans import IngestExecutionPlan
 from nemo_retriever.utils.ray_resource_hueristics import (
     ClusterResources,
@@ -692,3 +695,91 @@ def build_graph(
 # In-process execution now intentionally reuses the shared graph builder so
 # both modes inherit the same defaults, node ordering, and optional stages.
 build_inprocess_graph = build_graph
+
+
+@dataclass
+class VideoIngestPlan:
+    """Two extraction branches plus a shared post-extract chain for video ingest."""
+
+    frame_graph: Graph | None
+    audio_graph: Graph | None
+    post_graph: Graph
+
+
+def _video_frame_ocr_kwargs(extract_params: Any | None) -> dict[str, Any]:
+    if extract_params is None:
+        return {}
+    kwargs: dict[str, Any] = {}
+    if getattr(extract_params, "ocr_invoke_url", None):
+        kwargs["ocr_invoke_url"] = extract_params.ocr_invoke_url
+    if getattr(extract_params, "api_key", None):
+        kwargs["api_key"] = extract_params.api_key
+    tuning = getattr(extract_params, "batch_tuning", None)
+    inference_batch_size = getattr(extract_params, "inference_batch_size", None) or getattr(
+        tuning, "ocr_inference_batch_size", None
+    )
+    if inference_batch_size:
+        kwargs["inference_batch_size"] = int(inference_batch_size)
+    return kwargs
+
+
+def build_video_frame_extract_graph(video_params: Any, extract_params: Any | None) -> Graph | None:
+    """Frame-extraction → frame-OCR chain, or None when frames are disabled."""
+    if video_params is None or not getattr(video_params, "extract_frames", False):
+        return None
+    return (
+        Graph()
+        >> VideoFrameExtractActor(params=video_params)
+        >> VideoFrameOCRActor(**_video_frame_ocr_kwargs(extract_params))
+    )
+
+
+def build_video_audio_graph(
+    audio_chunk_params: Any | None,
+    asr_params: Any | None,
+    video_params: Any,
+) -> Graph | None:
+    """Audio-chunk → ASR chain, or None when audio extraction is disabled."""
+    if video_params is None or not getattr(video_params, "extract_audio", False):
+        return None
+    return Graph() >> MediaChunkActor(params=audio_chunk_params) >> ASRActor(params=asr_params)
+
+
+def build_video_graphs(
+    *,
+    extract_params: Any | None,
+    audio_chunk_params: Any | None,
+    asr_params: Any | None,
+    video_params: Any,
+    dedup_params: Any | None,
+    split_params: Any | None,
+    caption_params: Any | None,
+    store_params: Any | None,
+    embed_params: Any | None,
+    webhook_params: Any | None,
+    stage_order: tuple[str, ...],
+) -> VideoIngestPlan:
+    """Build the two extraction branches and the shared post-extract chain.
+
+    Raises ``ValueError`` when both branches are disabled, since that produces
+    no extraction at all.
+    """
+    frame_graph = build_video_frame_extract_graph(video_params, extract_params)
+    audio_graph = build_video_audio_graph(audio_chunk_params, asr_params, video_params)
+    if frame_graph is None and audio_graph is None:
+        raise ValueError("Video extraction requires at least one of extract_frames or extract_audio")
+
+    post_graph = _append_ordered_transform_stages(
+        Graph(),
+        extraction_mode="video",
+        dedup_params=dedup_params,
+        split_params=split_params,
+        caption_params=caption_params,
+        store_params=store_params,
+        embed_params=embed_params,
+        webhook_params=webhook_params,
+        stage_order=stage_order,
+        supports_dedup=True,
+        reshape_for_modal_content=True,
+    )
+    return VideoIngestPlan(frame_graph=frame_graph, audio_graph=audio_graph, post_graph=post_graph)
