@@ -129,6 +129,7 @@ class GraphIngestor(ingestor):
         num_gpus: float = 0,
         node_overrides: Optional[Dict[str, Dict[str, Any]]] = None,
         show_progress: bool = True,
+        rich_progress: bool = True,
     ) -> None:
         super().__init__(documents=documents)
         if run_mode not in {"batch", "inprocess"}:
@@ -143,6 +144,7 @@ class GraphIngestor(ingestor):
         self._num_gpus = num_gpus
         self._node_overrides: Dict[str, Dict[str, Any]] = node_overrides or {}
         self._show_progress = show_progress
+        self._rich_progress = rich_progress
         self._rd_dataset: Any = None
 
         # Pipeline configuration accumulated by fluent methods
@@ -372,6 +374,7 @@ class GraphIngestor(ingestor):
                 num_cpus=self._num_cpus,
                 num_gpus=self._num_gpus,
                 node_overrides=merged_overrides,
+                rich_progress=self._rich_progress,
             )
             result = executor.ingest(self._documents)
             self._rd_dataset = result
@@ -434,6 +437,9 @@ class GraphIngestor(ingestor):
                 }
 
             ds_raw = read_binary_seed_dataset(self._documents)
+            # Build branch and post pipelines lazily so the entire DAG materializes once at the
+            # end. This avoids re-reading source files per branch and collapses progress output
+            # into a single Ray Data plan.
             branch_datasets = []
             for sub_graph in (plan.frame_graph, plan.audio_graph):
                 if sub_graph is None:
@@ -445,8 +451,9 @@ class GraphIngestor(ingestor):
                     num_cpus=self._num_cpus,
                     num_gpus=self._num_gpus,
                     node_overrides=merged_overrides,
+                    rich_progress=self._rich_progress,
                 )
-                branch_datasets.append(branch_executor.ingest(ds_raw))
+                branch_datasets.append(branch_executor.ingest(ds_raw, materialize=False))
 
             ds_combined = branch_datasets[0]
             if len(branch_datasets) > 1:
@@ -460,6 +467,7 @@ class GraphIngestor(ingestor):
                     num_cpus=self._num_cpus,
                     num_gpus=self._num_gpus,
                     node_overrides=merged_overrides,
+                    rich_progress=self._rich_progress,
                 )
                 result = post_executor.ingest(ds_combined)
             else:

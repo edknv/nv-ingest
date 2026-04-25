@@ -399,10 +399,14 @@ def _build_ingestor(
     if caption_gpus_per_actor is not None:
         node_overrides["CaptionActor"] = {"num_gpus": caption_gpus_per_actor}
 
+    # Video graphs fan out into many concurrent stages (frame extract / frame OCR /
+    # media chunk / ASR / union / post-extract); the rich progress tree gets
+    # visually overwhelming there, so fall back to plain tqdm bars for video.
     ingestor = GraphIngestor(
         run_mode=run_mode,
         ray_address=ray_address,
         node_overrides=node_overrides or None,
+        rich_progress=input_type != "video",
     )
     ingestor = ingestor.files(file_patterns)
 

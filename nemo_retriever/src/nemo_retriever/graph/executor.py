@@ -239,6 +239,7 @@ class RayDataExecutor(AbstractExecutor):
         num_cpus: float = 1,
         num_gpus: float = 0,
         node_overrides: Optional[Dict[str, Dict[str, Any]]] = None,
+        rich_progress: bool = True,
     ) -> None:
         super().__init__(graph)
         self._ray_address = ray_address
@@ -247,6 +248,7 @@ class RayDataExecutor(AbstractExecutor):
         self._default_num_cpus = num_cpus
         self._default_num_gpus = num_gpus
         self._node_overrides = node_overrides or {}
+        self._rich_progress = rich_progress
 
     @staticmethod
     def _linearize(graph: Graph) -> List[Node]:
@@ -267,7 +269,7 @@ class RayDataExecutor(AbstractExecutor):
             node = node.children[0] if node.children else None
         return ordered
 
-    def ingest(self, data: Any, **kwargs: Any) -> Any:
+    def ingest(self, data: Any, *, materialize: bool = True, **kwargs: Any) -> Any:
         """Build and execute a Ray Data pipeline from the graph.
 
         Parameters
@@ -275,11 +277,15 @@ class RayDataExecutor(AbstractExecutor):
         data
             Input to ``ray.data.read_binary_files`` (a path or list of glob patterns)
             **or** an already-constructed ``ray.data.Dataset``.
+        materialize
+            If True (default) call ``.materialize()`` on the resulting Dataset
+            before returning. Set to False when chaining multiple executors so
+            execution defers to a single materialize at the end of the pipeline.
 
         Returns
         -------
         ray.data.Dataset
-            The materialized result dataset.
+            The result dataset (materialized when ``materialize=True``).
         """
         import ray
         import ray.data as rd
@@ -292,8 +298,15 @@ class RayDataExecutor(AbstractExecutor):
         ensure_ray_initialized(self._ray_address)
 
         ctx = rd.DataContext.get_current()
-        ctx.enable_rich_progress_bars = True
-        ctx.use_ray_tqdm = False
+        # When rich_progress is on, render the full execution tree with per-stage
+        # backpressure / queue / resource detail. When off (e.g. video graphs with
+        # many concurrent stages), disable Ray Data progress bars entirely — the
+        # logging fallback re-prints the dataset summary every few seconds when
+        # stdout isn't a TTY, which is louder than it's worth.
+        ctx.enable_progress_bars = self._rich_progress
+        ctx.enable_rich_progress_bars = self._rich_progress
+        ctx.enable_operator_progress_bars = self._rich_progress
+        ctx.use_ray_tqdm = not self._rich_progress
 
         cluster = gather_cluster_resources(ray)
         available_gpus = cluster.available_gpu_count()
@@ -391,4 +404,4 @@ class RayDataExecutor(AbstractExecutor):
                 **overrides,
             )
 
-        return ds.materialize()
+        return ds.materialize() if materialize else ds
