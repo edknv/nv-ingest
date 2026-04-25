@@ -64,8 +64,13 @@ class HarnessConfig:
     recall_adapter: str = "none"
     audio_match_tolerance_secs: float = 2.0
     segment_audio: bool = False
-    audio_split_type: str = "size"
-    audio_split_interval: int = 500000
+    audio_split_type: str = "time"
+    audio_split_interval: int = 120
+    video_split_interval: int = 120
+    video_frame_position: str = "middle"
+    video_frame_format: str = "jpeg"
+    video_extract_frames: bool = True
+    video_extract_audio: bool = True
     evaluation_mode: str = "recall"
     beir_loader: str | None = None
     beir_dataset_name: str | None = None
@@ -133,8 +138,8 @@ class HarnessConfig:
         if self.evaluation_mode == "recall" and self.recall_required and not self.query_csv:
             errors.append("recall_required=true requires query_csv")
 
-        if self.input_type not in {"pdf", "txt", "html", "doc", "audio"}:
-            errors.append(f"input_type must be one of pdf/txt/html/doc/audio, got '{self.input_type}'")
+        if self.input_type not in {"pdf", "txt", "html", "doc", "audio", "video"}:
+            errors.append(f"input_type must be one of pdf/txt/html/doc/audio/video, got '{self.input_type}'")
 
         if self.evaluation_mode == "recall":
             if self.recall_match_mode not in {"pdf_page", "pdf_only", "audio_segment"}:
@@ -168,6 +173,14 @@ class HarnessConfig:
                     except (TypeError, ValueError):
                         errors.append("beir_ks values must be integers")
                         break
+
+        if self.input_type == "video":
+            if self.video_frame_position not in {"first", "middle", "last"}:
+                errors.append("video_frame_position must be one of first/middle/last")
+            if self.video_frame_format not in {"jpeg", "png"}:
+                errors.append("video_frame_format must be one of jpeg/png")
+            if int(self.video_split_interval) < 1:
+                errors.append("video_split_interval must be >= 1")
 
         if self.embed_modality not in VALID_EMBED_MODALITIES:
             errors.append(f"embed_modality must be one of {sorted(VALID_EMBED_MODALITIES)}")
@@ -288,6 +301,11 @@ def _apply_env_overrides(config_dict: dict[str, Any]) -> None:
         "HARNESS_SEGMENT_AUDIO": ("segment_audio", _parse_bool),
         "HARNESS_AUDIO_SPLIT_TYPE": ("audio_split_type", str),
         "HARNESS_AUDIO_SPLIT_INTERVAL": ("audio_split_interval", _parse_number),
+        "HARNESS_VIDEO_SPLIT_INTERVAL": ("video_split_interval", _parse_number),
+        "HARNESS_VIDEO_FRAME_POSITION": ("video_frame_position", str),
+        "HARNESS_VIDEO_FRAME_FORMAT": ("video_frame_format", str),
+        "HARNESS_VIDEO_EXTRACT_FRAMES": ("video_extract_frames", _parse_bool),
+        "HARNESS_VIDEO_EXTRACT_AUDIO": ("video_extract_audio", _parse_bool),
         "HARNESS_EVALUATION_MODE": ("evaluation_mode", str),
         "HARNESS_BEIR_LOADER": ("beir_loader", str),
         "HARNESS_BEIR_DATASET_NAME": ("beir_dataset_name", str),

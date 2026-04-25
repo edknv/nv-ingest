@@ -504,6 +504,20 @@ def _build_command(
         cmd += ["--segment-audio" if cfg.segment_audio else "--no-segment-audio"]
         cmd += ["--audio-split-type", cfg.audio_split_type]
         cmd += ["--audio-split-interval", str(cfg.audio_split_interval)]
+    if cfg.input_type == "video":
+        cmd += [
+            "--video-split-interval",
+            str(cfg.video_split_interval),
+            "--video-frame-position",
+            cfg.video_frame_position,
+            "--video-frame-format",
+            cfg.video_frame_format,
+        ]
+        cmd += ["--video-extract-frames" if cfg.video_extract_frames else "--no-video-extract-frames"]
+        cmd += ["--video-extract-audio" if cfg.video_extract_audio else "--no-video-extract-audio"]
+        cmd += ["--segment-audio" if cfg.segment_audio else "--no-segment-audio"]
+        cmd += ["--audio-split-type", cfg.audio_split_type]
+        cmd += ["--audio-split-interval", str(cfg.audio_split_interval)]
     if cfg.extract_infographics:
         cmd += ["--extract-infographics"]
     if cfg.embed_modality:
@@ -767,6 +781,11 @@ def _run_single(
             "segment_audio": cfg.segment_audio,
             "audio_split_type": cfg.audio_split_type,
             "audio_split_interval": cfg.audio_split_interval,
+            "video_split_interval": cfg.video_split_interval,
+            "video_frame_position": cfg.video_frame_position,
+            "video_frame_format": cfg.video_frame_format,
+            "video_extract_frames": cfg.video_extract_frames,
+            "video_extract_audio": cfg.video_extract_audio,
             "evaluation_mode": cfg.evaluation_mode,
             "beir_loader": cfg.beir_loader,
             "beir_dataset_name": cfg.beir_dataset_name,

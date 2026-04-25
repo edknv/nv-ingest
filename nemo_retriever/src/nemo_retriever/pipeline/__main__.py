@@ -431,6 +431,10 @@ def _build_ingestor(
                 extract_audio=bool(video_extract_audio),
             ),
             asr_params=asr_params,
+            audio_chunk_params=AudioChunkParams(
+                split_type=audio_split_type,
+                split_interval=int(audio_split_interval),
+            ),
             extract_params=extract_params,
         )
     else:
