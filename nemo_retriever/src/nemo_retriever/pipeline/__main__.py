@@ -434,6 +434,7 @@ def _build_ingestor(
             audio_chunk_params=AudioChunkParams(
                 split_type=audio_split_type,
                 split_interval=int(audio_split_interval),
+                audio_only=True,
             ),
             extract_params=extract_params,
         )
