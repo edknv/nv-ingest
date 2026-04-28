@@ -75,9 +75,10 @@ def test_audio_aligned_with_single_frame_produces_one_merged_row() -> None:
     assert row["metadata"]["ocr_text"] == "Title slide"
     assert row["metadata"]["segment_start_seconds"] == 0.0
     assert row["metadata"]["segment_end_seconds"] == 14.0
-    # The frame image should be ready for the VL embedder.
-    assert row["_image_b64"] == _FAKE_B64
-    assert row["_embed_modality"] == "text_image"
+    # Embedding stays text-only so the doc encoder matches the query encoder
+    # the harness uses; visual signal is preserved as OCR text in `text`.
+    assert "_embed_modality" not in row or pd.isna(row.get("_embed_modality"))
+    assert "_image_b64" not in row or pd.isna(row.get("_image_b64"))
 
 
 def test_many_short_audio_rows_share_one_long_frame() -> None:
@@ -111,13 +112,6 @@ def test_audio_with_no_overlapping_frame_stays_audio() -> None:
     modalities = sorted(out["metadata"].apply(lambda m: m["modality"]).tolist())
     # Frame survives as standalone (no audio overlap), audio survives as standalone.
     assert modalities == ["audio_segment", "video_frame"]
-    standalone_audio = out[out["metadata"].apply(lambda m: m["modality"] == "audio_segment")].iloc[0]
-    assert standalone_audio["_embed_modality"] == "text"
-    assert "_image_b64" not in standalone_audio or pd.isna(standalone_audio.get("_image_b64"))
-    standalone_frame = out[out["metadata"].apply(lambda m: m["modality"] == "video_frame")].iloc[0]
-    assert standalone_frame["_image_b64"] == _FAKE_B64
-    # OCR text exists, so embed as text+image rather than image-only.
-    assert standalone_frame["_embed_modality"] == "text_image"
 
 
 def test_unclaimed_frame_emitted_as_standalone() -> None:
