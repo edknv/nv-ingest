@@ -223,7 +223,7 @@ class GraphIngestor(ingestor):
         """Configure video extraction (extraction_mode='video').
 
         Runs both per-segment frame extraction (feeding the image detection
-        pipeline) and audio transcription (MediaChunkActor + ASRActor). Either
+        pipeline) and audio transcription (AudioChunkActor + ASRActor). Either
         branch can be toggled off via ``VideoExtractParams(extract_frames=False)``
         or ``VideoExtractParams(extract_audio=False)``.
 

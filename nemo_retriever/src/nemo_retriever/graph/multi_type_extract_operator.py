@@ -13,7 +13,7 @@ from typing import Any
 import pandas as pd
 
 from nemo_retriever.audio import ASRActor
-from nemo_retriever.audio import MediaChunkActor
+from nemo_retriever.audio import AudioChunkActor
 from nemo_retriever.chart.chart_detection import GraphicElementsActor
 from nemo_retriever.graph.abstract_operator import AbstractOperator
 from nemo_retriever.html.ray_data import HtmlSplitActor
@@ -172,12 +172,12 @@ class _MultiTypeExtractBase(AbstractOperator):
         if not grouped["html"].empty:
             outputs.append(HtmlSplitActor(params=self.html_params).run(grouped["html"]))
         if not grouped["audio"].empty:
-            audio_df = MediaChunkActor(params=self.audio_chunk_params).run(grouped["audio"])
+            audio_df = AudioChunkActor(params=self.audio_chunk_params).run(grouped["audio"])
             outputs.append(ASRActor(params=self.asr_params).run(audio_df))
         if not grouped["video"].empty:
             video_df = grouped["video"]
             if self.video_params.extract_audio:
-                audio_chunks_df = MediaChunkActor(params=self.audio_chunk_params).run(video_df)
+                audio_chunks_df = AudioChunkActor(params=self.audio_chunk_params).run(video_df)
                 outputs.append(ASRActor(params=self.asr_params).run(audio_chunks_df))
             if self.video_params.extract_frames:
                 frame_pages_df = VideoFrameExtractActor(params=self.video_params).run(video_df)
@@ -443,3 +443,52 @@ class MultiTypeExtractOperator(ArchetypeOperator):
         self.asr_params = asr_params
         self.video_params = video_params
         self.caption_params = caption_params
+
+    @classmethod
+    def build_extract_graph(
+        cls,
+        *,
+        extraction_mode: str = "auto",
+        extract_params: ExtractParams | None = None,
+        text_params: TextChunkParams | None = None,
+        html_params: HtmlChunkParams | None = None,
+        audio_chunk_params: AudioChunkParams | None = None,
+        asr_params: ASRParams | None = None,
+        video_params: VideoExtractParams | None = None,
+        caption_params: CaptionParams | None = None,
+    ) -> Any:
+        """Build the extraction subgraph for *extraction_mode*.
+
+        For ``extraction_mode='video'`` returns a flat sequential chain
+        (``VideoSplitActor → VideoFrameOCRActor → ASRActor``) so each stage
+        shows as its own Ray Data progress bar. For every other mode returns
+        a one-node graph wrapping ``MultiTypeExtractOperator``, which
+        dispatches to per-type sub-actors inline.
+        """
+        from nemo_retriever.graph.pipeline_graph import Graph
+
+        if extraction_mode == "video":
+            from nemo_retriever.graph.ingestor_runtime import _video_frame_ocr_kwargs
+            from nemo_retriever.video.split import VideoSplitActor
+
+            return (
+                Graph()
+                >> VideoSplitActor(
+                    video_params=video_params,
+                    audio_chunk_params=audio_chunk_params,
+                )
+                >> VideoFrameOCRActor(**_video_frame_ocr_kwargs(extract_params))
+                >> ASRActor(params=asr_params)
+            )
+        if extraction_mode == "audio":
+            return Graph() >> AudioChunkActor(params=audio_chunk_params) >> ASRActor(params=asr_params)
+        return Graph() >> cls(
+            extraction_mode=extraction_mode,
+            extract_params=extract_params,
+            text_params=text_params,
+            html_params=html_params,
+            audio_chunk_params=audio_chunk_params,
+            asr_params=asr_params,
+            video_params=video_params,
+            caption_params=caption_params,
+        )

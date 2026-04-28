@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-MediaChunkActor: Ray Data map_batches callable for audio/video chunking.
+AudioChunkActor: Ray Data map_batches callable for audio/video chunking.
 
 Consumes rows from rd.read_binary_files (path, bytes) and produces one row
 per chunk with path, source_path, duration, chunk_index, metadata.
@@ -31,13 +31,13 @@ CHUNK_COLUMNS = ["path", "source_path", "duration", "chunk_index", "metadata", "
 
 
 @designer_component(
-    name="Media Chunker",
+    name="Audio Split",
     category="Audio",
     compute="cpu",
     description="Splits audio/media files into chunks for processing",
     category_color="#ff6b6b",
 )
-class MediaChunkActor(AbstractOperator):
+class AudioChunkActor(AbstractOperator):
     """
     Ray Data map_batches callable: DataFrame with path, bytes -> DataFrame of chunk rows.
 
@@ -49,7 +49,7 @@ class MediaChunkActor(AbstractOperator):
         super().__init__(params=params)
         if not is_media_available():
             raise RuntimeError(
-                "MediaChunkActor requires ffmpeg. Install with: pip install ffmpeg-python and system ffmpeg."
+                "AudioChunkActor requires ffmpeg. Install with: pip install ffmpeg-python and system ffmpeg."
             )
         self._params = params or AudioChunkParams()
         self._interface = MediaInterface()

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Unit tests for nemo_retriever.audio: MediaChunkActor and audio_path_to_chunks_df.
+Unit tests for nemo_retriever.audio: AudioChunkActor and audio_path_to_chunks_df.
 """
 
 import wave
@@ -13,7 +13,7 @@ import pandas as pd
 import pytest
 
 from nemo_retriever.audio.chunk_actor import CHUNK_COLUMNS
-from nemo_retriever.audio.chunk_actor import MediaChunkActor
+from nemo_retriever.audio.chunk_actor import AudioChunkActor
 from nemo_retriever.audio.chunk_actor import audio_path_to_chunks_df
 from nemo_retriever.audio.media_interface import is_media_available
 from nemo_retriever.params import AudioChunkParams
@@ -30,11 +30,11 @@ def _make_small_wav(path: Path, duration_sec: float = 0.5, sample_rate: int = 80
 
 
 @pytest.mark.skipif(not is_media_available(), reason="ffmpeg not available")
-def test_media_chunk_actor_empty_batch():
-    from nemo_retriever.audio import MediaChunkActor
+def test_audio_chunk_actor_empty_batch():
+    from nemo_retriever.audio import AudioChunkActor
 
     params = AudioChunkParams(split_type="size", split_interval=1000)
-    actor = MediaChunkActor(params=params)
+    actor = AudioChunkActor(params=params)
     empty = pd.DataFrame(columns=["path", "bytes"])
     out = actor(empty)
     assert isinstance(out, pd.DataFrame)
@@ -43,8 +43,8 @@ def test_media_chunk_actor_empty_batch():
 
 
 @pytest.mark.skipif(not is_media_available(), reason="ffmpeg not available")
-def test_media_chunk_actor_single_small_file(tmp_path: Path):
-    from nemo_retriever.audio import MediaChunkActor
+def test_audio_chunk_actor_single_small_file(tmp_path: Path):
+    from nemo_retriever.audio import AudioChunkActor
 
     wav = tmp_path / "tiny.wav"
     _make_small_wav(wav, duration_sec=0.3)
@@ -52,7 +52,7 @@ def test_media_chunk_actor_single_small_file(tmp_path: Path):
         body = f.read()
 
     params = AudioChunkParams(split_type="size", split_interval=1_000_000)
-    actor = MediaChunkActor(params=params)
+    actor = AudioChunkActor(params=params)
     batch = pd.DataFrame([{"path": str(wav.resolve()), "bytes": body}])
     out = actor(batch)
 
@@ -78,12 +78,12 @@ def test_audio_path_to_chunks_df(tmp_path: Path):
     assert df["source_path"].iloc[0] == str(wav.resolve())
 
 
-def test_media_chunk_actor_requires_ffmpeg():
-    """Without ffmpeg, MediaChunkActor.__init__ raises."""
+def test_audio_chunk_actor_requires_ffmpeg():
+    """Without ffmpeg, AudioChunkActor.__init__ raises."""
     pytest.importorskip("ffmpeg")
     # If ffmpeg is available, is_media_available() is True; we can't test the failure path
     # without unimporting. So we only run the raise test when ffmpeg is missing.
     if is_media_available():
         pytest.skip("ffmpeg available; cannot test missing-ffmpeg path here")
     with pytest.raises(RuntimeError, match="ffmpeg"):
-        MediaChunkActor(params=AudioChunkParams())
+        AudioChunkActor(params=AudioChunkParams())

@@ -11,8 +11,6 @@ from typing import cast
 from typing import Any
 
 from nemo_retriever.caption.caption import CaptionActor
-from nemo_retriever.audio import ASRActor
-from nemo_retriever.audio import MediaChunkActor
 from nemo_retriever.chart.chart_detection import GraphicElementsActor
 from nemo_retriever.dedup.dedup import dedup_images
 from nemo_retriever.graph import Graph, StoreOperator, UDFOperator, WebhookNotifyOperator
@@ -33,7 +31,6 @@ from nemo_retriever.txt.ray_data import TextChunkActor
 from nemo_retriever.utils.convert.to_pdf import DocToPdfConversionActor
 from nemo_retriever.video.frame_actor import VideoFrameExtractActor
 from nemo_retriever.video.frame_ocr import VideoFrameOCRActor
-from nemo_retriever.video.split import VideoSplitActor
 from nemo_retriever.ingest_plans import IngestExecutionPlan
 from nemo_retriever.utils.ray_resource_hueristics import (
     ClusterResources,
@@ -554,23 +551,21 @@ def build_graph(
         asr_params=asr_params,
         video_params=video_params,
     ):
-        graph = Graph() >> MediaChunkActor(params=audio_chunk_params) >> ASRActor(params=asr_params)
-    elif extraction_mode == "video":
-        # Pure-video chain: VideoSplitActor decodes each file into frame +
-        # audio-chunk rows in one stage; per-frame OCR and per-chunk ASR
-        # each pass through rows that don't belong to them. Stays a flat
-        # sequential graph while exposing three distinct Ray progress bars.
-        graph = (
-            Graph()
-            >> VideoSplitActor(
-                video_params=video_params,
-                audio_chunk_params=audio_chunk_params,
-            )
-            >> VideoFrameOCRActor(**_video_frame_ocr_kwargs(extract_params))
-            >> ASRActor(params=asr_params)
+        # Force the audio chain regardless of extraction_mode (covers the
+        # legacy ``ExtractParams(method="audio")`` override and ``auto`` mode
+        # with ``asr_params`` set).
+        graph = MultiTypeExtractOperator.build_extract_graph(
+            extraction_mode="audio",
+            extract_params=extract_params,
+            text_params=text_params,
+            html_params=html_params,
+            audio_chunk_params=audio_chunk_params,
+            asr_params=asr_params,
+            video_params=video_params,
+            caption_params=caption_params,
         )
-    elif extraction_mode in {"text", "html", "audio", "image", "auto"}:
-        graph = Graph() >> MultiTypeExtractOperator(
+    elif extraction_mode in {"text", "html", "audio", "image", "video", "auto"}:
+        graph = MultiTypeExtractOperator.build_extract_graph(
             extraction_mode=extraction_mode,
             extract_params=extract_params,
             text_params=text_params,

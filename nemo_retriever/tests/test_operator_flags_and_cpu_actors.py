@@ -105,7 +105,7 @@ class TestCPUOperatorFlag:
     def test_all_operators_are_abstract_operator(self):
         from nemo_retriever.utils.convert.to_pdf import DocToPdfConversionActor
         from nemo_retriever.audio.asr_actor import ASRActor
-        from nemo_retriever.audio.chunk_actor import MediaChunkActor
+        from nemo_retriever.audio.chunk_actor import AudioChunkActor
         from nemo_retriever.caption.caption import CaptionActor
         from nemo_retriever.infographic.infographic_detection import InfographicDetectionActor
         from nemo_retriever.rerank.rerank import NemotronRerankActor
@@ -115,7 +115,7 @@ class TestCPUOperatorFlag:
 
         assert issubclass(DocToPdfConversionActor, AbstractOperator)
         assert issubclass(ASRActor, AbstractOperator)
-        assert issubclass(MediaChunkActor, AbstractOperator)
+        assert issubclass(AudioChunkActor, AbstractOperator)
         assert issubclass(CaptionActor, AbstractOperator)
         assert issubclass(InfographicDetectionActor, AbstractOperator)
         assert issubclass(NemotronRerankActor, AbstractOperator)

@@ -357,7 +357,7 @@ def test_build_inprocess_graph_supports_audio_execution_plan() -> None:
             break
         node = node.children[0]
 
-    assert names == ["MediaChunkActor", "ASRActor"]
+    assert names == ["AudioChunkActor", "ASRActor"]
 
 
 @pytest.mark.skipif(not is_media_available(), reason="ffmpeg not available")
@@ -375,4 +375,4 @@ def test_build_graph_uses_explicit_audio_graph_for_audio_extract_method() -> Non
             break
         node = node.children[0]
 
-    assert names == ["MediaChunkActor", "ASRActor"]
+    assert names == ["AudioChunkActor", "ASRActor"]

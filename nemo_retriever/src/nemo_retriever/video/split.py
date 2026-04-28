@@ -22,7 +22,7 @@ from typing import Any, List
 
 import pandas as pd
 
-from nemo_retriever.audio.chunk_actor import MediaChunkActor
+from nemo_retriever.audio.chunk_actor import AudioChunkActor
 from nemo_retriever.graph.abstract_operator import AbstractOperator
 from nemo_retriever.graph.cpu_operator import CPUOperator
 from nemo_retriever.graph.designer import designer_component
@@ -66,13 +66,13 @@ class VideoSplitCPUActor(AbstractOperator, CPUOperator):
         self._audio_chunk_params = chunk_params
 
         self._frame_actor: VideoFrameExtractCPUActor | None = None
-        self._chunk_actor: MediaChunkActor | None = None
+        self._chunk_actor: AudioChunkActor | None = None
 
     def _ensure_inner(self) -> None:
         if self._video_params.extract_frames and self._frame_actor is None:
             self._frame_actor = VideoFrameExtractCPUActor(params=self._video_params)
         if self._video_params.extract_audio and self._chunk_actor is None:
-            self._chunk_actor = MediaChunkActor(params=self._audio_chunk_params)
+            self._chunk_actor = AudioChunkActor(params=self._audio_chunk_params)
 
     def preprocess(self, data: Any, **kwargs: Any) -> Any:
         return data

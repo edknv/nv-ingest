@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Benchmark MediaChunkActor + ASRActor throughput (chunk rows per second).
+Benchmark AudioChunkActor + ASRActor throughput (chunk rows per second).
 
 Supports --mock-asr to avoid loading Parakeet/GPU; measures chunking + actor overhead.
 """
@@ -19,7 +19,7 @@ import typer
 
 from nemo_retriever.audio.asr_actor import ASRActor
 from nemo_retriever.audio.asr_actor import asr_params_from_env
-from nemo_retriever.audio.chunk_actor import MediaChunkActor
+from nemo_retriever.audio.chunk_actor import AudioChunkActor
 from nemo_retriever.audio.media_interface import is_media_available
 from nemo_retriever.params import AudioChunkParams
 
@@ -32,7 +32,7 @@ from .common import (
 
 
 def make_seed_audio_row(audio_path: Path) -> Dict[str, Any]:
-    """One row per source file (path only); MediaChunkActor will read and chunk."""
+    """One row per source file (path only); AudioChunkActor will read and chunk."""
     p = audio_path.expanduser().resolve()
     if not p.is_file():
         raise typer.BadParameter(f"Audio path does not exist: {p}")
@@ -52,7 +52,7 @@ class MockASRActor:
         return out
 
 
-app = typer.Typer(help="Benchmark audio extraction (MediaChunkActor + ASRActor) throughput (chunk rows/sec).")
+app = typer.Typer(help="Benchmark audio extraction (AudioChunkActor + ASRActor) throughput (chunk rows/sec).")
 
 
 def run_benchmark(
@@ -83,7 +83,7 @@ def run_benchmark(
     )
 
     def _map(ds: rd.Dataset, worker_count: int, batch_size: int) -> rd.Dataset:
-        chunk_actor = MediaChunkActor(params=chunk_params)
+        chunk_actor = AudioChunkActor(params=chunk_params)
         if mock_asr:
             asr_actor = MockASRActor()
         else:
