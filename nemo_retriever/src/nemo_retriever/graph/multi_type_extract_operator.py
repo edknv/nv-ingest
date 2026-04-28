@@ -471,15 +471,19 @@ class MultiTypeExtractOperator(ArchetypeOperator):
             from nemo_retriever.graph.ingestor_runtime import _video_frame_ocr_kwargs
             from nemo_retriever.video.split import VideoSplitActor
 
-            return (
-                Graph()
-                >> VideoSplitActor(
-                    video_params=video_params,
-                    audio_chunk_params=audio_chunk_params,
-                )
-                >> VideoFrameOCRActor(**_video_frame_ocr_kwargs(extract_params))
-                >> ASRActor(params=asr_params)
+            graph = Graph() >> VideoSplitActor(
+                video_params=video_params,
+                audio_chunk_params=audio_chunk_params,
             )
+            # Skip OCR / ASR when their modality is disabled — otherwise the
+            # downstream actor still gets instantiated by Ray (and may fail
+            # to construct, e.g. VideoFrameOCRCPUActor without ocr_invoke_url
+            # when no GPU is available).
+            if getattr(video_params, "extract_frames", True):
+                graph = graph >> VideoFrameOCRActor(**_video_frame_ocr_kwargs(extract_params))
+            if getattr(video_params, "extract_audio", True):
+                graph = graph >> ASRActor(params=asr_params)
+            return graph
         if extraction_mode == "audio":
             return Graph() >> AudioChunkActor(params=audio_chunk_params) >> ASRActor(params=asr_params)
         return Graph() >> cls(
