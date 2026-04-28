@@ -178,25 +178,65 @@ def _frame_seek_seconds(position: str, seg_start: float, seg_end: float) -> floa
 
 
 def _ffmpeg_extract_single_frame(source: str, out_path: Path, seek_s: float, fmt: str) -> None:
-    """Run ffmpeg with demuxer-level seek and emit exactly one frame."""
-    args = [
-        "ffmpeg",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-y",
-        "-ss",
-        f"{seek_s:.3f}",
-        "-i",
-        str(source),
-        "-frames:v",
-        "1",
-    ]
-    if fmt == "jpeg":
-        args += ["-q:v", "2"]
-    args += ["-f", "image2", str(out_path)]
-    proc = subprocess.run(args, capture_output=True, timeout=60)
-    if proc.returncode != 0:
+    """Run ffmpeg and emit exactly one frame.
+
+    First attempts demuxer-level seek (``-ss`` before ``-i``) for speed; if that
+    yields no usable frame (which happens around sparse keyframes / mid-GOP
+    timestamps for some encodings), falls back to decoder-level seek (``-ss``
+    after ``-i``) which is slower but reliable.
+    """
+
+    def _build_args(*, accurate: bool) -> list[str]:
+        if accurate:
+            args = [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(source),
+                "-ss",
+                f"{seek_s:.3f}",
+                "-frames:v",
+                "1",
+            ]
+        else:
+            args = [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-ss",
+                f"{seek_s:.3f}",
+                "-i",
+                str(source),
+                "-frames:v",
+                "1",
+            ]
+        if fmt == "jpeg":
+            args += ["-q:v", "2"]
+        args += ["-f", "image2", str(out_path)]
+        return args
+
+    def _produced_frame() -> bool:
+        try:
+            return out_path.exists() and out_path.stat().st_size > 0
+        except OSError:
+            return False
+
+    proc = subprocess.run(_build_args(accurate=False), capture_output=True, timeout=60)
+    if proc.returncode == 0 and _produced_frame():
+        return
+
+    # Fast seek failed; retry with accurate seek.
+    try:
+        out_path.unlink()
+    except FileNotFoundError:
+        pass
+    proc = subprocess.run(_build_args(accurate=True), capture_output=True, timeout=120)
+    if proc.returncode != 0 or not _produced_frame():
         raise RuntimeError(f"ffmpeg failed: {proc.stderr.decode('utf-8', errors='replace').strip()}")
 
 
@@ -243,6 +283,7 @@ def _frame_bytes_to_page_row(
         "tables": [],
         "charts": [],
         "infographics": [],
+        "_content_type": "image",
         "metadata": {
             "has_text": False,
             "needs_ocr_for_text": True,
@@ -255,6 +296,7 @@ def _frame_bytes_to_page_row(
             "frame_position_seconds": frame_position_sec,
             "frame_format": frame_format,
             "modality": "video_frame",
+            "_content_type": "image",
             "error": None,
         },
     }
