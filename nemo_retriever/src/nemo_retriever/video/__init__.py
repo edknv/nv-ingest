@@ -16,6 +16,10 @@ from nemo_retriever.video.frame_ocr import (
     VideoFrameOCRActor,
     VideoFrameOCRCPUActor,
 )
+from nemo_retriever.video.split import (
+    VideoSplitActor,
+    VideoSplitCPUActor,
+)
 
 __all__ = [
     "VideoExtractParams",
@@ -23,5 +27,7 @@ __all__ = [
     "VideoFrameExtractCPUActor",
     "VideoFrameOCRActor",
     "VideoFrameOCRCPUActor",
+    "VideoSplitActor",
+    "VideoSplitCPUActor",
     "video_frames_path_to_pages_df",
 ]

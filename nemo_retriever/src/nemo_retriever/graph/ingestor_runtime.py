@@ -33,6 +33,7 @@ from nemo_retriever.txt.ray_data import TextChunkActor
 from nemo_retriever.utils.convert.to_pdf import DocToPdfConversionActor
 from nemo_retriever.video.frame_actor import VideoFrameExtractActor
 from nemo_retriever.video.frame_ocr import VideoFrameOCRActor
+from nemo_retriever.video.split import VideoSplitActor
 from nemo_retriever.ingest_plans import IngestExecutionPlan
 from nemo_retriever.utils.ray_resource_hueristics import (
     ClusterResources,
@@ -554,7 +555,21 @@ def build_graph(
         video_params=video_params,
     ):
         graph = Graph() >> MediaChunkActor(params=audio_chunk_params) >> ASRActor(params=asr_params)
-    elif extraction_mode in {"text", "html", "audio", "image", "video", "auto"}:
+    elif extraction_mode == "video":
+        # Pure-video chain: VideoSplitActor decodes each file into frame +
+        # audio-chunk rows in one stage; per-frame OCR and per-chunk ASR
+        # each pass through rows that don't belong to them. Stays a flat
+        # sequential graph while exposing three distinct Ray progress bars.
+        graph = (
+            Graph()
+            >> VideoSplitActor(
+                video_params=video_params,
+                audio_chunk_params=audio_chunk_params,
+            )
+            >> VideoFrameOCRActor(**_video_frame_ocr_kwargs(extract_params))
+            >> ASRActor(params=asr_params)
+        )
+    elif extraction_mode in {"text", "html", "audio", "image", "auto"}:
         graph = Graph() >> MultiTypeExtractOperator(
             extraction_mode=extraction_mode,
             extract_params=extract_params,

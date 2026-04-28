@@ -64,6 +64,19 @@ def _use_remote(params: ASRParams) -> bool:
     return bool(grpc or http)
 
 
+def _split_audio_rows(batch_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Return (audio_rows, passthrough_rows).
+
+    Frame rows produced by ``VideoSplitActor`` carry a ``page_image`` dict;
+    audio-chunk rows do not. When the column is missing entirely the whole
+    batch is treated as audio.
+    """
+    if "page_image" not in batch_df.columns:
+        return batch_df, batch_df.iloc[:0]
+    has_frame_image = batch_df["page_image"].apply(lambda v: isinstance(v, dict))
+    return batch_df[~has_frame_image], batch_df[has_frame_image]
+
+
 logger = logging.getLogger(__name__)
 
 # Public NVCF Parakeet endpoint and the libmode function ID. Exposed as named
@@ -199,9 +212,21 @@ class ASRCPUActor(AbstractOperator, CPUOperator):
                 columns=["path", "source_path", "duration", "chunk_index", "metadata", "page_number", "text"]
             )
 
+        # Mixed-schema batches arrive from VideoSplitActor: frame rows (with
+        # page_image) flow alongside audio-chunk rows (with bytes). Only
+        # transcribe rows that look like audio chunks; pass others through.
+        audio_df, passthrough_df = _split_audio_rows(batch_df)
+        if audio_df.empty:
+            return passthrough_df
+
         if self._client is not None:
-            return self._call_remote_batch(batch_df)
-        return self._call_local_batch(batch_df)
+            transcribed = self._call_remote_batch(audio_df)
+        else:
+            transcribed = self._call_local_batch(audio_df)
+
+        if passthrough_df.empty:
+            return transcribed
+        return pd.concat([transcribed, passthrough_df], ignore_index=True, sort=False)
 
     def postprocess(self, data: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
         return data
