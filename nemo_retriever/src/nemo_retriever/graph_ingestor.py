@@ -41,6 +41,7 @@ from nemo_retriever.graph.ingestor_runtime import (
 )
 from nemo_retriever.utils.ray_resource_hueristics import gather_cluster_resources
 from nemo_retriever.ingestor import ingestor
+from nemo_retriever.video.merge_modalities import merge_video_frame_audio_rows
 from nemo_retriever.params import (
     ASRParams,
     AudioChunkParams,
@@ -414,6 +415,12 @@ class GraphIngestor(ingestor):
             if len(branch_datasets) > 1:
                 ds_combined = ds_combined.union(*branch_datasets[1:])
 
+            # Frame-anchored merge of frame OCR + audio transcripts. Materializes
+            # the combined dataset into pandas because the merge needs all rows
+            # for a given source video together; the per-source row count is
+            # tiny (~12 for a typical short clip) so this is cheap in practice.
+            ds_combined = self._apply_modality_merge(ds_combined)
+
             if plan.post_graph.roots:
                 result = self._make_ray_executor(plan.post_graph, merged_overrides).ingest(ds_combined)
             else:
@@ -439,6 +446,7 @@ class GraphIngestor(ingestor):
             return pd.DataFrame()
 
         df_combined = branch_dfs[0] if len(branch_dfs) == 1 else pd.concat(branch_dfs, ignore_index=True, sort=False)
+        df_combined = merge_video_frame_audio_rows(df_combined)
         if plan.post_graph.roots:
             return InprocessExecutor(plan.post_graph, show_progress=self._show_progress).ingest(df_combined)
         return df_combined
@@ -446,6 +454,26 @@ class GraphIngestor(ingestor):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _apply_modality_merge(ds: Any) -> Any:
+        """Frame-anchor merge in the Ray Data path.
+
+        Materializes the union of frame + audio rows, runs the pandas merge,
+        and re-emits a Ray dataset. The post-merge row count is small (one row
+        per video frame plus orphan audio rows), so subsequent stages are no
+        slower than before.
+        """
+        import pandas as pd  # local: keep top-level imports lean
+        import ray.data as rd
+
+        df = ds.to_pandas()
+        merged = merge_video_frame_audio_rows(df)
+        if isinstance(merged, pd.DataFrame) and not merged.empty:
+            return rd.from_pandas(merged)
+        # Fall back to the original dataset if the merge produced nothing —
+        # shouldn't happen, but better than feeding an empty frame downstream.
+        return ds
 
     def _compute_merged_overrides(self, cluster_resources: Any) -> Dict[str, Dict[str, Any]]:
         effective_allow_no_gpu = self._allow_no_gpu or cluster_resources.available_gpu_count() == 0
