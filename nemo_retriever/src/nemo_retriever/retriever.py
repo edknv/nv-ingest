@@ -44,7 +44,7 @@ class Retriever:
 
     Retrieval pipeline
     ------------------
-    1. Embed query strings (NIM endpoint or local HuggingFace model).
+    1. Embed query strings (NIM endpoint or local vLLM embedder for the default model).
     2. Search LanceDB (vector or hybrid vector+BM25).
     3. Optionally rerank the results with ``nvidia/llama-nemotron-rerank-1b-v2``
        (NIM/vLLM endpoint or local HuggingFace model).
@@ -79,7 +79,10 @@ class Retriever:
     hybrid: bool = False
     local_hf_device: Optional[str] = None
     local_hf_cache_dir: Optional[Path] = None
-    local_hf_batch_size: int = 64
+    local_hf_batch_size: int = 32
+    #: When embedding queries locally (no HTTP endpoint): ``"hf"`` (default) uses
+    #: HuggingFace; ``"vllm"`` uses vLLM (same model as ingest).
+    local_query_embed_backend: str = "hf"
     # Reranking -----------------------------------------------------------
     reranker: Optional[bool] = False
     """True to enable reranking with the default model, will use the reranker_model_name as hf model"""
@@ -99,10 +102,34 @@ class Retriever:
     rerank_modality: str = "text"
     """Reranking modality, typically matches embed_modality. Set to 'text_image'
     to enable multimodal reranking with images."""
+    local_reranker_backend: str = "vllm"
+    """Backend for local VL reranking: ``"vllm"`` (default) or ``"hf"``."""
+    reranker_gpu_memory_utilization: float = 0.5
+    """Fraction of GPU memory for the vLLM reranker engine."""
     # Internal cache for the local rerank model (not part of the public API).
     _reranker_model: Any = field(default=None, init=False, repr=False, compare=False)
-    # Internal cache for local HF embedders, keyed by model name.
+    # Internal cache for local text embedders, keyed by model name.
     _embedder_cache: dict = field(default_factory=dict, init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        from nemo_retriever.model import (
+            _LOCAL_QUERY_BACKENDS,
+            _LOCAL_RERANKER_BACKENDS,
+            normalize_backend,
+        )
+
+        self.local_query_embed_backend = normalize_backend(
+            self.local_query_embed_backend,
+            _LOCAL_QUERY_BACKENDS,
+            field_name="local_query_embed_backend",
+            default="hf",
+        )
+        self.local_reranker_backend = normalize_backend(
+            self.local_reranker_backend,
+            _LOCAL_RERANKER_BACKENDS,
+            field_name="local_reranker_backend",
+            default="vllm",
+        )
 
     def _resolve_embedding_endpoint(self) -> Optional[str]:
         http_ep = self.embedding_http_endpoint.strip() if isinstance(self.embedding_http_endpoint, str) else None
@@ -142,27 +169,30 @@ class Retriever:
         return out
 
     def _get_local_embedder(self, model_name: str) -> Any:
-        """Lazily load and cache the local HF embedder for *model_name*."""
-        if model_name not in self._embedder_cache:
-            from nemo_retriever.model import create_local_embedder
+        """Lazily load and cache the local embedder for *model_name*."""
+        from nemo_retriever.model import (
+            create_local_query_embedder,
+            resolve_embed_model,
+        )
 
+        resolved = resolve_embed_model(model_name)
+        backend_raw = self.local_query_embed_backend
+        cache_key: tuple[str, str] = (resolved, backend_raw)
+
+        if cache_key not in self._embedder_cache:
             cache_dir = str(self.local_hf_cache_dir) if self.local_hf_cache_dir else None
-            self._embedder_cache[model_name] = create_local_embedder(
-                model_name,
-                device=self.local_hf_device,
+            dev = str(self.local_hf_device) if self.local_hf_device else None
+            self._embedder_cache[cache_key] = create_local_query_embedder(
+                resolved,
+                backend=backend_raw,
+                device=dev,
                 hf_cache_dir=cache_dir,
             )
-        return self._embedder_cache[model_name]
+        return self._embedder_cache[cache_key]
 
-    def _embed_queries_local_hf(self, query_texts: list[str], *, model_name: str) -> list[list[float]]:
-        from nemo_retriever.model import is_vl_embed_model
-
+    def _embed_queries_local(self, query_texts: list[str], *, model_name: str) -> list[list[float]]:
         embedder = self._get_local_embedder(model_name)
-
-        if is_vl_embed_model(model_name):
-            vectors = embedder.embed_queries(query_texts, batch_size=int(self.local_hf_batch_size))
-        else:
-            vectors = embedder.embed(["query: " + q for q in query_texts], batch_size=int(self.local_hf_batch_size))
+        vectors = embedder.embed_queries(query_texts, batch_size=int(self.local_hf_batch_size))
         return vectors.detach().to("cpu").tolist()
 
     def _search_lancedb(
@@ -260,6 +290,8 @@ class Retriever:
                 model_name=self.reranker_model_name,
                 device=self.local_hf_device,
                 hf_cache_dir=cache_dir,
+                backend=self.local_reranker_backend,
+                gpu_memory_utilization=self.reranker_gpu_memory_utilization,
             )
         return self._reranker_model
 
@@ -362,7 +394,7 @@ class Retriever:
                 model=resolved_embedder,
             )
         else:
-            vectors = self._embed_queries_local_hf(
+            vectors = self._embed_queries_local(
                 query_texts,
                 model_name=resolved_embedder,
             )

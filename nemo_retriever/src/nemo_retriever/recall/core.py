@@ -29,7 +29,7 @@ class RecallConfig:
     # Embedding endpoints (optional).
     #
     # If neither HTTP nor gRPC endpoint is provided (and embedding_endpoint is empty),
-    # stage7 will fall back to local HuggingFace embeddings via:
+    # stage7 will fall back to local vLLM embeddings via:
     #   nemo_retriever.model.local.llama_nemotron_embed_1b_v2_embedder
     embedding_http_endpoint: Optional[str] = None
     embedding_grpc_endpoint: Optional[str] = None
@@ -47,7 +47,12 @@ class RecallConfig:
     # Local HF knobs (only used when endpoints are missing).
     local_hf_device: Optional[str] = None
     local_hf_cache_dir: Optional[str] = None
-    local_hf_batch_size: int = 64
+    local_hf_batch_size: int = 32
+    # When using local query embedding (no HTTP endpoint), select backend for *queries* only.
+    # ``hf`` (default) uses the HF mean-pooled text embedder (see ``LlamaNemotronEmbed1BV2HFEmbedder``);
+    # ``vllm`` uses :func:`~nemo_retriever.model.create_local_embedder`. Ignored when an
+    # embedding HTTP endpoint is set.
+    local_query_embed_backend: str = "hf"
     # Gold/retrieval comparison mode:
     # - pdf_page: compare on "{pdf}_{page}" keys
     # - pdf_only: compare on "{pdf}" document keys
@@ -58,7 +63,37 @@ class RecallConfig:
     reranker_endpoint: Optional[str] = None
     reranker_api_key: str = ""
     reranker_batch_size: int = 32
+    local_reranker_backend: str = "vllm"
     embed_modality: str = "text"
+
+    def __post_init__(self) -> None:
+        from nemo_retriever.model import (
+            _LOCAL_QUERY_BACKENDS,
+            _LOCAL_RERANKER_BACKENDS,
+            normalize_backend,
+        )
+
+        # frozen=True: must use object.__setattr__ to write normalized values.
+        object.__setattr__(
+            self,
+            "local_query_embed_backend",
+            normalize_backend(
+                self.local_query_embed_backend,
+                _LOCAL_QUERY_BACKENDS,
+                field_name="local_query_embed_backend",
+                default="hf",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "local_reranker_backend",
+            normalize_backend(
+                self.local_reranker_backend,
+                _LOCAL_RERANKER_BACKENDS,
+                field_name="local_reranker_backend",
+                default="vllm",
+            ),
+        )
 
 
 def _normalize_pdf_name(value: str) -> str:
@@ -290,14 +325,15 @@ def _embed_queries_local_hf(
     batch_size: int,
     model_name: Optional[str] = None,
 ) -> List[List[float]]:
-    from nemo_retriever.model import create_local_embedder, is_vl_embed_model
+    from nemo_retriever.model import create_local_query_embedder
 
-    embedder = create_local_embedder(model_name, device=device, hf_cache_dir=cache_dir)
-
-    if is_vl_embed_model(model_name):
-        vecs = embedder.embed_queries(queries, batch_size=int(batch_size))
-    else:
-        vecs = embedder.embed(["query: " + q for q in queries], batch_size=int(batch_size))
+    embedder = create_local_query_embedder(
+        model_name,
+        backend="hf",
+        device=device,
+        hf_cache_dir=cache_dir,
+    )
+    vecs = embedder.embed_queries(queries, batch_size=int(batch_size))
     return vecs.detach().to("cpu").tolist()
 
 
@@ -335,6 +371,15 @@ def _hit_to_audio_segment_key(hit: Dict[str, Any]) -> str | None:
     media_id = _normalize_audio_media_id(source_id)
     if not media_id:
         return None
+
+    # Prefer the canonical "_seconds" keys (always wall-clock seconds).
+    start_time = metadata.get("segment_start_seconds")
+    end_time = metadata.get("segment_end_seconds")
+    if start_time is not None and end_time is not None:
+        try:
+            return _encode_audio_segment_key(media_id, float(start_time), float(end_time))
+        except (TypeError, ValueError):
+            return None
 
     start_time = metadata.get("segment_start")
     end_time = metadata.get("segment_end")
@@ -517,7 +562,6 @@ def retrieve_and_score(
 
     queries = df_query["query"].astype(str).tolist()
     gold = df_query["golden_answer"].astype(str).tolist()
-    endpoint, use_grpc = _resolve_embedding_endpoint(cfg)
     retriever = Retriever(
         lancedb_uri=cfg.lancedb_uri,
         lancedb_table=cfg.lancedb_table,
@@ -531,11 +575,13 @@ def retrieve_and_score(
         local_hf_device=cfg.local_hf_device,
         local_hf_cache_dir=cfg.local_hf_cache_dir,
         local_hf_batch_size=cfg.local_hf_batch_size,
+        local_query_embed_backend=cfg.local_query_embed_backend,
         reranker=bool(cfg.reranker),
         reranker_model_name=cfg.reranker or VL_RERANK_MODEL,
         reranker_endpoint=cfg.reranker_endpoint,
         reranker_api_key=cfg.reranker_api_key,
         reranker_batch_size=cfg.reranker_batch_size,
+        local_reranker_backend=cfg.local_reranker_backend,
         rerank_modality=cfg.embed_modality,
     )
     start = time.time()

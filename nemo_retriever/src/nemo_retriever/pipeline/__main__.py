@@ -322,6 +322,7 @@ def _build_embed_params(
     embed_batch_size: Optional[int],
     embed_cpus_per_actor: Optional[float],
     embed_gpus_per_actor: Optional[float],
+    local_ingest_embed_backend: str = "vllm",
 ) -> EmbedParams:
     """Assemble :class:`EmbedParams` plus its :class:`BatchTuningParams`."""
 
@@ -350,6 +351,7 @@ def _build_embed_params(
                 "text_elements_modality": text_elements_modality,
                 "structured_elements_modality": structured_elements_modality,
                 "embed_granularity": embed_granularity,
+                "local_ingest_embed_backend": local_ingest_embed_backend,
                 "batch_tuning": embed_batch_tuning,
                 "inference_batch_size": embed_batch_size or None,
             }.items()
@@ -516,12 +518,15 @@ def _run_evaluation(
     reranker_model_name: str,
     reranker_invoke_url: Optional[str],
     reranker_api_key: str,
+    local_reranker_backend: str,
+    local_hf_batch_size: int,
     beir_loader: Optional[str],
     beir_dataset_name: Optional[str],
     beir_split: str,
     beir_query_language: Optional[str],
     beir_doc_id_field: str,
     beir_k: list[int],
+    local_query_embed_backend: str = "hf",
 ) -> tuple[str, float, dict[str, float], Optional[int], bool]:
     """Run recall or BEIR evaluation.
 
@@ -559,6 +564,9 @@ def _run_evaluation(
             reranker_model_name=str(reranker_model_name),
             reranker_endpoint=reranker_invoke_url,
             reranker_api_key=reranker_api_key,
+            local_reranker_backend=local_reranker_backend,
+            local_hf_batch_size=int(local_hf_batch_size),
+            local_query_embed_backend=local_query_embed_backend,
         )
         evaluation_start = time.perf_counter()
         beir_dataset, _raw_hits, _run, metrics = evaluate_lancedb_beir(cfg)
@@ -586,7 +594,10 @@ def _run_evaluation(
         reranker=reranker_model_name if reranker else None,
         reranker_endpoint=reranker_invoke_url,
         reranker_api_key=reranker_api_key,
+        local_reranker_backend=local_reranker_backend,
+        local_hf_batch_size=int(local_hf_batch_size),
         embed_modality=embed_modality,
+        local_query_embed_backend=local_query_embed_backend,
     )
     evaluation_start = time.perf_counter()
     df_query, _gold, _raw_hits, _retrieved_keys, metrics = retrieve_and_score(query_csv=query_csv_path, cfg=recall_cfg)
@@ -668,6 +679,12 @@ def run(
     embed_model_name: str = typer.Option(VL_EMBED_MODEL, "--embed-model-name", rich_help_panel=_PANEL_EMBED),
     embed_modality: str = typer.Option("text", "--embed-modality", rich_help_panel=_PANEL_EMBED),
     embed_granularity: str = typer.Option("element", "--embed-granularity", rich_help_panel=_PANEL_EMBED),
+    local_ingest_embed_backend: str = typer.Option(
+        "vllm",
+        "--local-ingest-embed-backend",
+        help="Local ingest-time text embedder when --embed-invoke-url is unset: vllm or hf. VL models always use hf.",
+        rich_help_panel=_PANEL_EMBED,
+    ),
     text_elements_modality: Optional[str] = typer.Option(
         None, "--text-elements-modality", rich_help_panel=_PANEL_EMBED
     ),
@@ -842,6 +859,12 @@ def run(
     ),
     recall_match_mode: str = typer.Option("pdf_page", "--recall-match-mode", rich_help_panel=_PANEL_EVAL),
     recall_details: bool = typer.Option(True, "--recall-details/--no-recall-details", rich_help_panel=_PANEL_EVAL),
+    local_query_embed_backend: str = typer.Option(
+        "hf",
+        "--local-query-embed-backend",
+        help="Local query embedding backend when --embed-invoke-url is unset: hf (default) or vllm.",
+        rich_help_panel=_PANEL_EVAL,
+    ),
     reranker: Optional[bool] = typer.Option(False, "--reranker/--no-reranker", rich_help_panel=_PANEL_EVAL),
     reranker_model_name: str = typer.Option(VL_RERANK_MODEL, "--reranker-model-name", rich_help_panel=_PANEL_EVAL),
     reranker_invoke_url: Optional[str] = typer.Option(
@@ -854,6 +877,19 @@ def run(
         None,
         "--reranker-api-key",
         help="Bearer token for the reranker NIM; defaults to --api-key / NVIDIA_API_KEY when omitted.",
+        rich_help_panel=_PANEL_EVAL,
+    ),
+    local_reranker_backend: str = typer.Option(
+        "vllm",
+        "--local-reranker-backend",
+        help="Local reranker backend: 'vllm' (default) or 'hf'.",
+        rich_help_panel=_PANEL_EVAL,
+    ),
+    local_hf_batch_size: int = typer.Option(
+        32,
+        "--local-hf-batch-size",
+        min=1,
+        help="Batch size for local HF query embedding during retrieval/reranking.",
         rich_help_panel=_PANEL_EVAL,
     ),
     beir_loader: Optional[str] = typer.Option(None, "--beir-loader", rich_help_panel=_PANEL_EVAL),
@@ -1002,6 +1038,7 @@ def run(
             embed_batch_size=embed_batch_size,
             embed_cpus_per_actor=embed_cpus_per_actor,
             embed_gpus_per_actor=embed_gpus_per_actor,
+            local_ingest_embed_backend=local_ingest_embed_backend,
         )
 
         text_chunk_params = TextChunkParams(
@@ -1200,12 +1237,15 @@ def run(
             reranker_model_name=reranker_model_name,
             reranker_invoke_url=reranker_invoke_url,
             reranker_api_key=reranker_bearer,
+            local_reranker_backend=local_reranker_backend,
+            local_hf_batch_size=local_hf_batch_size,
             beir_loader=beir_loader,
             beir_dataset_name=beir_dataset_name,
             beir_split=beir_split,
             beir_query_language=beir_query_language,
             beir_doc_id_field=beir_doc_id_field,
             beir_k=beir_k,
+            local_query_embed_backend=local_query_embed_backend,
         )
 
         if not ran:

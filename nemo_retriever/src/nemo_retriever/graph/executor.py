@@ -79,6 +79,10 @@ def ensure_ray_initialized(ray_address: Optional[str] = None) -> None:
         if os.environ.get(_fwd_key):
             ray_env_vars[_fwd_key] = os.environ[_fwd_key]
     ray_env_vars["HF_HUB_OFFLINE"] = os.environ.get("HF_HUB_OFFLINE", "1")
+    # Mirror back to the driver's env so any driver-side code (e.g. recall
+    # lookups, LanceDB queries) also defaults to offline; matches the prior
+    # inline-init behaviour that was in graph_ingestor.py / executor.py.
+    os.environ["HF_HUB_OFFLINE"] = ray_env_vars["HF_HUB_OFFLINE"]
     runtime_env = {"env_vars": ray_env_vars}
     ray.init(
         address=ray_address,
