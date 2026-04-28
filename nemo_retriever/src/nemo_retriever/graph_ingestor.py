@@ -27,18 +27,12 @@ Usage::
 from __future__ import annotations
 
 import json
+import os
+import sys
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from nemo_retriever.graph import InprocessExecutor, RayDataExecutor
-from nemo_retriever.graph.executor import (
-    ensure_ray_initialized,
-    expand_globs,
-)
-from nemo_retriever.graph.ingestor_runtime import (
-    batch_tuning_to_node_overrides,
-    build_graph,
-    build_video_graphs,
-)
+from nemo_retriever.graph.ingestor_runtime import batch_tuning_to_node_overrides, build_graph
 from nemo_retriever.utils.ray_resource_hueristics import gather_cluster_resources
 from nemo_retriever.ingestor import ingestor
 from nemo_retriever.params import (
@@ -128,7 +122,6 @@ class GraphIngestor(ingestor):
         num_gpus: float = 0,
         node_overrides: Optional[Dict[str, Dict[str, Any]]] = None,
         show_progress: bool = True,
-        rich_progress: bool = True,
     ) -> None:
         super().__init__(documents=documents)
         if run_mode not in {"batch", "inprocess"}:
@@ -143,7 +136,6 @@ class GraphIngestor(ingestor):
         self._num_gpus = num_gpus
         self._node_overrides: Dict[str, Dict[str, Any]] = node_overrides or {}
         self._show_progress = show_progress
-        self._rich_progress = rich_progress
         self._rd_dataset: Any = None
 
         # Pipeline configuration accumulated by fluent methods
@@ -324,13 +316,29 @@ class GraphIngestor(ingestor):
 
         post_extract_order = tuple(s for s in self._stage_order if s != "extract")
 
-        if self._extraction_mode == "video":
-            return self._ingest_video(post_extract_order)
-
         if self._run_mode == "batch":
             import ray
 
-            ensure_ray_initialized(self._ray_address)
+            if self._ray_address or not ray.is_initialized():
+                venv = os.path.dirname(os.path.dirname(sys.executable))
+                venv_bin = os.path.join(venv, "bin")
+                pypath = os.pathsep.join(p for p in sys.path if p)
+                ray_env_vars: dict[str, str] = {
+                    "VIRTUAL_ENV": venv,
+                    "PATH": venv_bin + os.pathsep + os.environ.get("PATH", ""),
+                    "PYTHONPATH": pypath,
+                }
+                for _fwd_key in ("HF_TOKEN", "HF_HOME", "HUGGING_FACE_HUB_TOKEN", "NVIDIA_API_KEY"):
+                    if os.environ.get(_fwd_key):
+                        ray_env_vars[_fwd_key] = os.environ[_fwd_key]
+                ray_env_vars["HF_HUB_OFFLINE"] = os.environ.get("HF_HUB_OFFLINE", "1")
+                os.environ["HF_HUB_OFFLINE"] = ray_env_vars["HF_HUB_OFFLINE"]
+                runtime_env = {"env_vars": ray_env_vars}
+                ray.init(
+                    address=self._ray_address,
+                    ignore_reinit_error=True,
+                    runtime_env=runtime_env,
+                )
             cluster_resources = gather_cluster_resources(ray)
 
             graph = build_graph(
@@ -349,8 +357,31 @@ class GraphIngestor(ingestor):
                 webhook_params=self._webhook_params,
                 stage_order=post_extract_order,
             )
-            merged_overrides = self._compute_merged_overrides(cluster_resources)
-            executor = self._make_ray_executor(graph, merged_overrides)
+            # Derive per-node Ray scheduling config from BatchTuningParams plus
+            # cluster-scaled heuristic defaults, then let any explicit
+            # node_overrides passed to __init__ take precedence.
+            effective_allow_no_gpu = self._allow_no_gpu or cluster_resources.available_gpu_count() == 0
+            derived_overrides = batch_tuning_to_node_overrides(
+                self._extract_params,
+                self._embed_params,
+                cluster_resources=cluster_resources,
+                allow_no_gpu=effective_allow_no_gpu,
+                caption_params=self._caption_params,
+            )
+            merged_overrides: Dict[str, Dict[str, Any]] = {}
+            for node_name in set(derived_overrides) | set(self._node_overrides):
+                merged_overrides[node_name] = {
+                    **derived_overrides.get(node_name, {}),
+                    **self._node_overrides.get(node_name, {}),
+                }
+            executor = RayDataExecutor(
+                graph,
+                ray_address=self._ray_address,
+                batch_size=self._batch_size,
+                num_cpus=self._num_cpus,
+                num_gpus=self._num_gpus,
+                node_overrides=merged_overrides,
+            )
             result = executor.ingest(self._documents)
             self._rd_dataset = result
             return result
@@ -375,109 +406,9 @@ class GraphIngestor(ingestor):
             self._rd_dataset = None
             return executor.ingest(self._documents)
 
-    def _ingest_video(self, post_extract_order: tuple[str, ...]) -> Any:
-        """Run the video pipeline as a fork of frame + audio branches with a shared post-chain."""
-        plan = build_video_graphs(
-            extract_params=self._extract_params,
-            audio_chunk_params=self._audio_chunk_params,
-            asr_params=self._asr_params,
-            video_params=self._video_params,
-            dedup_params=self._dedup_params,
-            split_params=self._split_params,
-            caption_params=self._caption_params,
-            store_params=self._store_params,
-            embed_params=self._embed_params,
-            webhook_params=self._webhook_params,
-            stage_order=post_extract_order,
-        )
-
-        if self._run_mode == "batch":
-            import ray
-            import ray.data as rd
-
-            ensure_ray_initialized(self._ray_address)
-            cluster_resources = gather_cluster_resources(ray)
-            merged_overrides = self._compute_merged_overrides(cluster_resources)
-
-            # Video actors only consume `path`; building the seed without reading file
-            # bytes saves 2x I/O across the two branches and avoids parking the input
-            # in Ray's object store.
-            ds_raw = rd.from_items([{"path": p} for p in expand_globs(self._documents)])
-            # Branches stay lazy so the union materializes as a single Ray Data plan.
-            branch_datasets = [
-                self._make_ray_executor(sub_graph, merged_overrides).ingest(ds_raw, materialize=False)
-                for sub_graph in (plan.frame_graph, plan.audio_graph)
-                if sub_graph is not None
-            ]
-
-            ds_combined = branch_datasets[0]
-            if len(branch_datasets) > 1:
-                ds_combined = ds_combined.union(*branch_datasets[1:])
-
-            if plan.post_graph.roots:
-                result = self._make_ray_executor(plan.post_graph, merged_overrides).ingest(ds_combined)
-            else:
-                result = ds_combined.materialize()
-
-            self._rd_dataset = result
-            return result
-
-        # Inprocess path: serialize the two branches, concat, then run post.
-        import pandas as pd
-
-        df_raw = pd.DataFrame({"path": expand_globs(self._documents)})
-        branch_dfs: List[Any] = []
-        for sub_graph in (plan.frame_graph, plan.audio_graph):
-            if sub_graph is None:
-                continue
-            df = InprocessExecutor(sub_graph, show_progress=self._show_progress).ingest(df_raw)
-            if isinstance(df, pd.DataFrame) and not df.empty:
-                branch_dfs.append(df)
-
-        self._rd_dataset = None
-        if not branch_dfs:
-            return pd.DataFrame()
-
-        df_combined = branch_dfs[0] if len(branch_dfs) == 1 else pd.concat(branch_dfs, ignore_index=True, sort=False)
-        if plan.post_graph.roots:
-            return InprocessExecutor(plan.post_graph, show_progress=self._show_progress).ingest(df_combined)
-        return df_combined
-
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-
-    def _compute_merged_overrides(self, cluster_resources: Any) -> Dict[str, Dict[str, Any]]:
-        effective_allow_no_gpu = self._allow_no_gpu or cluster_resources.available_gpu_count() == 0
-        derived_overrides = batch_tuning_to_node_overrides(
-            self._extract_params,
-            self._embed_params,
-            cluster_resources=cluster_resources,
-            allow_no_gpu=effective_allow_no_gpu,
-            caption_params=self._caption_params,
-        )
-        merged_overrides: Dict[str, Dict[str, Any]] = {}
-        for node_name in set(derived_overrides) | set(self._node_overrides):
-            merged_overrides[node_name] = {
-                **derived_overrides.get(node_name, {}),
-                **self._node_overrides.get(node_name, {}),
-            }
-        return merged_overrides
-
-    def _make_ray_executor(
-        self,
-        graph: Any,
-        merged_overrides: Dict[str, Dict[str, Any]],
-    ) -> RayDataExecutor:
-        return RayDataExecutor(
-            graph,
-            ray_address=self._ray_address,
-            batch_size=self._batch_size,
-            num_cpus=self._num_cpus,
-            num_gpus=self._num_gpus,
-            node_overrides=merged_overrides,
-            rich_progress=self._rich_progress,
-        )
 
     @staticmethod
     def _has_error(v: Any) -> bool:

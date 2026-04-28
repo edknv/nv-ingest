@@ -32,65 +32,6 @@ logger = logging.getLogger(__name__)
 _DEFAULT_GPU_OPERATOR_NUM_GPUS = OCR_GPUS_PER_ACTOR
 
 
-def expand_globs(paths: Any) -> List[str]:
-    """Expand glob patterns to a sorted list of file paths.
-
-    Accepts a single pattern or a list of patterns. Patterns that match no
-    files pass through unchanged so callers see the original input on error.
-    """
-    import glob as _glob
-
-    if isinstance(paths, str):
-        patterns = [paths]
-    elif isinstance(paths, list):
-        patterns = list(paths)
-    else:
-        raise TypeError(f"paths must be a string or list of strings, got {type(paths).__name__}")
-    expanded: List[str] = []
-    for pattern in patterns:
-        matches = _glob.glob(pattern, recursive=True)
-        expanded.extend(sorted(matches) if matches else [pattern])
-    return expanded
-
-
-def read_binary_seed_dataset(paths: Any) -> Any:
-    """Build a Ray Dataset of binary file contents from glob patterns or a list of paths."""
-    import ray.data as rd
-
-    expanded = expand_globs(paths)
-    return rd.read_binary_files(expanded, include_paths=True)
-
-
-def ensure_ray_initialized(ray_address: Optional[str] = None) -> None:
-    """Initialize Ray with the same runtime env the executor uses, if not already running."""
-    import ray
-
-    if ray_address is None and ray.is_initialized():
-        return
-    venv = os.path.dirname(os.path.dirname(sys.executable))
-    venv_bin = os.path.join(venv, "bin")
-    pypath = os.pathsep.join(p for p in sys.path if p)
-    ray_env_vars: dict[str, str] = {
-        "VIRTUAL_ENV": venv,
-        "PATH": venv_bin + os.pathsep + os.environ.get("PATH", ""),
-        "PYTHONPATH": pypath,
-    }
-    for _fwd_key in ("HF_TOKEN", "HF_HOME", "HUGGING_FACE_HUB_TOKEN", "NVIDIA_API_KEY"):
-        if os.environ.get(_fwd_key):
-            ray_env_vars[_fwd_key] = os.environ[_fwd_key]
-    ray_env_vars["HF_HUB_OFFLINE"] = os.environ.get("HF_HUB_OFFLINE", "1")
-    # Mirror back to the driver's env so any driver-side code (e.g. recall
-    # lookups, LanceDB queries) also defaults to offline; matches the prior
-    # inline-init behaviour that was in graph_ingestor.py / executor.py.
-    os.environ["HF_HUB_OFFLINE"] = ray_env_vars["HF_HUB_OFFLINE"]
-    runtime_env = {"env_vars": ray_env_vars}
-    ray.init(
-        address=ray_address,
-        ignore_reinit_error=True,
-        runtime_env=runtime_env,
-    )
-
-
 class AbstractExecutor(ABC):
     """Base class for pipeline executors.
 
@@ -158,12 +99,21 @@ class InprocessExecutor(AbstractExecutor):
         pandas.DataFrame
             The result after all operators have been applied.
         """
+        import glob as _glob
+
         import pandas as pd
 
         if isinstance(data, pd.DataFrame):
             df = data
-        elif isinstance(data, (str, list)):
-            df = self._load_files(expand_globs(data))
+        elif isinstance(data, str):
+            df = self._load_files([data])
+        elif isinstance(data, list):
+            # Expand globs
+            expanded: List[str] = []
+            for pattern in data:
+                matches = _glob.glob(pattern, recursive=True)
+                expanded.extend(sorted(matches) if matches else [pattern])
+            df = self._load_files(expanded)
         else:
             raise TypeError(
                 f"data must be a pandas.DataFrame, file path, or list of paths, " f"got {type(data).__name__}"
@@ -234,7 +184,6 @@ class RayDataExecutor(AbstractExecutor):
         num_cpus: float = 1,
         num_gpus: float = 0,
         node_overrides: Optional[Dict[str, Dict[str, Any]]] = None,
-        rich_progress: bool = True,
     ) -> None:
         super().__init__(graph)
         self._ray_address = ray_address
@@ -243,7 +192,6 @@ class RayDataExecutor(AbstractExecutor):
         self._default_num_cpus = num_cpus
         self._default_num_gpus = num_gpus
         self._node_overrides = node_overrides or {}
-        self._rich_progress = rich_progress
 
     @staticmethod
     def _linearize(graph: Graph) -> List[Node]:
@@ -264,7 +212,7 @@ class RayDataExecutor(AbstractExecutor):
             node = node.children[0] if node.children else None
         return ordered
 
-    def ingest(self, data: Any, *, materialize: bool = True, **kwargs: Any) -> Any:
+    def ingest(self, data: Any, **kwargs: Any) -> Any:
         """Build and execute a Ray Data pipeline from the graph.
 
         Parameters
@@ -272,16 +220,14 @@ class RayDataExecutor(AbstractExecutor):
         data
             Input to ``ray.data.read_binary_files`` (a path or list of glob patterns)
             **or** an already-constructed ``ray.data.Dataset``.
-        materialize
-            If True (default) call ``.materialize()`` on the resulting Dataset
-            before returning. Set to False when chaining multiple executors so
-            execution defers to a single materialize at the end of the pipeline.
 
         Returns
         -------
         ray.data.Dataset
-            The result dataset (materialized when ``materialize=True``).
+            The materialized result dataset.
         """
+        import glob as _glob
+
         import ray
         import ray.data as rd
 
@@ -290,18 +236,30 @@ class RayDataExecutor(AbstractExecutor):
                 f"data must be a path/glob string, list of globs, or ray.data.Dataset, " f"got {type(data).__name__}"
             )
 
-        ensure_ray_initialized(self._ray_address)
+        if self._ray_address or not ray.is_initialized():
+            venv = os.path.dirname(os.path.dirname(sys.executable))
+            venv_bin = os.path.join(venv, "bin")
+            pypath = os.pathsep.join(p for p in sys.path if p)
+            ray_env_vars: dict[str, str] = {
+                "VIRTUAL_ENV": venv,
+                "PATH": venv_bin + os.pathsep + os.environ.get("PATH", ""),
+                "PYTHONPATH": pypath,
+            }
+            for _fwd_key in ("HF_TOKEN", "HF_HOME", "HUGGING_FACE_HUB_TOKEN", "NVIDIA_API_KEY"):
+                if os.environ.get(_fwd_key):
+                    ray_env_vars[_fwd_key] = os.environ[_fwd_key]
+            ray_env_vars["HF_HUB_OFFLINE"] = os.environ.get("HF_HUB_OFFLINE", "1")
+            os.environ["HF_HUB_OFFLINE"] = ray_env_vars["HF_HUB_OFFLINE"]
+            runtime_env = {"env_vars": ray_env_vars}
+            ray.init(
+                address=self._ray_address,
+                ignore_reinit_error=True,
+                runtime_env=runtime_env,
+            )
 
         ctx = rd.DataContext.get_current()
-        # When rich_progress is on, render the full execution tree with per-stage
-        # backpressure / queue / resource detail. When off (e.g. video graphs with
-        # many concurrent stages), disable Ray Data progress bars entirely — the
-        # logging fallback re-prints the dataset summary every few seconds when
-        # stdout isn't a TTY, which is louder than it's worth.
-        ctx.enable_progress_bars = self._rich_progress
-        ctx.enable_rich_progress_bars = self._rich_progress
-        ctx.enable_operator_progress_bars = self._rich_progress
-        ctx.use_ray_tqdm = not self._rich_progress
+        ctx.enable_rich_progress_bars = True
+        ctx.use_ray_tqdm = False
 
         cluster = gather_cluster_resources(ray)
         available_gpus = cluster.available_gpu_count()
@@ -309,8 +267,13 @@ class RayDataExecutor(AbstractExecutor):
 
         if isinstance(data, rd.Dataset):
             ds = data
-        else:
-            ds = read_binary_seed_dataset(data)
+        elif isinstance(data, (str, list)):
+            paths = [data] if isinstance(data, str) else list(data)
+            expanded: List[str] = []
+            for pattern in paths:
+                matches = _glob.glob(pattern, recursive=True)
+                expanded.extend(sorted(matches) if matches else [pattern])
+            ds = rd.read_binary_files(expanded, include_paths=True)
         nodes = self._linearize(resolved_graph)
         for node in nodes:
             overrides = dict(self._node_overrides.get(node.name, {}))
@@ -399,4 +362,4 @@ class RayDataExecutor(AbstractExecutor):
                 **overrides,
             )
 
-        return ds.materialize() if materialize else ds
+        return ds.materialize()
