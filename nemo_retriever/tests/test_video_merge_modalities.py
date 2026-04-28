@@ -9,11 +9,24 @@ import pandas as pd
 from nemo_retriever.video.merge_modalities import merge_video_frame_audio_rows
 
 
-def _frame_row(start: float, end: float, ocr: str, *, idx: int = 0, source: str = "/v.mp4") -> dict:
+_FAKE_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+
+
+def _frame_row(
+    start: float,
+    end: float,
+    ocr: str,
+    *,
+    idx: int = 0,
+    source: str = "/v.mp4",
+    image_b64: str = _FAKE_B64,
+) -> dict:
     return {
         "path": source,
         "page_number": idx + 1,
         "text": ocr,
+        "page_image": {"image_b64": image_b64, "encoding": "png", "orig_shape_hw": (1, 1)},
+        "images": [{"image_b64": image_b64, "text": "", "bbox_xyxy_norm": [0.0, 0.0, 1.0, 1.0]}],
         "metadata": {
             "modality": "video_frame",
             "_content_type": "image",
@@ -62,6 +75,9 @@ def test_audio_aligned_with_single_frame_produces_one_merged_row() -> None:
     assert row["metadata"]["ocr_text"] == "Title slide"
     assert row["metadata"]["segment_start_seconds"] == 0.0
     assert row["metadata"]["segment_end_seconds"] == 14.0
+    # The frame image should be ready for the VL embedder.
+    assert row["_image_b64"] == _FAKE_B64
+    assert row["_embed_modality"] == "text_image"
 
 
 def test_many_short_audio_rows_share_one_long_frame() -> None:
@@ -95,6 +111,13 @@ def test_audio_with_no_overlapping_frame_stays_audio() -> None:
     modalities = sorted(out["metadata"].apply(lambda m: m["modality"]).tolist())
     # Frame survives as standalone (no audio overlap), audio survives as standalone.
     assert modalities == ["audio_segment", "video_frame"]
+    standalone_audio = out[out["metadata"].apply(lambda m: m["modality"] == "audio_segment")].iloc[0]
+    assert standalone_audio["_embed_modality"] == "text"
+    assert "_image_b64" not in standalone_audio or pd.isna(standalone_audio.get("_image_b64"))
+    standalone_frame = out[out["metadata"].apply(lambda m: m["modality"] == "video_frame")].iloc[0]
+    assert standalone_frame["_image_b64"] == _FAKE_B64
+    # OCR text exists, so embed as text+image rather than image-only.
+    assert standalone_frame["_embed_modality"] == "text_image"
 
 
 def test_unclaimed_frame_emitted_as_standalone() -> None:

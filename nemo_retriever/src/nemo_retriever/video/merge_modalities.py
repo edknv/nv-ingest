@@ -26,10 +26,29 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from nemo_retriever.io.image_store import resolve_image_b64
+
 logger = logging.getLogger(__name__)
 
 
 _TEXT_JOIN = "\n"
+
+
+def _frame_image_b64(frame_row: Any) -> Optional[str]:
+    """Resolve the frame's base64 image, reloading from disk if it was stripped."""
+    page_image = frame_row.get("page_image") if hasattr(frame_row, "get") else None
+    if isinstance(page_image, dict):
+        b64 = resolve_image_b64(page_image)
+        if isinstance(b64, str) and b64:
+            return b64
+    images = frame_row.get("images") if hasattr(frame_row, "get") else None
+    if isinstance(images, list) and images:
+        first = images[0]
+        if isinstance(first, dict):
+            b64 = first.get("image_b64")
+            if isinstance(b64, str) and b64:
+                return b64
+    return None
 
 
 def _meta(row: Any) -> Dict[str, Any]:
@@ -144,8 +163,10 @@ def merge_video_frame_audio_rows(df: pd.DataFrame) -> pd.DataFrame:
         candidates = frames_by_source.get(_source_key(meta), [])
         pick = _pick_frame(span, candidates)
         if pick is None:
-            # No frame overlapped; keep the audio row as-is.
-            out_records.append(row.to_dict())
+            # No frame overlapped; keep the audio row, embedded as text-only.
+            audio_row = row.to_dict()
+            audio_row.setdefault("_embed_modality", "text")
+            out_records.append(audio_row)
             continue
 
         frame_idx, ocr_text, frame_row = pick
@@ -181,13 +202,32 @@ def merge_video_frame_audio_rows(df: pd.DataFrame) -> pd.DataFrame:
                 value = frame_row[col]
                 if value is not None and not (hasattr(value, "__len__") and len(value) == 0):
                     new_row[col] = value
+        # Hand the embedder the base64 image directly. With "_embed_modality"
+        # set to "text_image" the VL embedder pairs the merged text with this
+        # image; without it, the per-row modality would default to the global
+        # embed_modality (likely "text") and the visual signal would be lost.
+        b64 = _frame_image_b64(frame_row)
+        if b64:
+            new_row["_image_b64"] = b64
+            new_row["_embed_modality"] = "text_image"
+        else:
+            new_row["_embed_modality"] = "text"
         out_records.append(new_row)
 
     # Emit unmatched frames as standalone video_frame rows (silent visual content).
+    # Hand the embedder the image; the VL embedder treats text_image with empty
+    # text gracefully (and the OCR text is usually non-empty for slides anyway).
     for frame_idx, row in enumerate(frames):
         if frame_idx in consumed_frame_indices:
             continue
-        out_records.append(row.to_dict())
+        frame_dict = row.to_dict()
+        b64 = _frame_image_b64(row)
+        if b64:
+            frame_dict.setdefault("_image_b64", b64)
+            frame_dict.setdefault(
+                "_embed_modality", "text_image" if str(frame_dict.get("text", "") or "").strip() else "image"
+            )
+        out_records.append(frame_dict)
 
     for row in others:
         out_records.append(row.to_dict())
