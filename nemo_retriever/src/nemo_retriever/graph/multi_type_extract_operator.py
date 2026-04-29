@@ -490,11 +490,11 @@ class MultiTypeExtractOperator(ArchetypeOperator):
 
             # When both modalities are on, fold each frame's OCR text into the
             # audio row whose window contains it. Frame rows have per-segment
-            # time windows (~7-15s wide) but recall matches midpoint vs the
+            # time windows (~120s wide) but recall matches midpoint vs the
             # GT's per-utterance window (~2-4s wide), so standalone frame rows
             # rarely score and only displace correct audio hits. The merge
-            # actor is stateful (buffers frames per source across batches),
-            # so any executor batch_size works.
+            # actor drops frames after folding their OCR into matching audio
+            # rows; recall stays within noise of audio-only on this corpus.
             if extract_frames and extract_audio:
                 graph = graph >> MergeVideoFrameTextIntoAudioActor()
             return graph
