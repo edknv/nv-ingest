@@ -226,7 +226,11 @@ class ASRCPUActor(AbstractOperator, CPUOperator):
 
         if passthrough_df.empty:
             return transcribed
-        return pd.concat([transcribed, passthrough_df], ignore_index=True, sort=False)
+        # Frame rows first, audio second: downstream MergeVideoFrameTextIntoAudio
+        # buffers frames per source as they arrive, then folds OCR into audio
+        # rows whose windows overlap. The order ensures the buffer is populated
+        # before audio rows do the lookup.
+        return pd.concat([passthrough_df, transcribed], ignore_index=True, sort=False)
 
     def postprocess(self, data: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
         return data

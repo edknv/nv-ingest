@@ -240,12 +240,6 @@ class GraphIngestor(ingestor):
         self._asr_params = asr_params or ASRParams()
         if extract_params is not None:
             self._extract_params = _resolve_api_key(extract_params)
-        # The MergeVideoFrameTextIntoAudio UDF needs all of one video's rows
-        # (frames + per-utterance audio) in the same map_batches call to
-        # match them by source. Default executor batch_size=1 splits them
-        # across calls, so request the full block here.
-        if self._video_params.extract_frames and self._video_params.extract_audio:
-            self._node_overrides.setdefault("MergeVideoFrameTextIntoAudio", {}).setdefault("batch_size", None)
         self._record_stage("extract")
         return self
 

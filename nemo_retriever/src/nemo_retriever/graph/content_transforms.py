@@ -6,13 +6,19 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional, Sequence
 
 import pandas as pd
 
+from nemo_retriever.graph.abstract_operator import AbstractOperator
+from nemo_retriever.graph.cpu_operator import CPUOperator
+from nemo_retriever.graph.designer import designer_component
 from nemo_retriever.io.image_store import resolve_image_b64
 from nemo_retriever.ocr.ocr import _crop_b64_image_by_norm_bbox
 from nemo_retriever.params.models import IMAGE_MODALITIES
+
+logger = logging.getLogger(__name__)
 
 _CONTENT_COLUMNS = ("table", "chart", "infographic")
 
@@ -187,102 +193,106 @@ def collapse_content_to_page_rows(
     return batch_df
 
 
-def merge_video_frame_text_into_audio_rows(batch_df: Any) -> Any:
-    """Concat each video frame's OCR text into the audio row whose window contains
-    the frame, then drop the standalone frame rows.
+def _row_segment_window(row: Any) -> tuple[str | None, float | None, float | None, str]:
+    """Pull ``(source, segment_start, segment_end, text)`` from a row's metadata."""
+    meta = row.get("metadata")
+    if not isinstance(meta, dict):
+        return None, None, None, row.get("text") or ""
+    source = meta.get("source_path") or meta.get("source_video")
+    start = meta.get("segment_start_seconds")
+    end = meta.get("segment_end_seconds")
+    try:
+        start_f = float(start) if start is not None else None
+        end_f = float(end) if end is not None else None
+    except (TypeError, ValueError):
+        start_f = end_f = None
+    return (str(source) if source else None, start_f, end_f, row.get("text") or "")
 
-    Frame rows (with a ``page_image`` dict) carry per-segment time windows
-    (e.g. 60-75s); audio rows (with ``bytes`` and a transcript) carry per-utterance
-    windows from ASR fan-out (e.g. 62.3-64.1s). For ``recall_match_mode=audio_segment``
-    the matcher checks midpoint-in-window with a small tolerance, so frame rows
-    seldom score on their own. Folding their OCR text into the temporally
-    overlapping audio row preserves the OCR signal at the audio's fine-grained
-    timestamps, freeing top-K slots that would otherwise hold un-matchable frames.
 
-    Mixed-mode batches (e.g. heterogeneous "auto" with PDFs alongside videos)
-    are safe: rows with no ``page_image`` and no time window are passed through
-    unchanged. Within one batch, rows are grouped by ``metadata.source_path``,
-    which both extractors set to the original video path.
+@designer_component(
+    name="Merge Video Frame Text Into Audio",
+    category="Video",
+    compute="cpu",
+    description="Folds frame-OCR text into the audio row whose time window contains the frame.",
+    category_color="#ff6bbb",
+)
+class MergeVideoFrameTextIntoAudioActor(AbstractOperator, CPUOperator):
+    """Stateful: buffer frame OCR per ``source_video`` across batches, fold each
+    frame's text into the audio row whose midpoint falls inside the frame window,
+    and drop standalone frame rows.
+
+    Frame rows (with ``page_image``) carry per-segment time windows (e.g. 60-75s);
+    audio rows carry per-utterance windows from ASR fan-out (e.g. 62.3-64.1s).
+    For ``recall_match_mode=audio_segment`` the matcher tests midpoint-in-window
+    with a small tolerance, so frame rows seldom score on their own. Folding their
+    OCR text into the temporally overlapping audio row preserves the OCR signal
+    at the audio's fine-grained timestamps.
+
+    Stateful design: state lives per actor instance, so this operator must be run
+    with ``concurrency=1`` (the executor's default). The buffer holds one entry
+    per (source, frame_window), bounded by total frame count across the dataset.
+
+    Order independence: frames buffered as they arrive; audio rows look up the
+    buffer immediately on receipt. As long as a video's frame rows precede its
+    audio rows in upstream output (which the ASR concat order guarantees), every
+    audio row sees the relevant frames.
     """
-    if not isinstance(batch_df, pd.DataFrame) or batch_df.empty:
-        return batch_df
 
-    if "page_image" not in batch_df.columns:
-        return batch_df  # nothing to merge — no frame rows present
+    def __init__(self) -> None:
+        super().__init__()
+        # source -> list[(start, end, text)]
+        self._frames_by_source: Dict[str, List[tuple[float, float, str]]] = {}
 
-    has_frame_image = batch_df["page_image"].apply(lambda v: isinstance(v, dict))
-    if not has_frame_image.any():
-        return batch_df
+    def preprocess(self, data: Any, **kwargs: Any) -> Any:
+        return data
 
-    frames = batch_df[has_frame_image]
-    other = batch_df[~has_frame_image]
+    def process(self, batch_df: Any, **kwargs: Any) -> Any:
+        if not isinstance(batch_df, pd.DataFrame) or batch_df.empty:
+            return batch_df
+        if "page_image" not in batch_df.columns:
+            return batch_df  # no frames possible — pass through
 
-    # Group frames by source video for O(1) lookup per audio row.
-    frames_by_source: Dict[str, List[Dict[str, Any]]] = {}
-    for _, row in frames.iterrows():
-        meta = row.get("metadata")
-        if not isinstance(meta, dict):
-            continue
-        source = meta.get("source_path") or meta.get("source_video")
-        if not source:
-            continue
-        frames_by_source.setdefault(str(source), []).append(
-            {
-                "text": row.get("text") or "",
-                "start": meta.get("segment_start_seconds"),
-                "end": meta.get("segment_end_seconds"),
-            }
-        )
+        is_frame = batch_df["page_image"].apply(lambda v: isinstance(v, dict))
+        frames = batch_df[is_frame]
+        audio = batch_df[~is_frame]
 
-    if not frames_by_source:
-        # All frame rows lacked usable metadata — pass everything through unchanged.
-        return batch_df
-
-    new_texts: List[str] = []
-    for _, row in other.iterrows():
-        existing_text = row.get("text") or ""
-        meta = row.get("metadata")
-        if not isinstance(meta, dict):
-            new_texts.append(existing_text)
-            continue
-        source = meta.get("source_path") or meta.get("source_video")
-        a_start = meta.get("segment_start_seconds")
-        a_end = meta.get("segment_end_seconds")
-        if not source or a_start is None or a_end is None:
-            new_texts.append(existing_text)
-            continue
-
-        try:
-            a_mid = (float(a_start) + float(a_end)) / 2.0
-        except (TypeError, ValueError):
-            new_texts.append(existing_text)
-            continue
-
-        matches: List[str] = []
-        for f in frames_by_source.get(str(source), ()):
-            f_start, f_end = f["start"], f["end"]
-            if f_start is None or f_end is None:
+        # Buffer this batch's frames keyed by source video.
+        for _, row in frames.iterrows():
+            source, start, end, text = _row_segment_window(row)
+            if source is None or start is None or end is None:
                 continue
-            try:
-                if float(f_start) <= a_mid <= float(f_end):
-                    text = (f["text"] or "").strip()
-                    if text:
-                        matches.append(text)
-            except (TypeError, ValueError):
+            text = (text or "").strip()
+            if not text:
                 continue
+            self._frames_by_source.setdefault(source, []).append((start, end, text))
 
-        if matches:
-            ocr_blob = "\n".join(matches)
-            new_texts.append(f"{existing_text}\n\n{ocr_blob}" if existing_text else ocr_blob)
-        else:
-            new_texts.append(existing_text)
+        if audio.empty:
+            # Frames-only batch — they're now buffered, drop them from output.
+            return batch_df.iloc[:0]
 
-    if other.empty:
-        # Frames-only batch (audio disabled): drop frames since they can't be
-        # merged into anything. Caller can keep frames=on if they want frame-only
-        # rows; typical usage of this UDF is with both modalities enabled.
-        return batch_df.iloc[:0]
+        # Look up buffered frames for each audio row.
+        new_texts: List[str] = []
+        for _, row in audio.iterrows():
+            source, a_start, a_end, existing = _row_segment_window(row)
+            if source is None or a_start is None or a_end is None:
+                new_texts.append(existing)
+                continue
+            a_mid = (a_start + a_end) / 2.0
+            matches = [
+                text for (f_start, f_end, text) in self._frames_by_source.get(source, ()) if f_start <= a_mid <= f_end
+            ]
+            if matches:
+                ocr_blob = "\n".join(matches)
+                new_texts.append(f"{existing}\n\n{ocr_blob}" if existing else ocr_blob)
+            else:
+                new_texts.append(existing)
 
-    merged = other.copy()
-    merged["text"] = new_texts
-    return merged.reset_index(drop=True)
+        merged = audio.copy()
+        merged["text"] = new_texts
+        return merged.reset_index(drop=True)
+
+    def postprocess(self, data: Any, **kwargs: Any) -> Any:
+        return data
+
+    def __call__(self, batch_df: Any) -> Any:
+        return self.run(batch_df)
