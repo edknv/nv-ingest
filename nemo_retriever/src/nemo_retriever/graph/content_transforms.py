@@ -274,12 +274,8 @@ class MergeVideoFrameTextIntoAudioActor(AbstractOperator, CPUOperator):
 
     def __init__(self) -> None:
         super().__init__()
-        # source -> list[(start, end, text, page_image)]
-        # page_image is the frame's image dict; carried alongside OCR text so
-        # that a downstream embed stage can use it when embed_modality is
-        # "text_image" (the VL embedder picks both signals up via the standard
-        # explode/collapse path that derives _image_b64 from page_image).
-        self._frames_by_source: Dict[str, List[tuple[float, float, str, Any]]] = {}
+        # source -> list[(start, end, text)]
+        self._frames_by_source: Dict[str, List[tuple[float, float, str]]] = {}
 
     def preprocess(self, data: Any, **kwargs: Any) -> Any:
         return data
@@ -304,8 +300,7 @@ class MergeVideoFrameTextIntoAudioActor(AbstractOperator, CPUOperator):
             cleaned = _clean_ocr_text(text)
             if not cleaned:
                 continue
-            page_image = row.get("page_image")
-            self._frames_by_source.setdefault(source, []).append((start, end, cleaned, page_image))
+            self._frames_by_source.setdefault(source, []).append((start, end, cleaned))
 
         if audio.empty:
             # Frames-only batch — they're now buffered, drop them from output.
@@ -315,36 +310,27 @@ class MergeVideoFrameTextIntoAudioActor(AbstractOperator, CPUOperator):
         # frame (by midpoint distance) when multiple windows contain the audio
         # midpoint — concatenating multiple frames' OCR amplifies UI chrome.
         new_texts: List[str] = []
-        new_page_images: List[Any] = []
         for _, row in audio.iterrows():
             source, a_start, a_end, existing = _row_segment_window(row)
             if source is None or a_start is None or a_end is None:
                 new_texts.append(existing)
-                new_page_images.append(None)
                 continue
             a_mid = (a_start + a_end) / 2.0
-            # (midpoint_distance, text, page_image)
-            best: tuple[float, str, Any] | None = None
-            for f_start, f_end, text, page_image in self._frames_by_source.get(source, ()):
+            best: tuple[float, str] | None = None  # (midpoint_distance, text)
+            for f_start, f_end, text in self._frames_by_source.get(source, ()):
                 if not (f_start <= a_mid <= f_end):
                     continue
                 dist = abs(((f_start + f_end) / 2.0) - a_mid)
                 if best is None or dist < best[0]:
-                    best = (dist, text, page_image)
+                    best = (dist, text)
             if best is not None:
                 ocr_blob = " ".join(best[1].split()[:_OCR_MAX_WORDS_PER_ROW])
                 new_texts.append(f"{existing}\n\n{ocr_blob}" if existing else ocr_blob)
-                new_page_images.append(best[2])
             else:
                 new_texts.append(existing)
-                new_page_images.append(None)
 
         merged = audio.copy()
         merged["text"] = new_texts
-        # Always copy the matched frame's page_image. With embed_modality="text"
-        # this column is unused; with embed_modality="text_image" the standard
-        # explode/collapse path turns it into _image_b64 for the VL embedder.
-        merged["page_image"] = new_page_images
         return merged.reset_index(drop=True)
 
     def postprocess(self, data: Any, **kwargs: Any) -> Any:
