@@ -468,8 +468,13 @@ class MultiTypeExtractOperator(ArchetypeOperator):
         from nemo_retriever.graph.pipeline_graph import Graph
 
         if extraction_mode == "video":
+            from nemo_retriever.graph.content_transforms import merge_video_frame_text_into_audio_rows
+            from nemo_retriever.graph.custom_operator import UDFOperator
             from nemo_retriever.graph.ingestor_runtime import _video_frame_ocr_kwargs
             from nemo_retriever.video.split import VideoSplitActor
+
+            extract_frames = bool(getattr(video_params, "extract_frames", True))
+            extract_audio = bool(getattr(video_params, "extract_audio", True))
 
             graph = Graph() >> VideoSplitActor(
                 video_params=video_params,
@@ -479,10 +484,21 @@ class MultiTypeExtractOperator(ArchetypeOperator):
             # downstream actor still gets instantiated by Ray (and may fail
             # to construct, e.g. VideoFrameOCRCPUActor without ocr_invoke_url
             # when no GPU is available).
-            if getattr(video_params, "extract_frames", True):
+            if extract_frames:
                 graph = graph >> VideoFrameOCRActor(**_video_frame_ocr_kwargs(extract_params))
-            if getattr(video_params, "extract_audio", True):
+            if extract_audio:
                 graph = graph >> ASRActor(params=asr_params)
+
+            # When both modalities are on, fold each frame's OCR text into the
+            # audio row whose window contains it. Frame rows have per-segment
+            # time windows (~7-15s wide) but recall matches midpoint vs the
+            # GT's per-utterance window (~2-4s wide), so standalone frame rows
+            # rarely score and only displace correct audio hits.
+            if extract_frames and extract_audio:
+                graph = graph >> UDFOperator(
+                    merge_video_frame_text_into_audio_rows,
+                    name="MergeVideoFrameTextIntoAudio",
+                )
             return graph
         if extraction_mode == "audio":
             return Graph() >> AudioChunkActor(params=audio_chunk_params) >> ASRActor(params=asr_params)

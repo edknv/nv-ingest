@@ -185,3 +185,104 @@ def collapse_content_to_page_rows(
 
     batch_df["_embed_modality"] = modality
     return batch_df
+
+
+def merge_video_frame_text_into_audio_rows(batch_df: Any) -> Any:
+    """Concat each video frame's OCR text into the audio row whose window contains
+    the frame, then drop the standalone frame rows.
+
+    Frame rows (with a ``page_image`` dict) carry per-segment time windows
+    (e.g. 60-75s); audio rows (with ``bytes`` and a transcript) carry per-utterance
+    windows from ASR fan-out (e.g. 62.3-64.1s). For ``recall_match_mode=audio_segment``
+    the matcher checks midpoint-in-window with a small tolerance, so frame rows
+    seldom score on their own. Folding their OCR text into the temporally
+    overlapping audio row preserves the OCR signal at the audio's fine-grained
+    timestamps, freeing top-K slots that would otherwise hold un-matchable frames.
+
+    Mixed-mode batches (e.g. heterogeneous "auto" with PDFs alongside videos)
+    are safe: rows with no ``page_image`` and no time window are passed through
+    unchanged. Within one batch, rows are grouped by ``metadata.source_path``,
+    which both extractors set to the original video path.
+    """
+    if not isinstance(batch_df, pd.DataFrame) or batch_df.empty:
+        return batch_df
+
+    if "page_image" not in batch_df.columns:
+        return batch_df  # nothing to merge — no frame rows present
+
+    has_frame_image = batch_df["page_image"].apply(lambda v: isinstance(v, dict))
+    if not has_frame_image.any():
+        return batch_df
+
+    frames = batch_df[has_frame_image]
+    other = batch_df[~has_frame_image]
+
+    # Group frames by source video for O(1) lookup per audio row.
+    frames_by_source: Dict[str, List[Dict[str, Any]]] = {}
+    for _, row in frames.iterrows():
+        meta = row.get("metadata")
+        if not isinstance(meta, dict):
+            continue
+        source = meta.get("source_path") or meta.get("source_video")
+        if not source:
+            continue
+        frames_by_source.setdefault(str(source), []).append(
+            {
+                "text": row.get("text") or "",
+                "start": meta.get("segment_start_seconds"),
+                "end": meta.get("segment_end_seconds"),
+            }
+        )
+
+    if not frames_by_source:
+        # All frame rows lacked usable metadata — pass everything through unchanged.
+        return batch_df
+
+    new_texts: List[str] = []
+    for _, row in other.iterrows():
+        existing_text = row.get("text") or ""
+        meta = row.get("metadata")
+        if not isinstance(meta, dict):
+            new_texts.append(existing_text)
+            continue
+        source = meta.get("source_path") or meta.get("source_video")
+        a_start = meta.get("segment_start_seconds")
+        a_end = meta.get("segment_end_seconds")
+        if not source or a_start is None or a_end is None:
+            new_texts.append(existing_text)
+            continue
+
+        try:
+            a_mid = (float(a_start) + float(a_end)) / 2.0
+        except (TypeError, ValueError):
+            new_texts.append(existing_text)
+            continue
+
+        matches: List[str] = []
+        for f in frames_by_source.get(str(source), ()):
+            f_start, f_end = f["start"], f["end"]
+            if f_start is None or f_end is None:
+                continue
+            try:
+                if float(f_start) <= a_mid <= float(f_end):
+                    text = (f["text"] or "").strip()
+                    if text:
+                        matches.append(text)
+            except (TypeError, ValueError):
+                continue
+
+        if matches:
+            ocr_blob = "\n".join(matches)
+            new_texts.append(f"{existing_text}\n\n{ocr_blob}" if existing_text else ocr_blob)
+        else:
+            new_texts.append(existing_text)
+
+    if other.empty:
+        # Frames-only batch (audio disabled): drop frames since they can't be
+        # merged into anything. Caller can keep frames=on if they want frame-only
+        # rows; typical usage of this UDF is with both modalities enabled.
+        return batch_df.iloc[:0]
+
+    merged = other.copy()
+    merged["text"] = new_texts
+    return merged.reset_index(drop=True)
