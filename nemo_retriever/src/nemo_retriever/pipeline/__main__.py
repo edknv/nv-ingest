@@ -422,7 +422,19 @@ def _build_ingestor(
             asr_params=asr_params,
         )
     elif input_type == "video":
-        asr_params = asr_params_from_env().model_copy(update={"segment_audio": bool(segment_audio)})
+        # For video pipelines: include 1 neighbor utterance on each side and
+        # prepend the video filename to each row's text. Both of these enrich
+        # the dense embedding without changing recall semantics (the row's
+        # time window stays anchored to the current utterance) and give
+        # short utterance fragments the surrounding context the embedder
+        # otherwise lacks.
+        asr_params = asr_params_from_env().model_copy(
+            update={
+                "segment_audio": bool(segment_audio),
+                "context_window_size": 1,
+                "prepend_source_name": True,
+            }
+        )
         ingestor = ingestor.extract_video(
             params=VideoExtractParams(
                 split_type="time",

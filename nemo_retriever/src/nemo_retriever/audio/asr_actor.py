@@ -385,14 +385,37 @@ class ASRCPUActor(AbstractOperator, CPUOperator):
             chunk_dur = 0.0
 
         if self._params.segment_audio and segments:
+            # Pre-extract clean text per segment for O(1) neighbor lookup when
+            # context_window_size > 0. Skips dict-typed entries with no text.
+            segment_texts: List[str] = []
+            for s in segments:
+                if not isinstance(s, dict):
+                    segment_texts.append("")
+                else:
+                    segment_texts.append(str(s.get("text") or "").strip())
+            window = max(0, int(getattr(self._params, "context_window_size", 0)))
+            prepend_name = bool(getattr(self._params, "prepend_source_name", False))
+            source_name = Path(str(source_path)).stem if (prepend_name and source_path) else ""
+
             out_rows: List[Dict[str, Any]] = []
             segment_count = len(segments)
             for segment_index, segment in enumerate(segments):
                 if not isinstance(segment, dict):
                     continue
-                segment_text = str(segment.get("text") or "").strip()
+                segment_text = segment_texts[segment_index]
                 if not segment_text:
                     continue
+                # Optional: include neighboring utterances on each side. The
+                # row's time window stays anchored to the current utterance;
+                # only the embedded text gains context.
+                if window > 0:
+                    lo = max(0, segment_index - window)
+                    hi = min(segment_count, segment_index + window + 1)
+                    expanded_text = " ".join(t for t in segment_texts[lo:hi] if t)
+                else:
+                    expanded_text = segment_text
+                if source_name:
+                    expanded_text = f"{source_name}. {expanded_text}"
                 segment_metadata = copy.deepcopy(metadata)
                 segment_metadata["segment_index"] = segment_index
                 segment_metadata["segment_count"] = segment_count
@@ -415,7 +438,7 @@ class ASRCPUActor(AbstractOperator, CPUOperator):
                         "chunk_index": chunk_index,
                         "metadata": segment_metadata,
                         "page_number": page_number,
-                        "text": segment_text,
+                        "text": expanded_text,
                         "_content_type": "audio",
                     }
                 )
@@ -428,6 +451,9 @@ class ASRCPUActor(AbstractOperator, CPUOperator):
         metadata.setdefault("segment_end_seconds", chunk_start + chunk_dur)
         metadata["_content_type"] = "audio"
         metadata.setdefault("modality", "audio_segment")
+        text_out = transcript
+        if getattr(self._params, "prepend_source_name", False) and source_path:
+            text_out = f"{Path(str(source_path)).stem}. {text_out}"
         return [
             {
                 "path": path,
@@ -436,7 +462,7 @@ class ASRCPUActor(AbstractOperator, CPUOperator):
                 "chunk_index": chunk_index,
                 "metadata": metadata,
                 "page_number": page_number,
-                "text": transcript,
+                "text": text_out,
                 "_content_type": "audio",
             }
         ]

@@ -152,6 +152,16 @@ class ASRParams(_ParamsModel):
     function_id: Optional[str] = None
     auth_token: Optional[str] = None
     segment_audio: bool = False
+    # Number of neighboring utterances (on each side) to concatenate into each
+    # row's text. The row's time window stays pinned to the current utterance,
+    # so recall semantics are unchanged — this just gives the embedder more
+    # surrounding context when transcripts are very short. 0 = disabled.
+    context_window_size: int = 0
+    # Prepend the source media's filename stem (e.g.,
+    # "2024_04_SAP_Datasphere_Top_Features_1") to each row's text. Provides a
+    # video-level topic anchor for free, useful when generic utterances
+    # ("click here") appear across many videos in the corpus.
+    prepend_source_name: bool = False
 
 
 class VideoExtractParams(_ParamsModel):
