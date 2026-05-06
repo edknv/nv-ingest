@@ -74,9 +74,9 @@ def test_graph_ingestor_action_methods_materialize_default_params() -> None:
 
 
 def test_extract_unified_defaults() -> None:
-    """`.extract()` defaults: extraction_mode='auto' and natural-language chunking on."""
+    """`.extract()` defaults: extraction_mode='pdf' and natural-language chunking on."""
     ingestor = GraphIngestor(run_mode="inprocess").extract()
-    assert ingestor._extraction_mode == "auto"
+    assert ingestor._extraction_mode == "pdf"
     cfg = ingestor._split_config
     assert isinstance(cfg["text"], TextChunkParams)
     assert isinstance(cfg["html"], HtmlChunkParams)

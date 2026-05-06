@@ -181,14 +181,13 @@ class GraphIngestor(ingestor):
         params: Optional[ExtractParams] = None,
         *,
         split_config: dict[str, Any] | None = None,
-        extraction_mode: str = "auto",
+        extraction_mode: str = "pdf",
         **kwargs: Any,
     ) -> "GraphIngestor":
-        """Configure document extraction.
+        """Configure PDF/document extraction.
 
-        Defaults to ``extraction_mode='auto'`` so mixed folders are dispatched
-        to per-type pipelines automatically. Pass ``extraction_mode='pdf'`` to
-        force PDF-only behavior (matches the pre-2026 default).
+        Defaults to ``extraction_mode='pdf'``. Pass ``extraction_mode='auto'``
+        to dispatch a mixed folder through :class:`MultiTypeExtractOperator`.
         """
         self._extraction_mode = extraction_mode
         self._extract_params = _resolve_api_key(_coerce(params, kwargs, default_factory=ExtractParams))
