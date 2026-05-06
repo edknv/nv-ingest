@@ -520,6 +520,23 @@ def _build_command(
             str(cfg.video_frame_text_dedup_max_dropped_frames),
         ]
         cmd += ["--video-av-fuse" if cfg.video_av_fuse else "--no-video-av-fuse"]
+        cmd += ["--video-frame-text-method", cfg.video_frame_text_method]
+        cmd += ["--video-scene-detection" if cfg.video_scene_detection else "--no-video-scene-detection"]
+        cmd += ["--video-scene-threshold", str(cfg.video_scene_threshold)]
+        cmd += ["--video-key-frame-select" if cfg.video_key_frame_select else "--no-video-key-frame-select"]
+        cmd += ["--video-key-frame-z-threshold", str(cfg.video_key_frame_z_threshold)]
+        cmd += ["--video-advanced-dedup" if cfg.video_advanced_dedup else "--no-video-advanced-dedup"]
+        cmd += ["--video-advanced-dedup-blur-threshold", str(cfg.video_advanced_dedup_blur_threshold)]
+        cmd += ["--video-advanced-dedup-similarity-threshold", str(cfg.video_advanced_dedup_similarity_threshold)]
+        cmd += ["--video-advanced-dedup-entropy-gain", str(cfg.video_advanced_dedup_entropy_gain)]
+        if cfg.video_vlm_endpoint_url:
+            cmd += ["--video-vlm-endpoint-url", cfg.video_vlm_endpoint_url]
+        if cfg.video_vlm_api_key:
+            cmd += ["--video-vlm-api-key", cfg.video_vlm_api_key]
+        cmd += ["--video-vlm-model-name", cfg.video_vlm_model_name]
+        cmd += ["--video-vlm-prompt", cfg.video_vlm_prompt]
+        cmd += ["--video-av-fuse-mode", cfg.video_av_fuse_mode]
+        cmd += ["--video-av-fuse-scene-visual-max-chars", str(cfg.video_av_fuse_scene_visual_max_chars)]
     if cfg.extract_infographics:
         cmd += ["--extract-infographics"]
     if cfg.embed_modality:

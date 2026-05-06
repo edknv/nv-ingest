@@ -73,6 +73,21 @@ class HarnessConfig:
     video_frame_text_dedup: bool = True
     video_frame_text_dedup_max_dropped_frames: int = 2
     video_av_fuse: bool = True
+    video_frame_text_method: str = "ocr"
+    video_scene_detection: bool = False
+    video_scene_threshold: float = 30.0
+    video_key_frame_select: bool = False
+    video_key_frame_z_threshold: float = 2.0
+    video_advanced_dedup: bool = False
+    video_advanced_dedup_blur_threshold: float = 100.0
+    video_advanced_dedup_similarity_threshold: int = 5
+    video_advanced_dedup_entropy_gain: float = 0.1
+    video_vlm_endpoint_url: str | None = None
+    video_vlm_api_key: str | None = None
+    video_vlm_model_name: str = "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16"
+    video_vlm_prompt: str = "Transcribe this image, word to word."
+    video_av_fuse_mode: str = "per_utterance"
+    video_av_fuse_scene_visual_max_chars: int = 800
     evaluation_mode: str = "recall"
     beir_loader: str | None = None
     beir_dataset_name: str | None = None
@@ -157,6 +172,22 @@ class HarnessConfig:
                 errors.append("audio_split_interval must be >= 1")
             if float(self.video_frame_fps) <= 0.0:
                 errors.append("video_frame_fps must be > 0.0")
+            if self.video_frame_text_method not in {"ocr", "vlm", "none"}:
+                errors.append("video_frame_text_method must be one of ocr/vlm/none")
+            if float(self.video_scene_threshold) <= 0.0:
+                errors.append("video_scene_threshold must be > 0.0")
+            if float(self.video_key_frame_z_threshold) < 0.0:
+                errors.append("video_key_frame_z_threshold must be >= 0.0")
+            if float(self.video_advanced_dedup_blur_threshold) < 0.0:
+                errors.append("video_advanced_dedup_blur_threshold must be >= 0.0")
+            if int(self.video_advanced_dedup_similarity_threshold) < 0:
+                errors.append("video_advanced_dedup_similarity_threshold must be >= 0")
+            if float(self.video_advanced_dedup_entropy_gain) < 0.0:
+                errors.append("video_advanced_dedup_entropy_gain must be >= 0.0")
+            if self.video_av_fuse_mode not in {"per_utterance", "per_scene", "per_sentence"}:
+                errors.append("video_av_fuse_mode must be one of per_utterance/per_scene/per_sentence")
+            if int(self.video_av_fuse_scene_visual_max_chars) < 0:
+                errors.append("video_av_fuse_scene_visual_max_chars must be >= 0")
             if int(self.video_frame_text_dedup_max_dropped_frames) < 0:
                 errors.append("video_frame_text_dedup_max_dropped_frames must be >= 0")
         else:
@@ -309,6 +340,27 @@ def _apply_env_overrides(config_dict: dict[str, Any]) -> None:
             _parse_number,
         ),
         "HARNESS_VIDEO_AV_FUSE": ("video_av_fuse", _parse_bool),
+        "HARNESS_VIDEO_FRAME_TEXT_METHOD": ("video_frame_text_method", str),
+        "HARNESS_VIDEO_SCENE_DETECTION": ("video_scene_detection", _parse_bool),
+        "HARNESS_VIDEO_SCENE_THRESHOLD": ("video_scene_threshold", _parse_number),
+        "HARNESS_VIDEO_KEY_FRAME_SELECT": ("video_key_frame_select", _parse_bool),
+        "HARNESS_VIDEO_KEY_FRAME_Z_THRESHOLD": ("video_key_frame_z_threshold", _parse_number),
+        "HARNESS_VIDEO_ADVANCED_DEDUP": ("video_advanced_dedup", _parse_bool),
+        "HARNESS_VIDEO_ADVANCED_DEDUP_BLUR_THRESHOLD": ("video_advanced_dedup_blur_threshold", _parse_number),
+        "HARNESS_VIDEO_ADVANCED_DEDUP_SIMILARITY_THRESHOLD": (
+            "video_advanced_dedup_similarity_threshold",
+            _parse_number,
+        ),
+        "HARNESS_VIDEO_ADVANCED_DEDUP_ENTROPY_GAIN": ("video_advanced_dedup_entropy_gain", _parse_number),
+        "HARNESS_VIDEO_VLM_ENDPOINT_URL": ("video_vlm_endpoint_url", str),
+        "HARNESS_VIDEO_VLM_API_KEY": ("video_vlm_api_key", str),
+        "HARNESS_VIDEO_VLM_MODEL_NAME": ("video_vlm_model_name", str),
+        "HARNESS_VIDEO_VLM_PROMPT": ("video_vlm_prompt", str),
+        "HARNESS_VIDEO_AV_FUSE_MODE": ("video_av_fuse_mode", str),
+        "HARNESS_VIDEO_AV_FUSE_SCENE_VISUAL_MAX_CHARS": (
+            "video_av_fuse_scene_visual_max_chars",
+            _parse_number,
+        ),
         "HARNESS_EVALUATION_MODE": ("evaluation_mode", str),
         "HARNESS_BEIR_LOADER": ("beir_loader", str),
         "HARNESS_BEIR_DATASET_NAME": ("beir_dataset_name", str),

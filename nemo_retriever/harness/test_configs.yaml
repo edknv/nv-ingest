@@ -275,8 +275,21 @@ datasets:
     audio_split_interval: 36000
     video_extract_audio: true
     video_extract_frames: true
-    video_frame_fps: 0.05
+    video_frame_fps: 4.0  # reference samples at 4 fps before scene-aware filtering
+    video_frame_dedup: false  # legacy dhash off; advanced dedup handles it per-scene
     video_av_fuse: true
+    # Reference-faithful pipeline (NVIDIA blog + /home/edwardk/git/video_retrieval):
+    video_scene_detection: true            # PySceneDetect ContentDetector
+    video_scene_threshold: 30.0
+    video_key_frame_select: true           # SSIM-based key-frame selection within scenes
+    video_key_frame_z_threshold: 2.0
+    video_advanced_dedup: true             # blur + pHash + entropy dedup
+    video_advanced_dedup_blur_threshold: 100.0
+    video_advanced_dedup_similarity_threshold: 5
+    video_advanced_dedup_entropy_gain: 0.1
+    video_frame_text_method: vlm           # Nemotron VLM captions each significant frame
+    video_av_fuse_mode: per_scene          # Blog Method 1 / Reference Approach 1
+    video_av_fuse_scene_visual_max_chars: 800
     recall_required: true
     recall_match_mode: audio_segment
     recall_adapter: none
