@@ -163,11 +163,76 @@ class ASRParams(_ParamsModel):
     segment_audio: bool = False
 
 
+class VideoSceneDetectParams(_ParamsModel):
+    """Scene-boundary detection (PySceneDetect ContentDetector).
+
+    When enabled, ``VideoSplitActor`` partitions extracted frames by scene
+    so downstream key-frame selection and dedup operate per-scene rather
+    than over the whole video.  Disabled by default to preserve the
+    fixed-FPS extraction baseline shipped in PR #1945.
+    """
+
+    enabled: bool = False
+    threshold: float = 30.0
+
+
+class VideoKeyFrameSelectParams(_ParamsModel):
+    """SSIM-based key-frame selection within each scene.
+
+    Computes per-consecutive-pair SSIM between grayscale frames and
+    drops ``z_threshold``-sigma outliers from that distribution as a
+    preprocessing step.  The remaining distribution's mean and standard
+    deviation define the keep threshold: a frame is kept when its
+    SSIM-to-predecessor falls below ``mean − std`` (= visually changed
+    from its predecessor).  The first frame of each scene is always
+    kept.
+    """
+
+    enabled: bool = False
+    z_threshold: float = 2.0
+
+
+class VideoAdvancedDedupParams(_ParamsModel):
+    """Blur + pHash + entropy frame dedup, replacing the dhash adjacent dedup.
+
+    Frames whose Laplacian variance is below ``blur_threshold`` are dropped.
+    Surviving frames are clustered by pHash hamming distance
+    (``similarity_threshold``); within each cluster only frames whose
+    entropy gain exceeds ``entropy_gain_threshold`` over the previous
+    kept frame survive.
+    """
+
+    enabled: bool = False
+    blur_threshold: float = 100.0
+    similarity_threshold: int = 5
+    entropy_gain_threshold: float = 0.1
+
+
+class VideoFrameVLMParams(_ParamsModel):
+    """Per-frame VLM captioning configuration (alternative to ``VideoFrameOCRActor``).
+
+    The graph wires :class:`~nemo_retriever.video.VideoFrameVLMCaptioner`
+    instead of :class:`~nemo_retriever.video.VideoFrameOCRActor` whenever
+    ``VideoFrameParams.frame_text_method == "vlm"``.  This class only
+    holds VLM connection / prompt config; it does not have its own enable
+    flag — set ``frame_text_method`` to opt in.  Reuses the local
+    Nemotron VLM and remote NIM clients used by
+    :class:`~nemo_retriever.caption.CaptionActor`.
+    """
+
+    endpoint_url: Optional[str] = None
+    api_key: Optional[str] = None
+    model_name: str = "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16"
+    prompt: str = "Transcribe this image, word to word."
+    temperature: float = 0.0
+    max_tokens: int = 1024
+
+
 class VideoFrameParams(_ParamsModel):
     """Params for video frame extraction (ffmpeg fps + perceptual-hash dedup).
 
     Set ``enabled=False`` to skip frame extraction entirely; the video
-    pipeline then produces only audio (ASR) rows — no frame OCR, no
+    pipeline then produces only audio (ASR) rows — no frame OCR/VLM, no
     audio+visual fusion. Useful for ablating the visual modality or for
     audio-only recall benchmarks against video corpora.
 
@@ -178,6 +243,12 @@ class VideoFrameParams(_ParamsModel):
     for MD5 — a near-10x cut in OCR cost on slide content. Tune
     ``dedup_max_hamming_distance`` upward for more aggressive merging or
     down to 0 to require exact perceptual-hash matches.
+
+    Five new sub-toggles (all default False/"ocr") add the
+    reference-faithful extensions: scene boundary detection, SSIM
+    key-frame selection, blur+pHash+entropy dedup, VLM captioning, and
+    the OCR-vs-VLM selector.  They compose; flipping any one does not
+    require flipping the others.
     """
 
     enabled: bool = True
@@ -186,6 +257,12 @@ class VideoFrameParams(_ParamsModel):
     dedup: bool = True
     dedup_max_hamming_distance: int = 5
     dedup_max_dropped_frames: int = 2
+
+    frame_text_method: Literal["ocr", "vlm", "none"] = "ocr"
+    scene_detection: VideoSceneDetectParams = Field(default_factory=VideoSceneDetectParams)
+    key_frame_selection: VideoKeyFrameSelectParams = Field(default_factory=VideoKeyFrameSelectParams)
+    advanced_dedup: VideoAdvancedDedupParams = Field(default_factory=VideoAdvancedDedupParams)
+    vlm: VideoFrameVLMParams = Field(default_factory=VideoFrameVLMParams)
 
 
 class VideoFrameTextDedupParams(_ParamsModel):
@@ -210,9 +287,26 @@ class VideoFrameTextDedupParams(_ParamsModel):
 
 
 class AudioVisualFuseParams(_ParamsModel):
-    """Toggle for :class:`~nemo_retriever.video.AudioVisualFuser`."""
+    """Modes for :class:`~nemo_retriever.video.AudioVisualFuser`.
+
+    ``per_utterance`` (default) is the existing window-overlap fuser:
+    each ASR row gets one best-matching frame.  ``per_scene`` requires
+    scene metadata (set ``VideoFrameParams.scene_detection.enabled=True``)
+    and emits one fused row per ``(source_path, scene_id)``.
+    ``per_sentence`` requires ASR with ``segment_audio=True`` and emits
+    one fused row per audio sentence with all overlapping frames.
+
+    Visual-text caps differ per mode:
+    * ``per_utterance``: 100 chars (hardcoded in fuser, established baseline)
+    * ``per_scene``: ``scene_visual_max_chars`` (default 800)
+    * ``per_sentence``: per-frame cap then total cap (defaults 100 / 400)
+    """
 
     enabled: bool = True
+    mode: Literal["per_utterance", "per_scene", "per_sentence"] = "per_utterance"
+    scene_visual_max_chars: int = 800
+    per_sentence_per_frame_max_chars: int = 100
+    per_sentence_total_visual_max_chars: int = 400
 
 
 class LanceDbParams(_ParamsModel):

@@ -53,8 +53,12 @@ from nemo_retriever.params import (
     ExtractParams,
     StoreParams,
     TextChunkParams,
+    VideoAdvancedDedupParams,
     VideoFrameParams,
     VideoFrameTextDedupParams,
+    VideoFrameVLMParams,
+    VideoKeyFrameSelectParams,
+    VideoSceneDetectParams,
 )
 from nemo_retriever.params.models import BatchTuningParams
 from nemo_retriever.utils.input_files import resolve_input_patterns
@@ -394,6 +398,21 @@ def _build_ingestor(
     video_frame_text_dedup: bool,
     video_frame_text_dedup_max_dropped_frames: int,
     video_av_fuse: bool,
+    video_frame_text_method: str = "ocr",
+    video_scene_detection: bool = False,
+    video_scene_threshold: float = 30.0,
+    video_key_frame_select: bool = False,
+    video_key_frame_z_threshold: float = 2.0,
+    video_advanced_dedup: bool = False,
+    video_advanced_dedup_blur_threshold: float = 100.0,
+    video_advanced_dedup_similarity_threshold: int = 5,
+    video_advanced_dedup_entropy_gain: float = 0.1,
+    video_vlm_endpoint_url: Optional[str] = None,
+    video_vlm_api_key: Optional[str] = None,
+    video_vlm_model_name: str = "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16",
+    video_vlm_prompt: str = "Transcribe this image, word to word.",
+    video_av_fuse_mode: str = "per_utterance",
+    video_av_fuse_scene_visual_max_chars: int = 800,
 ) -> GraphIngestor:
     """Construct a :class:`GraphIngestor` with all requested stages attached."""
 
@@ -434,12 +453,37 @@ def _build_ingestor(
                 enabled=bool(video_extract_frames),
                 fps=float(video_frame_fps),
                 dedup=bool(video_frame_dedup),
+                frame_text_method=str(video_frame_text_method),
+                scene_detection=VideoSceneDetectParams(
+                    enabled=bool(video_scene_detection),
+                    threshold=float(video_scene_threshold),
+                ),
+                key_frame_selection=VideoKeyFrameSelectParams(
+                    enabled=bool(video_key_frame_select),
+                    z_threshold=float(video_key_frame_z_threshold),
+                ),
+                advanced_dedup=VideoAdvancedDedupParams(
+                    enabled=bool(video_advanced_dedup),
+                    blur_threshold=float(video_advanced_dedup_blur_threshold),
+                    similarity_threshold=int(video_advanced_dedup_similarity_threshold),
+                    entropy_gain_threshold=float(video_advanced_dedup_entropy_gain),
+                ),
+                vlm=VideoFrameVLMParams(
+                    endpoint_url=video_vlm_endpoint_url,
+                    api_key=video_vlm_api_key,
+                    model_name=str(video_vlm_model_name),
+                    prompt=str(video_vlm_prompt),
+                ),
             ),
             video_text_dedup_params=VideoFrameTextDedupParams(
                 enabled=bool(video_frame_text_dedup),
                 max_dropped_frames=int(video_frame_text_dedup_max_dropped_frames),
             ),
-            av_fuse_params=AudioVisualFuseParams(enabled=bool(video_av_fuse)),
+            av_fuse_params=AudioVisualFuseParams(
+                enabled=bool(video_av_fuse),
+                mode=str(video_av_fuse_mode),
+                scene_visual_max_chars=int(video_av_fuse_scene_visual_max_chars),
+            ),
             extract_params=extract_params,
         )
     else:
@@ -877,6 +921,96 @@ def run(
         help="Emit fused per-utterance rows (audio transcript + concurrent OCR).",
         rich_help_panel=_PANEL_VIDEO,
     ),
+    video_frame_text_method: str = typer.Option(
+        "ocr",
+        "--video-frame-text-method",
+        help="Frame text source: ocr | vlm | none.",
+        rich_help_panel=_PANEL_VIDEO,
+    ),
+    video_scene_detection: bool = typer.Option(
+        False,
+        "--video-scene-detection/--no-video-scene-detection",
+        help="Enable PySceneDetect scene boundaries.",
+        rich_help_panel=_PANEL_VIDEO,
+    ),
+    video_scene_threshold: float = typer.Option(
+        30.0,
+        "--video-scene-threshold",
+        help="PySceneDetect ContentDetector threshold; lower = more shots detected.",
+        rich_help_panel=_PANEL_VIDEO,
+    ),
+    video_key_frame_select: bool = typer.Option(
+        False,
+        "--video-key-frame-select/--no-video-key-frame-select",
+        help="Within each scene, keep only frames whose SSIM to predecessor falls below mean - std.",
+        rich_help_panel=_PANEL_VIDEO,
+    ),
+    video_key_frame_z_threshold: float = typer.Option(
+        2.0,
+        "--video-key-frame-z-threshold",
+        help="Z-score outlier rejection on the SSIM distribution before computing the keep threshold.",
+        rich_help_panel=_PANEL_VIDEO,
+    ),
+    video_advanced_dedup: bool = typer.Option(
+        False,
+        "--video-advanced-dedup/--no-video-advanced-dedup",
+        help="Enable blur + pHash + entropy frame dedup (replaces dhash adjacent dedup when scene_detection is on).",
+        rich_help_panel=_PANEL_VIDEO,
+    ),
+    video_advanced_dedup_blur_threshold: float = typer.Option(
+        100.0,
+        "--video-advanced-dedup-blur-threshold",
+        help="Frames with Laplacian variance below this are dropped as blurry.",
+        rich_help_panel=_PANEL_VIDEO,
+    ),
+    video_advanced_dedup_similarity_threshold: int = typer.Option(
+        5,
+        "--video-advanced-dedup-similarity-threshold",
+        help="pHash hamming distance for clustering near-duplicate frames.",
+        rich_help_panel=_PANEL_VIDEO,
+    ),
+    video_advanced_dedup_entropy_gain: float = typer.Option(
+        0.1,
+        "--video-advanced-dedup-entropy-gain",
+        help="Within a pHash cluster, keep a frame only if its entropy gain over the previous kept frame exceeds this.",
+        rich_help_panel=_PANEL_VIDEO,
+    ),
+    video_vlm_endpoint_url: Optional[str] = typer.Option(
+        None,
+        "--video-vlm-endpoint-url",
+        help="Remote VLM (NIM) endpoint URL.  When unset, the local Nemotron VLM runs on GPU.",
+        rich_help_panel=_PANEL_VIDEO,
+    ),
+    video_vlm_api_key: Optional[str] = typer.Option(
+        None,
+        "--video-vlm-api-key",
+        envvar="NVIDIA_API_KEY",
+        rich_help_panel=_PANEL_VIDEO,
+    ),
+    video_vlm_model_name: str = typer.Option(
+        "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16",
+        "--video-vlm-model-name",
+        help="VLM model name; passed to NemotronVLMCaptioner (local) or NIM (remote).",
+        rich_help_panel=_PANEL_VIDEO,
+    ),
+    video_vlm_prompt: str = typer.Option(
+        "Transcribe this image, word to word.",
+        "--video-vlm-prompt",
+        help="Prompt sent to the VLM for each frame.  Default mirrors the reference implementation.",
+        rich_help_panel=_PANEL_VIDEO,
+    ),
+    video_av_fuse_mode: str = typer.Option(
+        "per_utterance",
+        "--video-av-fuse-mode",
+        help="per_utterance | per_scene | per_sentence.",
+        rich_help_panel=_PANEL_VIDEO,
+    ),
+    video_av_fuse_scene_visual_max_chars: int = typer.Option(
+        800,
+        "--video-av-fuse-scene-visual-max-chars",
+        help="Cap on the joined visual blob in per_scene mode.",
+        rich_help_panel=_PANEL_VIDEO,
+    ),
     # --- VDB / outputs --------------------------------------------------
     vdb_op: str = typer.Option(
         DEFAULT_VDB_OP,
@@ -1140,6 +1274,21 @@ def run(
             video_frame_text_dedup=video_frame_text_dedup,
             video_frame_text_dedup_max_dropped_frames=video_frame_text_dedup_max_dropped_frames,
             video_av_fuse=video_av_fuse,
+            video_frame_text_method=video_frame_text_method,
+            video_scene_detection=video_scene_detection,
+            video_scene_threshold=video_scene_threshold,
+            video_key_frame_select=video_key_frame_select,
+            video_key_frame_z_threshold=video_key_frame_z_threshold,
+            video_advanced_dedup=video_advanced_dedup,
+            video_advanced_dedup_blur_threshold=video_advanced_dedup_blur_threshold,
+            video_advanced_dedup_similarity_threshold=video_advanced_dedup_similarity_threshold,
+            video_advanced_dedup_entropy_gain=video_advanced_dedup_entropy_gain,
+            video_vlm_endpoint_url=video_vlm_endpoint_url,
+            video_vlm_api_key=video_vlm_api_key,
+            video_vlm_model_name=video_vlm_model_name,
+            video_vlm_prompt=video_vlm_prompt,
+            video_av_fuse_mode=video_av_fuse_mode,
+            video_av_fuse_scene_visual_max_chars=video_av_fuse_scene_visual_max_chars,
         )
 
         # --- Execute ---------------------------------------------------

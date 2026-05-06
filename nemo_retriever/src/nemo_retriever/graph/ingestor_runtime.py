@@ -28,6 +28,7 @@ from nemo_retriever.video import (
     AudioVisualFuser,
     VideoFrameOCRActor,
     VideoFrameTextDedup,
+    VideoFrameVLMCaptioner,
     VideoSplitActor,
 )
 from nemo_retriever.ocr.ocr import resolve_ocr_archetype
@@ -581,13 +582,20 @@ def build_graph(
             audio_enabled and frames_enabled and av_fuse_params is not None and getattr(av_fuse_params, "enabled", True)
         )
 
+        # ``frame_text_method`` selects between OCR (default), VLM
+        # captioning, and a no-op (frames extracted but not transcribed).
+        # ``vlm.enabled`` was dropped in the params refactor, so the
+        # method literal is the sole gate for the VLM path.
+        method = video_frame_params.frame_text_method
+        vlm_params = video_frame_params.vlm
+
         graph = Graph() >> VideoSplitActor(
             audio_chunk_params=audio_chunk_params,
             video_frame_params=video_frame_params,
         )
         if audio_enabled:
             graph = graph >> ASRActor(params=asr_params)
-        if frames_enabled:
+        if frames_enabled and method == "ocr":
             graph = graph >> VideoFrameOCRActor(
                 ocr_invoke_url=getattr(extract_params, "ocr_invoke_url", None),
                 api_key=getattr(extract_params, "ocr_api_key", None) or getattr(extract_params, "api_key", None),
@@ -598,6 +606,10 @@ def build_graph(
                     or 120.0
                 ),
             )
+        elif frames_enabled and method == "vlm":
+            graph = graph >> VideoFrameVLMCaptioner(params=vlm_params)
+        # else: method == "none" — neither OCR nor VLM is wired; frames pass through unlabelled.
+
         if text_dedup_enabled:
             graph = graph >> VideoFrameTextDedup(params=video_text_dedup_params)
         if fuse_enabled:

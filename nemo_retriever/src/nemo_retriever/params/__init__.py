@@ -32,8 +32,12 @@ from .models import TabularExtractParams
 from .models import TableParams
 from .models import TextChunkParams
 from .models import VdbUploadParams
+from .models import VideoAdvancedDedupParams
 from .models import VideoFrameParams
 from .models import VideoFrameTextDedupParams
+from .models import VideoFrameVLMParams
+from .models import VideoKeyFrameSelectParams
+from .models import VideoSceneDetectParams
 from .models import WebhookParams
 
 __all__ = [
@@ -67,7 +71,11 @@ __all__ = [
     "TableParams",
     "TextChunkParams",
     "VdbUploadParams",
+    "VideoAdvancedDedupParams",
     "VideoFrameParams",
     "VideoFrameTextDedupParams",
+    "VideoFrameVLMParams",
+    "VideoKeyFrameSelectParams",
+    "VideoSceneDetectParams",
     "WebhookParams",
 ]

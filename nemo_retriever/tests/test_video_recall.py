@@ -104,3 +104,36 @@ def test_hit_with_different_media_id_is_a_miss() -> None:
         k=5,
         match_mode="audio_segment",
     )
+
+
+def test_per_scene_fused_rows_match_audio_segment_recall() -> None:
+    """A per_scene fused row whose scene window covers a GT span matches under audio_segment mode."""
+    media = "video_b"
+    gold_start, gold_end = 30.0, 40.0
+    gold_key = f"{media}\t{gold_start}\t{gold_end}"
+
+    scene_hit = _make_hit(media, 28.0, 45.0)  # scene window covers GT
+    encoded = _hit_to_audio_segment_key(scene_hit)
+    assert encoded is not None
+    assert is_hit_at_k(
+        golden_key=gold_key,
+        retrieved=[encoded],
+        k=1,
+        match_mode="audio_segment",
+    )
+
+
+def test_vlm_caption_text_treated_same_as_ocr_text_for_recall() -> None:
+    """VLM-text frame rows surface in retrieval the same way OCR rows do."""
+    media = "video_b"
+    gold_key = f"{media}\t30.0\t40.0"
+
+    vlm_hit = _make_hit(media, 35.0, 36.0)
+    encoded = _hit_to_audio_segment_key(vlm_hit)
+    assert encoded is not None
+    assert is_hit_at_k(
+        golden_key=gold_key,
+        retrieved=[encoded],
+        k=1,
+        match_mode="audio_segment",
+    )

@@ -106,7 +106,27 @@ class VideoSplitActor(AbstractOperator, CPUOperator):
         if not rows:
             return pd.DataFrame()
         out = pd.DataFrame(rows)
-        if self._video_frame_params.dedup and "_content_type" in out.columns:
+        if self._video_frame_params.dedup and self._video_frame_params.scene_detection.enabled:
+            advanced_active = (
+                self._video_frame_params.advanced_dedup.enabled
+                or self._video_frame_params.key_frame_selection.enabled
+            )
+            if advanced_active:
+                logger.debug(
+                    "scene_detection.enabled=True overrides legacy dhash dedup; "
+                    "advanced_dedup / SSIM key-frame select handle dedup per-scene."
+                )
+            else:
+                logger.warning(
+                    "scene_detection.enabled=True with no key_frame_selection / advanced_dedup: "
+                    "legacy dhash dedup is disabled and no replacement is active; "
+                    "frames are kept un-deduped."
+                )
+        legacy_dedup_active = (
+            self._video_frame_params.dedup
+            and not self._video_frame_params.scene_detection.enabled
+        )
+        if legacy_dedup_active and "_content_type" in out.columns:
             frame_mask = out["_content_type"] == _CT.VIDEO_FRAME
             if frame_mask.any():
                 deduped_frames = dedup_video_frames(

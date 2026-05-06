@@ -102,13 +102,18 @@ local = [
   "flashinfer-python==0.6.4; sys_platform == 'linux'",
 ]
 
-# ── Multimedia — audio/ASR and SVG rendering ────────────────────────────────
+# ── Multimedia — audio/ASR, SVG rendering, video frame analysis ─────────────
 # soundfile + scipy enable local Parakeet ASR on audio/video content.
 # cairosvg enables SVG-to-image rendering (requires libcairo system library).
+# scenedetect, scikit-image, imagehash power scene-aware frame selection,
+# SSIM key-frame filtering, and pHash dedup in the video pipeline.
 multimedia = [
   "soundfile>=0.12.0",
   "scipy>=1.11.0",
   "cairosvg>=2.7.0",
+  "scenedetect-headless>=0.7",
+  "scikit-image>=0.24.0",
+  "imagehash>=4.3.1",
 ]
 
 # ── Independent extras ───────────────────────────────────────────────────────

@@ -15,7 +15,7 @@ import base64
 import io
 import logging
 import tempfile
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 import pandas as pd
 
@@ -105,7 +105,7 @@ class VideoFrameActor(AbstractOperator, CPUOperator):
         return data
 
 
-def _extract_one(source_path: str, params: VideoFrameParams, interface: MediaInterface) -> List[Dict[str, Any]]:
+def _extract_one_legacy(source_path: str, params: VideoFrameParams, interface: MediaInterface) -> List[Dict[str, Any]]:
     """Extract frames from one video file and return a list of row dicts."""
     fps = float(params.fps)
     half_window = 0.5 / fps
@@ -154,6 +154,136 @@ def _extract_one(source_path: str, params: VideoFrameParams, interface: MediaInt
                 }
             )
         return rows
+
+
+def _extract_one(source_path: str, params: VideoFrameParams, interface: MediaInterface) -> List[Dict[str, Any]]:
+    """Route to scene-aware extraction when ``params.scene_detection.enabled``."""
+    if params.scene_detection.enabled:
+        return _scene_aware_extract(source_path, params, interface)
+    return _extract_one_legacy(source_path, params, interface)
+
+
+def _attach_scene_metadata(
+    rows: List[Dict[str, Any]],
+    scenes: Sequence[tuple[float, float]],
+) -> List[Dict[str, Any]]:
+    """Stamp ``scene_id`` / ``scene_start_seconds`` / ``scene_end_seconds`` onto each row."""
+    from nemo_retriever.video.scene_detection import assign_scene_ids
+
+    timestamps = [
+        float((r.get("metadata") or {}).get("frame_timestamp_seconds") or 0.0) for r in rows
+    ]
+    labels = assign_scene_ids(timestamps, scenes)
+    for row, (scene_id, s_start, s_end) in zip(rows, labels):
+        md = row.get("metadata") or {}
+        md["scene_id"] = int(scene_id)
+        md["scene_start_seconds"] = float(s_start)
+        md["scene_end_seconds"] = float(s_end)
+        row["metadata"] = md
+    return rows
+
+
+def _filter_indices(rows: List[Dict[str, Any]], keep: Sequence[int]) -> List[Dict[str, Any]]:
+    keep_set = {int(i) for i in keep}
+    return [r for i, r in enumerate(rows) if i in keep_set]
+
+
+def _scene_aware_extract(
+    source_path: str,
+    params: VideoFrameParams,
+    interface: MediaInterface,
+) -> List[Dict[str, Any]]:
+    """Run scene-aware frame extraction with optional SSIM and advanced dedup.
+
+    Strategy: extract all frames once at ``params.fps`` (matching the
+    legacy path), label each with its scene_id from PySceneDetect, then
+    apply SSIM key-frame select and advanced dedup *per-scene* before
+    merging the surviving rows.  This avoids modifying ``MediaInterface``
+    to support time-bounded extraction.
+    """
+    from nemo_retriever.video.advanced_dedup import advanced_dedup_indices
+    from nemo_retriever.video.key_frame_select import select_key_frame_indices
+    from nemo_retriever.video.scene_detection import detect_scenes
+
+    raw_rows = _extract_one_legacy(source_path, params, interface)
+    if not raw_rows:
+        return raw_rows
+
+    try:
+        scenes = detect_scenes(source_path, threshold=params.scene_detection.threshold)
+    except Exception:
+        logger.warning(
+            "Scene detection failed for %s; falling back to single scene",
+            source_path,
+            exc_info=True,
+        )
+        max_ts = max(
+            float((r.get("metadata") or {}).get("frame_timestamp_seconds") or 0.0)
+            for r in raw_rows
+        )
+        scenes = [(0.0, max_ts + 1.0)]
+    assert scenes, "detect_scenes must return at least one scene; see scene_detection.detect_scenes fallback"
+
+    rows = _attach_scene_metadata(list(raw_rows), scenes)
+
+    by_scene: Dict[int, List[int]] = {}
+    for i, row in enumerate(rows):
+        scene_id = int((row.get("metadata") or {}).get("scene_id") or 0)
+        by_scene.setdefault(scene_id, []).append(i)
+
+    keep_indices: List[int] = []
+    for scene_id in sorted(by_scene.keys()):
+        scene_idxs = by_scene[scene_id]
+        scene_b64 = [rows[i].get("image_b64") or "" for i in scene_idxs]
+
+        if params.key_frame_selection.enabled and len(scene_idxs) > 1:
+            try:
+                local = select_key_frame_indices(
+                    scene_b64,
+                    z_threshold=params.key_frame_selection.z_threshold,
+                )
+            except Exception:
+                logger.warning(
+                    "SSIM key-frame select failed; keeping all in scene %d",
+                    scene_id,
+                    exc_info=True,
+                )
+                local = list(range(len(scene_idxs)))
+            scene_idxs = [scene_idxs[i] for i in local]
+            scene_b64 = [rows[i].get("image_b64") or "" for i in scene_idxs]
+
+        if params.advanced_dedup.enabled and scene_idxs:
+            try:
+                local = advanced_dedup_indices(
+                    scene_b64,
+                    blur_threshold=params.advanced_dedup.blur_threshold,
+                    similarity_threshold=params.advanced_dedup.similarity_threshold,
+                    entropy_gain_threshold=params.advanced_dedup.entropy_gain_threshold,
+                )
+            except Exception:
+                logger.warning(
+                    "Advanced dedup failed; keeping all in scene %d",
+                    scene_id,
+                    exc_info=True,
+                )
+                local = list(range(len(scene_idxs)))
+            scene_idxs = [scene_idxs[i] for i in local]
+
+        # All-blurry-scene fallback: if filtering emptied the scene
+        # (e.g. solid title cards or black leader pass blur threshold),
+        # keep the first raw frame from that scene so retrieval still
+        # has at least one row anchored to its time window.
+        if not scene_idxs and by_scene[scene_id]:
+            scene_idxs = [by_scene[scene_id][0]]
+            logger.debug(
+                "All frames filtered out in scene %d; keeping first raw frame as fallback",
+                scene_id,
+            )
+
+        keep_indices.extend(scene_idxs)
+
+    keep_indices.sort()
+    return _filter_indices(rows, keep_indices)
 
 
 def _dhash(image_b64: str, hash_size: int = 8) -> Optional[int]:

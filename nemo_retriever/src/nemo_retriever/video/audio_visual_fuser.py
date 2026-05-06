@@ -2,20 +2,34 @@
 # All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""
-AudioVisualFuser: emit per-utterance ``audio_visual`` rows that combine
-audio transcript text with concurrent video frame OCR text.
+"""AudioVisualFuser: combine ASR rows and frame OCR/VLM rows into ``audio_visual`` rows.
 
-Each ASR utterance is paired with the single concurrent frame whose
-window is most centred on the utterance (tiebreak: longer OCR), and the
-fused text is rendered as ``"[AUDIO] <audio> | [VISUAL] <visual>"`` with
-the visual portion capped at :data:`FRAME_TEXT_MAX_CHARS`. The source
-audio row is dropped whenever a fused row was produced for its window
-so retrieval doesn't see two near-identical embeddings (audio-only and
-audio+visual) for the same utterance; audio rows whose window has no
-concurrent frame are preserved. ``video_frame`` rows are consumed by
-the fusion and not passed through downstream — every visual moment that
-mattered is already represented inside an ``audio_visual`` row.
+Three modes via :attr:`AudioVisualFuseParams.mode`:
+
+- ``per_utterance`` (default): each ASR utterance pairs with the single
+  most-overlapping concurrent frame; output is
+  ``"[AUDIO] <audio> | [VISUAL] <visual>"`` with the visual portion capped at
+  :data:`FRAME_TEXT_MAX_CHARS`. The source audio row is dropped whenever a
+  fused row was produced for its window so retrieval doesn't see two
+  near-identical embeddings (audio-only and audio+visual) for the same
+  utterance; audio rows whose window has no concurrent frame are preserved.
+
+- ``per_scene``: one fused row per ``(source_path, scene_id)``; all audio
+  rows whose window intersects the scene window plus all frame texts in
+  the scene are concatenated. Visual content is capped at
+  :attr:`AudioVisualFuseParams.scene_visual_max_chars` (default 800).
+  Requires :attr:`VideoFrameParams.scene_detection.enabled` so frames
+  carry a ``scene_id``; missing metadata raises ``ValueError``.
+
+- ``per_sentence``: one fused row per ASR sentence with all overlapping
+  frame texts concatenated. Requires ASR was run with
+  ``segment_audio=True`` (the audio rows must carry ``segment_count``
+  metadata). Emits one fused row per sentence with all overlapping frame
+  texts concatenated (per-frame cap then total cap).
+
+In all modes, ``video_frame`` rows are consumed by the fusion and not
+passed through downstream — every visual moment that mattered is already
+represented inside an ``audio_visual`` row.
 
 Set :attr:`AudioVisualFuseParams.enabled` to ``False`` to skip fusion.
 """
@@ -23,7 +37,7 @@ Set :attr:`AudioVisualFuseParams.enabled` to ``False`` to skip fusion.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
@@ -64,6 +78,18 @@ def _row_segment_window(row: Any) -> tuple[float, float] | None:
     except (KeyError, TypeError, ValueError):
         return None
     return start, end
+
+
+def _row_scene_id(row: Any) -> Optional[int]:
+    md = row.get("metadata") if isinstance(row, dict) else getattr(row, "metadata", None)
+    if isinstance(md, dict):
+        sid = md.get("scene_id")
+        if sid is not None:
+            try:
+                return int(sid)
+            except (TypeError, ValueError):
+                return None
+    return None
 
 
 def _keep_upstream(row: Any, fused_window_keys: set[tuple[str, float, float]]) -> bool:
@@ -121,6 +147,14 @@ class AudioVisualFuser(AbstractOperator, CPUOperator):
         if not isinstance(batch_df, pd.DataFrame) or batch_df.empty:
             return batch_df
 
+        mode = self._params.mode
+        if mode == "per_scene":
+            return self._process_per_scene(batch_df)
+        if mode == "per_sentence":
+            return self._process_per_sentence(batch_df)
+        return self._process_per_utterance(batch_df)
+
+    def _process_per_utterance(self, batch_df: pd.DataFrame) -> pd.DataFrame:
         # Bucket frame rows by source_path so we can self-join cheaply.
         # Each entry is (frame_start_seconds, frame_end_seconds, text). Storing
         # the window (rather than the midpoint timestamp) means dedup-merged
@@ -213,6 +247,186 @@ class AudioVisualFuser(AbstractOperator, CPUOperator):
             pd.DataFrame(fused_rows),
             _filter_upstream(batch_df, fused_window_keys),
         )
+
+    def _process_per_scene(self, batch_df: pd.DataFrame) -> pd.DataFrame:
+        """One fused row per (source_path, scene_id), audio+visual concatenated."""
+        from collections import defaultdict
+
+        if "_content_type" not in batch_df.columns:
+            return batch_df
+
+        is_frame = batch_df["_content_type"].astype(str) == _CT.VIDEO_FRAME
+        is_audio = batch_df["_content_type"].astype(str) == _CT.AUDIO
+
+        if is_frame.any():
+            for _, row in batch_df[is_frame].iterrows():
+                if _row_scene_id(row) is None:
+                    raise ValueError(
+                        "per_scene mode requires scene_id on frame rows; "
+                        "enable VideoFrameParams.scene_detection.enabled."
+                    )
+
+        cap = int(self._params.scene_visual_max_chars)
+
+        frames_by_scene: dict[tuple[str, int], list[tuple[float, float, str]]] = defaultdict(list)
+        scene_windows: dict[tuple[str, int], tuple[float, float]] = {}
+        for _, row in batch_df[is_frame].iterrows():
+            md = row.get("metadata") or {}
+            source = str(row.get("source_path") or "")
+            scene_id = int(md.get("scene_id"))
+            text = str(row.get("text") or "").strip()
+            window = _row_segment_window(row)
+            if window is None or not text:
+                continue
+            frames_by_scene[(source, scene_id)].append((window[0], window[1], text))
+            f_scene_start = (
+                window[0]
+                if md.get("scene_start_seconds") is None
+                else float(md["scene_start_seconds"])
+            )
+            f_scene_end = (
+                window[1]
+                if md.get("scene_end_seconds") is None
+                else float(md["scene_end_seconds"])
+            )
+            existing = scene_windows.get((source, scene_id))
+            if existing is None:
+                scene_windows[(source, scene_id)] = (f_scene_start, f_scene_end)
+            else:
+                scene_windows[(source, scene_id)] = (
+                    min(existing[0], f_scene_start),
+                    max(existing[1], f_scene_end),
+                )
+
+        fused_rows: list[dict[str, Any]] = []
+        consumed_audio_keys: set[tuple[str, float, float]] = set()
+        for (source, scene_id), entries in frames_by_scene.items():
+            scene_start, scene_end = scene_windows[(source, scene_id)]
+            audio_texts: list[tuple[float, str]] = []
+            for _, row in batch_df[is_audio].iterrows():
+                if str(row.get("source_path") or "") != source:
+                    continue
+                window = _row_segment_window(row)
+                if window is None:
+                    continue
+                if max(window[0], scene_start) <= min(window[1], scene_end):
+                    text = str(row.get("text") or "").strip()
+                    if text:
+                        audio_texts.append((window[0], text))
+                        consumed_audio_keys.add((source, float(window[0]), float(window[1])))
+            if not audio_texts:
+                continue
+            audio_texts.sort()
+            visual_texts = sorted(entries)
+            audio_blob = " ".join(t for _, t in audio_texts)
+            visual_blob = " | ".join(t for _, _, t in visual_texts)
+            if cap and len(visual_blob) > cap:
+                visual_blob = visual_blob[:cap].rstrip()
+            fused_text = f"[AUDIO] {audio_blob} | [VISUAL] {visual_blob}".strip()
+            fused_rows.append(
+                {
+                    "path": source,
+                    "source_path": source,
+                    "_content_type": _CT.AUDIO_VISUAL,
+                    "text": fused_text,
+                    "metadata": {
+                        "_content_type": _CT.AUDIO_VISUAL,
+                        "modality": _CT.AUDIO_VISUAL,
+                        "segment_start_seconds": float(scene_start),
+                        "segment_end_seconds": float(scene_end),
+                        "scene_id": int(scene_id),
+                        "fusion_mode": "per_scene",
+                    },
+                }
+            )
+
+        kept = _filter_upstream(batch_df, consumed_audio_keys)
+        if not fused_rows:
+            return kept
+        return concat_with_passthrough(pd.DataFrame(fused_rows), kept)
+
+    def _process_per_sentence(self, batch_df: pd.DataFrame) -> pd.DataFrame:
+        """One fused row per ASR sentence; all overlapping frames concatenated.
+
+        Operates on rows produced by ``MediaASRActor`` with
+        ``segment_audio=True``: each audio row is then a punctuation-bounded
+        sentence carrying ``segment_count`` in its metadata.  Absence of
+        the marker raises ``ValueError`` so misconfiguration fails loudly.
+        """
+        if "_content_type" not in batch_df.columns:
+            return batch_df
+
+        is_audio = batch_df["_content_type"].astype(str) == _CT.AUDIO
+        is_frame = batch_df["_content_type"].astype(str) == _CT.VIDEO_FRAME
+
+        for _, arow in batch_df[is_audio].iterrows():
+            amd = arow.get("metadata") or {}
+            if not isinstance(amd, dict) or amd.get("segment_count") is None:
+                raise ValueError(
+                    "per_sentence mode requires asr_params.segment_audio=True; "
+                    "audio rows lack segment_count metadata."
+                )
+
+        per_frame_cap = int(self._params.per_sentence_per_frame_max_chars)
+        total_cap = int(self._params.per_sentence_total_visual_max_chars)
+
+        # Bucket frame entries by source_path: (window_start, window_end, text).
+        frames_by_source: dict[str, list[tuple[float, float, str]]] = {}
+        for _, row in batch_df[is_frame].iterrows():
+            window = _row_segment_window(row)
+            text = str(row.get("text") or "").strip()
+            source = str(row.get("source_path") or "")
+            if window is None or not text or not source:
+                continue
+            frames_by_source.setdefault(source, []).append((window[0], window[1], text))
+
+        fused_rows: list[dict[str, Any]] = []
+        consumed_audio_keys: set[tuple[str, float, float]] = set()
+        for _, row in batch_df[is_audio].iterrows():
+            window = _row_segment_window(row)
+            source = str(row.get("source_path") or "")
+            audio_text = str(row.get("text") or "").strip()
+            if window is None or not source or not audio_text:
+                continue
+            u_start, u_end = window
+            entries = frames_by_source.get(source, [])
+            overlapping = sorted(
+                (e for e in entries if max(u_start, e[0]) <= min(u_end, e[1])),
+                key=lambda e: e[0],
+            )
+            if not overlapping:
+                continue
+            visual_pieces: list[str] = []
+            for _, _, t in overlapping:
+                clipped = t if len(t) <= per_frame_cap else t[:per_frame_cap].rstrip()
+                visual_pieces.append(clipped)
+            visual_blob = " | ".join(visual_pieces)
+            if total_cap and len(visual_blob) > total_cap:
+                visual_blob = visual_blob[:total_cap].rstrip()
+            fused_text = f"[AUDIO] {audio_text} | [VISUAL] {visual_blob}".strip()
+            md = dict(row.get("metadata") or {})
+            md.update(
+                {
+                    "_content_type": _CT.AUDIO_VISUAL,
+                    "modality": _CT.AUDIO_VISUAL,
+                    "fusion_mode": "per_sentence",
+                }
+            )
+            consumed_audio_keys.add((source, float(u_start), float(u_end)))
+            fused_rows.append(
+                {
+                    "path": row.get("path"),
+                    "source_path": source,
+                    "_content_type": _CT.AUDIO_VISUAL,
+                    "text": fused_text,
+                    "metadata": md,
+                }
+            )
+
+        kept = _filter_upstream(batch_df, consumed_audio_keys)
+        if not fused_rows:
+            return kept
+        return concat_with_passthrough(pd.DataFrame(fused_rows), kept)
 
     def postprocess(self, data: Any, **kwargs: Any) -> Any:
         return data
