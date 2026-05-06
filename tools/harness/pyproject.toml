@@ -18,8 +18,10 @@ dependencies = [
     "nemotron-page-elements-v3>=0.dev0",
     "nemotron-graphic-elements-v1>=0.dev0",
     "nemotron-table-structure-v1>=0.dev0",
-    # Stay on the 1.0.2 OCR dev train and exclude older PyPI finals.
+    # Stay on the 1.0.2 OCR v1 dev train and exclude older PyPI finals.
     "nemotron-ocr>=1.0.2.dev0,<1.0.2a0",
+    # Stay on the 2.0.0 OCR v2 dev train and exclude older PyPI finals.
+    "nemotron-ocr-v2>=2.0.0.dev0,<2.0.0a0",
 ]
 
 [project.scripts]
@@ -41,6 +43,7 @@ nemotron-page-elements-v3 = { index = "test-pypi" }
 nemotron-graphic-elements-v1 = { index = "test-pypi" }
 nemotron-table-structure-v1 = { index = "test-pypi" }
 nemotron-ocr = { index = "test-pypi" }
+nemotron-ocr-v2 = { index = "test-pypi" }
 
 [[tool.uv.index]]
 name = "test-pypi"
