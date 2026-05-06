@@ -21,6 +21,7 @@ from nemo_retriever.utils.ray_resource_hueristics import (
     gather_cluster_resources,
     gather_local_resources,
     NEMOTRON_PARSE_BATCH_SIZE,
+    VLM_CAPTION_BATCH_SIZE,
     VLLM_GPUS_PER_ACTOR,
     OCR_GPUS_PER_ACTOR,
 )
@@ -290,11 +291,16 @@ class RayDataExecutor(AbstractExecutor):
             # (continuous batching), so feed them more rows per map_batches call.
             from nemo_retriever.parse.nemotron_parse import NemotronParseActor, NemotronParseGPUActor
             from nemo_retriever.caption.caption import CaptionGPUActor
+            from nemo_retriever.video.vlm_captioner import VideoFrameVLMCaptioner, VideoFrameVLMCaptionerGPUActor
 
-            if batch_size == self._default_batch_size and issubclass(
-                node.operator_class, (NemotronParseActor, NemotronParseGPUActor, CaptionGPUActor)
-            ):
-                batch_size = NEMOTRON_PARSE_BATCH_SIZE
+            if batch_size == self._default_batch_size:
+                if issubclass(node.operator_class, (NemotronParseActor, NemotronParseGPUActor)):
+                    batch_size = NEMOTRON_PARSE_BATCH_SIZE
+                elif issubclass(
+                    node.operator_class,
+                    (CaptionGPUActor, VideoFrameVLMCaptioner, VideoFrameVLMCaptionerGPUActor),
+                ):
+                    batch_size = VLM_CAPTION_BATCH_SIZE
 
             # Self-join operators (AudioVisualFuser, VideoFrameTextDedup) need
             # the entire dataset in one batch — see the repartition site below
@@ -331,8 +337,18 @@ class RayDataExecutor(AbstractExecutor):
                     # manage their own KV-cache and require exclusive GPU access.
                     from nemo_retriever.parse.nemotron_parse import NemotronParseActor, NemotronParseGPUActor
                     from nemo_retriever.caption.caption import CaptionGPUActor
+                    from nemo_retriever.video.vlm_captioner import VideoFrameVLMCaptioner, VideoFrameVLMCaptionerGPUActor
 
-                    if issubclass(node.operator_class, (NemotronParseActor, NemotronParseGPUActor, CaptionGPUActor)):
+                    if issubclass(
+                        node.operator_class,
+                        (
+                            NemotronParseActor,
+                            NemotronParseGPUActor,
+                            CaptionGPUActor,
+                            VideoFrameVLMCaptioner,
+                            VideoFrameVLMCaptionerGPUActor,
+                        ),
+                    ):
                         num_gpus = max(self._default_num_gpus, VLLM_GPUS_PER_ACTOR)
                     else:
                         num_gpus = max(self._default_num_gpus, _DEFAULT_GPU_OPERATOR_NUM_GPUS)

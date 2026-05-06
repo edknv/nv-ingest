@@ -30,6 +30,7 @@ NEMOTRON_PARSE_MIN_ACTORS = 1  # vLLM manages batching internally; one actor is 
 NEMOTRON_PARSE_MAX_ACTORS = 1  # vLLM manages batching internally; one actor is sufficient.  # noqa: E501
 VLLM_GPUS_PER_ACTOR = 1.0  # vLLM owns the full GPU for KV-cache management and continuous batching.  # noqa: E501
 NEMOTRON_PARSE_BATCH_SIZE = 64  # Ray batch size AND Nemotron Parse inference batch size
+VLM_CAPTION_BATCH_SIZE = 64  # Ray batch size for vLLM-backed VLM captioning actors (CaptionGPUActor, VideoFrameVLMCaptioner)
 
 # OCR Actor constants (PER-GPU)
 OCR_INITIAL_ACTORS = 3  # Hueristic initial num actors per GPU (initial_size of ActorPoolStrategy). Ray starts up this many actors on start-up.  # noqa: E501
