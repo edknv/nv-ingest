@@ -14,20 +14,17 @@ from nemo_retriever.params.utils import resolve_split_params
 
 def test_resolve_split_params_behavior():
     """Single omnibus test: defaults, dict overrides, False off-switch, unknown key validation."""
-    # Defaults: text/html default-ON; pdf/audio/image/video default-OFF.
+    # Chunking is opt-in on every key — None / missing keys resolve to None.
     out = resolve_split_params(None)
-    assert isinstance(out["text"], TextChunkParams)
-    assert isinstance(out["html"], HtmlChunkParams)
-    assert out["audio"] is None
-    assert out["pdf"] is None
-    assert out["image"] is None
-    assert out["video"] is None
+    assert all(out[key] is None for key in ("text", "html", "pdf", "audio", "image", "video"))
 
-    # Dict override flips a default-off key on with custom params.
-    out = resolve_split_params({"pdf": {"max_tokens": 256}, "text": False})
+    # Dict override builds the appropriate chunk-params instance per key.
+    out = resolve_split_params({"pdf": {"max_tokens": 256}, "html": {"max_tokens": 333}, "text": False})
     assert isinstance(out["pdf"], TextChunkParams)
     assert out["pdf"].max_tokens == 256
-    # Explicit False disables a default-on key.
+    assert isinstance(out["html"], HtmlChunkParams)
+    assert out["html"].max_tokens == 333
+    # Explicit False resolves to None (off).
     assert out["text"] is None
 
     # Unknown top-level key raises.

@@ -74,16 +74,10 @@ def test_graph_ingestor_action_methods_materialize_default_params() -> None:
 
 
 def test_extract_unified_defaults() -> None:
-    """`.extract()` defaults: extraction_mode='pdf' and natural-language chunking on."""
+    """`.extract()` defaults: extraction_mode='pdf' and no chunking unless opted in."""
     ingestor = GraphIngestor(run_mode="inprocess").extract()
     assert ingestor._extraction_mode == "pdf"
-    cfg = ingestor._split_config
-    assert isinstance(cfg["text"], TextChunkParams)
-    assert isinstance(cfg["html"], HtmlChunkParams)
-    assert cfg["pdf"] is None
-    assert cfg["audio"] is None
-    assert cfg["image"] is None
-    assert cfg["video"] is None
+    assert all(ingestor._split_config[k] is None for k in ("text", "html", "pdf", "audio", "image", "video"))
 
 
 def test_typed_shortcuts_preserve_legacy_no_default_chunking() -> None:

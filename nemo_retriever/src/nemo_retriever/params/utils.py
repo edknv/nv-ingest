@@ -44,7 +44,6 @@ def build_embed_kwargs(resolved: Any, *, include_batch_tuning: bool = False) -> 
 
 
 SPLIT_CONFIG_VALID_KEYS = frozenset({"text", "html", "pdf", "audio", "image", "video"})
-SPLIT_CONFIG_DEFAULT_ON = frozenset({"text", "html"})
 
 
 def resolve_split_params(
@@ -54,7 +53,9 @@ def resolve_split_params(
 
     Returns a dict keyed by every entry in ``SPLIT_CONFIG_VALID_KEYS``. Each
     value is either a ``TextChunkParams`` / ``HtmlChunkParams`` instance (when
-    chunking is on for that key) or ``None`` (when off).
+    the user enabled chunking for that key) or ``None``. Chunking is opt-in
+    on every key — keys absent from *split_config* (or set to ``None`` /
+    ``False``) resolve to ``None``.
     """
     from nemo_retriever.params.models import HtmlChunkParams, TextChunkParams
 
@@ -67,15 +68,9 @@ def resolve_split_params(
 
     out: dict[str, Any] = {}
     for key in SPLIT_CONFIG_VALID_KEYS:
-        v = cfg.get(key, None)
-        if v is False:
+        v = cfg.get(key)
+        if v is None or v is False:
             out[key] = None
-            continue
-        if v is None:
-            if key in SPLIT_CONFIG_DEFAULT_ON:
-                out[key] = HtmlChunkParams() if key == "html" else TextChunkParams()
-            else:
-                out[key] = None
             continue
         if isinstance(v, dict):
             cls = HtmlChunkParams if key == "html" else TextChunkParams

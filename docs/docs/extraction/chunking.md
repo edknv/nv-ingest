@@ -48,7 +48,7 @@ and splits the document based on the desired maximum chunk size and chunk overla
 We recommend the default tokenizer for token-based splitting. For more information, refer to [Llama tokenizer (default)](#llama-tokenizer).
 You can also use any tokenizer from any HuggingFace model that includes a tokenizer file.
 
-Use `split_config` on the `extract` task to chunk large documents as shown in the following code. Keys are source-type labels (`text`, `html`, `pdf`, `audio`, `image`, `video`); `text` and `html` are chunked by default. Pass `False` to disable a key.
+Use `split_config` on the `extract` task to chunk large documents as shown in the following code. Keys are source-type labels (`text`, `html`, `pdf`, `audio`, `image`, `video`); chunking is opt-in on every key. Pass `False` (or omit a key) to leave that source type unchunked.
 
 !!! note
 

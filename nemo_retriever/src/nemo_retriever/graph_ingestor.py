@@ -188,10 +188,12 @@ class GraphIngestor(ingestor):
 
         Defaults to ``extraction_mode='pdf'``. Pass ``extraction_mode='auto'``
         to dispatch a mixed folder through :class:`MultiTypeExtractOperator`.
+        Chunking is opt-in: pass ``split_config={"<key>": {...}}`` to enable
+        post-extract token chunking for that source type.
         """
         self._extraction_mode = extraction_mode
         self._extract_params = _resolve_api_key(_coerce(params, kwargs, default_factory=ExtractParams))
-        self._split_config = resolve_split_params(split_config)
+        self._apply_split_config(split_config)
         self._record_stage("extract")
         return self
 
