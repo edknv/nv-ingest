@@ -432,13 +432,17 @@ class _MultiTypeExtractBase(AbstractOperator):
     def _effective_chunk_params(self, key: str) -> Any | None:
         """Return the params used for chunking *key*.
 
-        Priority: ``split_config[key]`` if explicitly set; otherwise fall back to
-        the legacy per-extractor param (``text_params`` for ``"text"``,
-        ``html_params`` for ``"html"``). Returns ``None`` when chunking is off.
+        Priority: an explicit ``TextChunkParams`` instance under
+        ``split_config[key]`` wins; otherwise fall back to the legacy
+        per-extractor param (``text_params`` for ``"text"`` /
+        ``html_params`` for ``"html"``). ``split_config[key] is False``
+        and "key absent" both fall through to the legacy fallback —
+        ``text``/``html`` files always need an extractor, so "no
+        chunking" is not a separate state for those keys.
         """
-        from_cfg = self._split_config.get(key)
-        if from_cfg is not None:
-            return from_cfg
+        cfg = self._split_config.get(key)
+        if isinstance(cfg, TextChunkParams):
+            return cfg
         if key == "text":
             return self.text_params
         if key == "html":
@@ -448,7 +452,9 @@ class _MultiTypeExtractBase(AbstractOperator):
     def _maybe_chunk(self, df: Any, key: str) -> Any:
         """Append a TextChunkActor pass when chunking is on for *key*."""
         params = self._split_config.get(key)
-        if params is None or not isinstance(df, pd.DataFrame) or df.empty:
+        if not isinstance(params, TextChunkParams):
+            return df
+        if not isinstance(df, pd.DataFrame) or df.empty:
             return df
         return TextChunkCPUActor(params=params).run(df)
 

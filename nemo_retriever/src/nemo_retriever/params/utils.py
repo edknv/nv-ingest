@@ -52,14 +52,14 @@ def resolve_split_params(
     """Resolve a user-supplied split_config dict into per-key effective params.
 
     Returns a dict keyed by every entry in ``SPLIT_CONFIG_VALID_KEYS``. Each
-    value is either a ``TextChunkParams`` / ``HtmlChunkParams`` instance (when
-    the user enabled chunking for that key) or ``None``. Chunking is opt-in
-    on every key — keys absent from *split_config* (or set to ``None`` /
-    ``False``) resolve to ``None``.
+    value is one of: a ``TextChunkParams`` / ``HtmlChunkParams`` instance
+    (chunking enabled for that key), ``None`` (key absent — chunking off
+    via the default), or ``False`` (explicit opt-out sentinel).
 
-    Per-key values may be a plain dict of chunk-params fields, a pre-built
-    ``TextChunkParams`` / ``HtmlChunkParams`` instance (passed through
-    verbatim), ``None``, or ``False``.
+    Per-key values supplied by the caller may be a plain dict of
+    chunk-params fields, a pre-built ``TextChunkParams`` /
+    ``HtmlChunkParams`` instance (passed through verbatim), ``None``, or
+    ``False``.
     """
     from nemo_retriever.params.models import HtmlChunkParams, TextChunkParams
 
@@ -73,8 +73,11 @@ def resolve_split_params(
     out: dict[str, Any] = {}
     for key in SPLIT_CONFIG_VALID_KEYS:
         v = cfg.get(key)
-        if v is None or v is False:
+        if v is None:
             out[key] = None
+            continue
+        if v is False:
+            out[key] = False  # explicit opt-out (distinct from None / absent)
             continue
         if isinstance(v, TextChunkParams):  # HtmlChunkParams is a TextChunkParams subclass
             out[key] = v

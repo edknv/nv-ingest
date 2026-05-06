@@ -24,8 +24,8 @@ def test_resolve_split_params_behavior():
     assert out["pdf"].max_tokens == 256
     assert isinstance(out["html"], HtmlChunkParams)
     assert out["html"].max_tokens == 333
-    # Explicit False resolves to None (off).
-    assert out["text"] is None
+    # Explicit False is preserved as a sentinel for "off".
+    assert out["text"] is False
 
     # Pre-built params instances pass through verbatim.
     prebuilt = TextChunkParams(max_tokens=512)

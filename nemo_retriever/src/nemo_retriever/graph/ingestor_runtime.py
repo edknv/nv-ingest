@@ -36,7 +36,7 @@ from nemo_retriever.page_elements.page_elements import PageElementDetectionActor
 from nemo_retriever.table.table_detection import TableStructureActor
 from nemo_retriever.pdf.extract import PDFExtractionActor
 from nemo_retriever.pdf.split import PDFSplitActor
-from nemo_retriever.params import resolve_split_params
+from nemo_retriever.params import TextChunkParams, resolve_split_params
 from nemo_retriever.txt.ray_data import TextChunkActor
 from nemo_retriever.utils.convert.to_pdf import DocToPdfConversionActor
 from nemo_retriever.ingest_plans import IngestExecutionPlan
@@ -436,9 +436,12 @@ def _should_build_audio_graph(
 
 
 def _maybe_append_chunk_actor(graph: Graph, split_config: dict[str, Any], key: str) -> Graph:
-    """Append a TextChunkActor to *graph* when split_config[key] requests chunking."""
+    """Append a TextChunkActor to *graph* when split_config[key] requests chunking.
+
+    Skips on both ``None`` (absent) and ``False`` (explicit opt-out).
+    """
     params = split_config.get(key)
-    if params is not None:
+    if isinstance(params, TextChunkParams):
         graph = graph >> TextChunkActor(params)
     return graph
 

@@ -42,13 +42,13 @@ If you want chunks smaller than `page`, use token-based splitting as described i
 
 ## Token-Based Splitting {: #token-based-splitting }
 
-The `split_config` keyword on the `extract` task uses a tokenizer to count the number of tokens in the document,
+The `split_config` keyword on the `extract` task uses a tokenizer to count the number of tokens in the document, 
 and splits the document based on the desired maximum chunk size and chunk overlap.
 
 We recommend the default tokenizer for token-based splitting. For more information, refer to [Llama tokenizer (default)](#llama-tokenizer).
 You can also use any tokenizer from any HuggingFace model that includes a tokenizer file.
 
-Use `split_config` on the `extract` task to chunk large documents as shown in the following code. Keys are source-type labels (`text`, `html`, `pdf`, `audio`, `image`, `video`); chunking is opt-in on every key. Pass `False` (or omit a key) to leave that source type unchunked.
+Use `split_config` to chunk large documents as shown in the following code.
 
 !!! note
 
@@ -56,10 +56,7 @@ Use `split_config` on the `extract` task to chunk large documents as shown in th
 
 ```python
 ingestor = ingestor.extract(
-    split_config={
-        "text": {"max_tokens": 1024, "overlap_tokens": 150},
-        "pdf":  {"max_tokens": 1024, "overlap_tokens": 150},
-    },
+    split_config={"text": {"max_tokens": 1024, "overlap_tokens": 150}}
 )
 ```
 
@@ -67,13 +64,7 @@ To use a different tokenizer, such as `intfloat/e5-large-unsupervised`, set `tok
 
 ```python
 ingestor = ingestor.extract(
-    split_config={
-        "text": {
-            "tokenizer_model_id": "intfloat/e5-large-unsupervised",
-            "max_tokens": 1024,
-            "overlap_tokens": 150,
-        },
-    },
+    split_config={"text": {"tokenizer_model_id": "intfloat/e5-large-unsupervised", "max_tokens": 1024, "overlap_tokens": 150}}
 )
 ```
 
@@ -103,8 +94,6 @@ The following table contains the per-source-type `split_config` parameters.
 | `tokenizer_model_id` | HuggingFace Tokenizer identifier or path. | `meta-llama/Llama-3.2-1B`|
 | `max_tokens` | Maximum number of tokens per chunk.  | `1024` |
 | `overlap_tokens` | Number of tokens to overlap between chunks.  | `0` |
-| `tokenizer_cache_dir` | HuggingFace cache directory. | — |
-| `encoding` | File encoding for `.txt` / `.html` files. | `utf-8` |
 
 ## Related Topics
 
