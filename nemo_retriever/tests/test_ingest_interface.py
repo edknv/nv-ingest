@@ -69,8 +69,36 @@ def test_graph_ingestor_action_methods_materialize_default_params() -> None:
     ingestor.caption()
     assert isinstance(ingestor._caption_params, CaptionParams)
 
-    ingestor.split()
-    assert isinstance(ingestor._split_params, TextChunkParams)
-
     ingestor.embed()
     assert isinstance(ingestor._embed_params, EmbedParams)
+
+
+def test_extract_unified_defaults() -> None:
+    """`.extract()` defaults: extraction_mode='auto' and natural-language chunking on."""
+    ingestor = GraphIngestor(run_mode="inprocess").extract()
+    assert ingestor._extraction_mode == "auto"
+    cfg = ingestor._split_config
+    assert isinstance(cfg["text"], TextChunkParams)
+    assert isinstance(cfg["html"], HtmlChunkParams)
+    assert cfg["pdf"] is None
+    assert cfg["audio"] is None
+    assert cfg["image"] is None
+    assert cfg["video"] is None
+
+
+def test_typed_shortcuts_preserve_legacy_no_default_chunking() -> None:
+    """Typed shortcuts (extract_audio, extract_txt, ...) must NOT enable default
+    split_config chunking. Default-ON is reserved for the unified .extract()
+    path. extract_txt(custom_params) must propagate custom_params via the
+    text_params fallback.
+    """
+    # extract_audio without split_config: no audio chunking.
+    audio_ingestor = GraphIngestor(run_mode="inprocess").extract_audio()
+    assert audio_ingestor._split_config["audio"] is None
+
+    # extract_txt(custom): _split_config["text"] stays None so the operator
+    # falls back to self.text_params (= custom) in _effective_chunk_params.
+    custom = TextChunkParams(max_tokens=512)
+    txt_ingestor = GraphIngestor(run_mode="inprocess").extract_txt(custom)
+    assert txt_ingestor._split_config["text"] is None
+    assert txt_ingestor._text_params is custom
