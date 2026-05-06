@@ -35,6 +35,27 @@ logger = logging.getLogger(__name__)
 _DEFAULT_GPU_OPERATOR_NUM_GPUS = OCR_GPUS_PER_ACTOR
 
 
+def _vllm_actor_classes() -> tuple[type, ...]:
+    """Return the tuple of actor classes that are vLLM-backed.
+
+    Imported lazily so this module doesn't pay the import cost when no
+    pipeline runs.  Used by the executor to bump batch_size and num_gpus
+    for these actors, and to detect "is there a vLLM actor in the graph?"
+    when deciding whether to serialize all GPU stages on a 1-GPU host.
+    """
+    from nemo_retriever.parse.nemotron_parse import NemotronParseActor, NemotronParseGPUActor
+    from nemo_retriever.caption.caption import CaptionGPUActor
+    from nemo_retriever.video.vlm_captioner import VideoFrameVLMCaptioner, VideoFrameVLMCaptionerGPUActor
+
+    return (
+        NemotronParseActor,
+        NemotronParseGPUActor,
+        CaptionGPUActor,
+        VideoFrameVLMCaptioner,
+        VideoFrameVLMCaptionerGPUActor,
+    )
+
+
 class AbstractExecutor(ABC):
     """Base class for pipeline executors.
 
@@ -276,6 +297,25 @@ class RayDataExecutor(AbstractExecutor):
                 expanded.extend(sorted(matches) if matches else [pattern])
             ds = rd.read_binary_files(expanded, include_paths=True)
         nodes = self._linearize(resolved_graph)
+
+        # On a single-GPU host, vLLM-backed actors require exclusive GPU
+        # access (VLLM_GPUS_PER_ACTOR = 1.0).  If any non-vLLM GPU actor
+        # holds a fractional Ray slot at the same time, vLLM stays pending
+        # forever (Ray reserves the fraction even when the actor is idle).
+        # When a vLLM actor is wired into the graph and only one GPU is
+        # available, force every GPU actor to request the full GPU so Ray
+        # serializes the GPU stages instead of deadlocking on contention.
+        vllm_actor_classes = _vllm_actor_classes()
+        graph_has_vllm_actor = any(issubclass(n.operator_class, vllm_actor_classes) for n in nodes)
+        serialize_gpu_stages = graph_has_vllm_actor and available_gpus <= 1
+        if serialize_gpu_stages:
+            logger.info(
+                "Single-GPU host with vLLM actor in graph: forcing all GPU actors to "
+                "num_gpus=%s so Ray serializes GPU stages instead of stalling on "
+                "fractional-allocation contention.",
+                VLLM_GPUS_PER_ACTOR,
+            )
+
         for node in nodes:
             overrides = dict(self._node_overrides.get(node.name, {}))
             target_num_rows_per_block = overrides.pop("target_num_rows_per_block", None)
@@ -289,11 +329,11 @@ class RayDataExecutor(AbstractExecutor):
 
             # vLLM-backed actors handle their own batching efficiently
             # (continuous batching), so feed them more rows per map_batches call.
-            from nemo_retriever.parse.nemotron_parse import NemotronParseActor, NemotronParseGPUActor
-            from nemo_retriever.caption.caption import CaptionGPUActor
-            from nemo_retriever.video.vlm_captioner import VideoFrameVLMCaptioner, VideoFrameVLMCaptionerGPUActor
-
             if batch_size == self._default_batch_size:
+                from nemo_retriever.parse.nemotron_parse import NemotronParseActor, NemotronParseGPUActor
+                from nemo_retriever.caption.caption import CaptionGPUActor
+                from nemo_retriever.video.vlm_captioner import VideoFrameVLMCaptioner, VideoFrameVLMCaptionerGPUActor
+
                 if issubclass(node.operator_class, (NemotronParseActor, NemotronParseGPUActor)):
                     batch_size = NEMOTRON_PARSE_BATCH_SIZE
                 elif issubclass(
@@ -335,20 +375,11 @@ class RayDataExecutor(AbstractExecutor):
                     # Ray can co-schedule multiple actors per GPU.
                     # Exception: actors backed by vLLM (NemotronParse, Caption)
                     # manage their own KV-cache and require exclusive GPU access.
-                    from nemo_retriever.parse.nemotron_parse import NemotronParseActor, NemotronParseGPUActor
-                    from nemo_retriever.caption.caption import CaptionGPUActor
-                    from nemo_retriever.video.vlm_captioner import VideoFrameVLMCaptioner, VideoFrameVLMCaptionerGPUActor
-
-                    if issubclass(
-                        node.operator_class,
-                        (
-                            NemotronParseActor,
-                            NemotronParseGPUActor,
-                            CaptionGPUActor,
-                            VideoFrameVLMCaptioner,
-                            VideoFrameVLMCaptionerGPUActor,
-                        ),
-                    ):
+                    if issubclass(node.operator_class, vllm_actor_classes):
+                        num_gpus = max(self._default_num_gpus, VLLM_GPUS_PER_ACTOR)
+                    elif serialize_gpu_stages:
+                        # Single-GPU host + vLLM actor present: serialize all GPU
+                        # stages by giving every GPU actor an exclusive slot.
                         num_gpus = max(self._default_num_gpus, VLLM_GPUS_PER_ACTOR)
                     else:
                         num_gpus = max(self._default_num_gpus, _DEFAULT_GPU_OPERATOR_NUM_GPUS)
