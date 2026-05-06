@@ -56,6 +56,10 @@ def resolve_split_params(
     the user enabled chunking for that key) or ``None``. Chunking is opt-in
     on every key — keys absent from *split_config* (or set to ``None`` /
     ``False``) resolve to ``None``.
+
+    Per-key values may be a plain dict of chunk-params fields, a pre-built
+    ``TextChunkParams`` / ``HtmlChunkParams`` instance (passed through
+    verbatim), ``None``, or ``False``.
     """
     from nemo_retriever.params.models import HtmlChunkParams, TextChunkParams
 
@@ -72,9 +76,14 @@ def resolve_split_params(
         if v is None or v is False:
             out[key] = None
             continue
+        if isinstance(v, TextChunkParams):  # HtmlChunkParams is a TextChunkParams subclass
+            out[key] = v
+            continue
         if isinstance(v, dict):
             cls = HtmlChunkParams if key == "html" else TextChunkParams
             out[key] = cls(**v)
             continue
-        raise TypeError(f"split_config['{key}'] must be a dict, None, or False; got {type(v).__name__}")
+        raise TypeError(
+            f"split_config['{key}'] must be a TextChunkParams, dict, None, or False; got {type(v).__name__}"
+        )
     return out

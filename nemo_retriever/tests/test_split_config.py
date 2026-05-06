@@ -27,6 +27,11 @@ def test_resolve_split_params_behavior():
     # Explicit False resolves to None (off).
     assert out["text"] is None
 
+    # Pre-built params instances pass through verbatim.
+    prebuilt = TextChunkParams(max_tokens=512)
+    out = resolve_split_params({"pdf": prebuilt})
+    assert out["pdf"] is prebuilt
+
     # Unknown top-level key raises.
     with pytest.raises(ValueError, match="Unknown split_config key"):
         resolve_split_params({"pptx": {"max_tokens": 256}})
