@@ -316,7 +316,14 @@ class RayDataExecutor(AbstractExecutor):
                 VLLM_GPUS_PER_ACTOR,
             )
 
-        for node in nodes:
+        # Indices of GPU-using nodes (used below to decide where to
+        # insert ds.materialize() between GPU stages when serialize_gpu_stages
+        # is on — see the deadlock note further down).
+        gpu_node_indices: list[int] = [
+            idx for idx, n in enumerate(nodes) if issubclass(n.operator_class, GPUOperator)
+        ]
+
+        for node_idx, node in enumerate(nodes):
             overrides = dict(self._node_overrides.get(node.name, {}))
             target_num_rows_per_block = overrides.pop("target_num_rows_per_block", None)
             batch_size = overrides.pop("batch_size", self._default_batch_size)
@@ -428,5 +435,28 @@ class RayDataExecutor(AbstractExecutor):
                 fn_constructor_kwargs=node.operator_kwargs,
                 **overrides,
             )
+
+            # On a 1-GPU host with a vLLM actor in the graph, Ray Data's
+            # streaming execution would leave each GPU actor holding its
+            # GPU slot until ALL downstream stages finish — even when the
+            # actor is idle waiting on its consumer.  vLLM's exclusive-GPU
+            # requirement turns that into a deadlock between two GPU
+            # stages.  Materialize after each GPU stage so the upstream
+            # actor pool tears down cleanly, releasing the GPU for the
+            # next GPU stage.
+            has_more_gpu_stages_downstream = any(
+                later_idx > node_idx for later_idx in gpu_node_indices
+            )
+            if (
+                serialize_gpu_stages
+                and node_idx in gpu_node_indices
+                and has_more_gpu_stages_downstream
+            ):
+                logger.info(
+                    "Materializing dataset after %s to release the GPU for the "
+                    "next GPU stage (single-GPU + vLLM serialization).",
+                    node.name,
+                )
+                ds = ds.materialize()
 
         return ds.to_pandas()
