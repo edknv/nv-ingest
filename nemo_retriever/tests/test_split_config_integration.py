@@ -6,6 +6,9 @@
 
 from __future__ import annotations
 
+import pytest
+
+from nemo_retriever.audio.media_interface import is_media_available
 from nemo_retriever.graph.ingestor_runtime import build_graph
 from nemo_retriever.graph.multi_type_extract_operator import MultiTypeExtractCPUActor
 from nemo_retriever.graph_ingestor import GraphIngestor
@@ -53,6 +56,7 @@ def test_multi_type_extract_operator_uses_text_split_from_split_config():
     assert text_chunk_params.max_tokens == 64
 
 
+@pytest.mark.skipif(not is_media_available(), reason="ffmpeg not available")
 def test_build_graph_audio_only_path_appends_text_chunk_actor_when_audio_split_set():
     from nemo_retriever.params import ASRParams
 
@@ -68,6 +72,7 @@ def test_build_graph_audio_only_path_appends_text_chunk_actor_when_audio_split_s
     assert "TextChunkActor" in names
 
 
+@pytest.mark.skipif(not is_media_available(), reason="ffmpeg not available")
 def test_build_graph_video_branch_appends_text_chunk_actor_when_video_split_set():
     """The dedicated has_video_branch path appends TextChunkActor when video split is set."""
     from nemo_retriever.params import (

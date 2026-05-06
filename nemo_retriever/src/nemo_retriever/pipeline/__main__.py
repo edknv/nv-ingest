@@ -446,17 +446,7 @@ def _build_ingestor(
                 extract_params=extract_params,
             )
         else:
-            ingestor = ingestor.extract(
-                extract_params,
-                split_config={
-                    "text": False,
-                    "html": False,
-                    "pdf": False,
-                    "audio": False,
-                    "image": False,
-                    "video": False,
-                },
-            )
+            ingestor = ingestor.extract(extract_params)
     else:
         chunk_dict = text_chunk_params.model_dump()
         if input_type == "txt":
@@ -500,12 +490,7 @@ def _build_ingestor(
         else:
             ingestor = ingestor.extract(
                 extract_params,
-                split_config={
-                    "text": chunk_dict,
-                    "html": chunk_dict,
-                    "pdf": chunk_dict,
-                    "audio": chunk_dict,
-                },
+                split_config={"pdf": chunk_dict},
             )
 
     if enable_dedup:
