@@ -270,6 +270,13 @@ datasets:
     path: /datasets/nv-ingest/video_retrieval_data
     query_csv: /datasets/nv-ingest/video_retrieval_eval_gt.csv
     input_type: video
+    # Persist frame PNGs under artifact_dir/stored_video_frames/ so the
+    # in-memory rows can drop image_b64 / bytes after the captioner.
+    # Without this, frame-heavy videos OOM ray::MapWorker on a single-GPU
+    # host (we measured a 56 GB RSS before stripping).
+    store_images_uri: stored_video_frames
+    store_text: false
+    strip_base64: true
     segment_audio: true
     audio_split_type: time
     audio_split_interval: 36000

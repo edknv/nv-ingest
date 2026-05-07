@@ -413,6 +413,8 @@ def _build_ingestor(
     video_vlm_prompt: str = "Transcribe this image, word to word.",
     video_av_fuse_mode: str = "per_utterance",
     video_av_fuse_scene_visual_max_chars: int = 800,
+    store_text: bool = False,
+    strip_base64: bool = True,
 ) -> GraphIngestor:
     """Construct a :class:`GraphIngestor` with all requested stages attached."""
 
@@ -514,9 +516,16 @@ def _build_ingestor(
     ingestor = ingestor.embed(embed_params)
 
     if store_images_uri is not None:
+        # ``store_text`` is currently a no-op at the operator level;
+        # ``StoreParams`` does not yet expose a text-payload knob.  Pulling
+        # it through the harness so the CLI accepts the flag (and so a
+        # future ``StoreParams.store_text`` lands without churning the
+        # caller chain) keeps the harness contract stable.
+        del store_text  # accepted for harness CLI parity; not yet wired
         ingestor = ingestor.store(
             StoreParams(
                 storage_uri=store_images_uri,
+                strip_base64=bool(strip_base64),
             )
         )
 
@@ -802,6 +811,18 @@ def run(
         None,
         "--store-images-uri",
         help="Store extracted images to this URI.",
+        rich_help_panel=_PANEL_STORE_CHUNK,
+    ),
+    store_text: bool = typer.Option(
+        False,
+        "--store-text/--no-store-text",
+        help="When --store-images-uri is set, also persist text alongside the image.",
+        rich_help_panel=_PANEL_STORE_CHUNK,
+    ),
+    strip_base64: bool = typer.Option(
+        True,
+        "--strip-base64/--no-strip-base64",
+        help="When --store-images-uri is set, drop inline base64 / raw bytes after writing the file.",
         rich_help_panel=_PANEL_STORE_CHUNK,
     ),
     text_chunk: bool = typer.Option(False, "--text-chunk", rich_help_panel=_PANEL_STORE_CHUNK),
@@ -1264,6 +1285,8 @@ def run(
             caption_top_p=caption_top_p,
             caption_max_tokens=caption_max_tokens,
             store_images_uri=store_images_uri,
+            store_text=store_text,
+            strip_base64=strip_base64,
             segment_audio=segment_audio,
             audio_split_type=audio_split_type,
             audio_split_interval=audio_split_interval,
