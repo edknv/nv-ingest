@@ -10,7 +10,6 @@ import os
 import sys
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
-import pandas as pd
 
 from nemo_retriever.graph.gpu_operator import GPUOperator
 from nemo_retriever.graph.pipeline_graph import Graph, Node
@@ -54,23 +53,6 @@ def _vllm_actor_classes() -> tuple[type, ...]:
         VideoFrameVLMCaptioner,
         VideoFrameVLMCaptionerGPUActor,
     )
-
-
-def _strip_bulk_image_columns(batch: "pd.DataFrame") -> "pd.DataFrame":
-    """Drop image_b64 / bytes columns from a frame-row DataFrame.
-
-    Used inside the executor right before materialize() on serialized
-    GPU-stage hosts.  Once OCR or VLM has produced ``text``, the source
-    PNG bytes are not needed downstream — VideoFrameTextDedup,
-    AudioVisualFuser, and the text-modality embedder all read ``text``
-    plus metadata.  Stripping the byte columns shrinks the materialized
-    intermediate by ~95% on frame-heavy video pipelines and is the
-    difference between a clean run and an OOM kill on small hosts.
-    """
-    drop_cols = [c for c in ("image_b64", "bytes") if c in batch.columns]
-    if drop_cols:
-        return batch.drop(columns=drop_cols)
-    return batch
 
 
 class AbstractExecutor(ABC):
@@ -464,19 +446,12 @@ class RayDataExecutor(AbstractExecutor):
             has_more_gpu_stages_downstream = any(
                 later_idx > node_idx for later_idx in gpu_node_indices
             )
-            if (
-                serialize_gpu_stages
-                and node_idx in gpu_node_indices
-                and has_more_gpu_stages_downstream
-            ):
+            if serialize_gpu_stages and node_idx in gpu_node_indices and has_more_gpu_stages_downstream:
                 logger.info(
-                    "Stripping image_b64/bytes and materializing dataset after %s "
-                    "to release the GPU for the next GPU stage and keep the "
-                    "intermediate small enough to avoid OOM (single-GPU + vLLM "
-                    "serialization).",
+                    "Materializing dataset after %s to release the GPU for the "
+                    "next GPU stage (single-GPU + vLLM serialization).",
                     node.name,
                 )
-                ds = ds.map_batches(_strip_bulk_image_columns, batch_format="pandas")
                 ds = ds.materialize()
 
         return ds.to_pandas()
