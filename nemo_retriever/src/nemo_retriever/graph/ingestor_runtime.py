@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from functools import partial
 from typing import cast
 from typing import Any
@@ -349,7 +350,18 @@ def batch_tuning_to_node_overrides(
     if video_frame_params is not None and getattr(video_frame_params, "enabled", True):
         cpus = cluster_resources.total_cpu_count() if cluster_resources is not None else 0
         if cpus > 0:
-            _set(VideoSplitActor.__name__, "concurrency", max(1, min(cpus // 4, 8)))
+            # VideoSplitActor holds an mp4's full bytes plus all extracted
+            # frames in memory while it runs.  Production telemetry shows
+            # ~9.6 GiB per task average; capping the actor count keeps the
+            # in-flight working set bounded.  The previous min(cpus // 4, 8)
+            # heuristic produces 8 actors on a 32-CPU host (= ~150 GiB of
+            # in-flight rows) which trips systemd-oomd at 50% pressure on
+            # 250 GB hosts.  Override via NEMO_RETRIEVER_VIDEO_SPLIT_MAX_ACTORS.
+            video_split_max = int(os.environ.get("NEMO_RETRIEVER_VIDEO_SPLIT_MAX_ACTORS", "2"))
+            _set(VideoSplitActor.__name__, "concurrency", max(1, min(cpus // 4, video_split_max)))
+            # Declare per-task memory so Ray Data's scheduler accounts
+            # for it (default unit is bytes; 10 GiB matches observed avg).
+            _set(VideoSplitActor.__name__, "memory", 10 * 1024 * 1024 * 1024)
 
     return overrides
 
