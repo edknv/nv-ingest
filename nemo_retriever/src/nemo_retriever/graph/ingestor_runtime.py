@@ -603,8 +603,6 @@ def build_graph(
             audio_chunk_params=audio_chunk_params,
             video_frame_params=video_frame_params,
         )
-        if audio_enabled:
-            graph = graph >> ASRActor(params=asr_params)
         if frames_enabled and method == "ocr":
             graph = graph >> VideoFrameOCRActor(
                 ocr_invoke_url=getattr(extract_params, "ocr_invoke_url", None),
@@ -630,6 +628,8 @@ def build_graph(
             graph = graph >> StoreOperator(params=store_params)
             video_store_inserted = True
 
+        if audio_enabled:
+            graph = graph >> ASRActor(params=asr_params)
         if text_dedup_enabled:
             graph = graph >> VideoFrameTextDedup(params=video_text_dedup_params)
         if fuse_enabled:

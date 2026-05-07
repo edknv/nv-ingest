@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 from nemo_retriever.graph.gpu_operator import GPUOperator
 from nemo_retriever.graph.pipeline_graph import Graph, Node
 from nemo_retriever.graph.operator_resolution import resolve_graph
+from nemo_retriever.graph.store_operator import StoreOperator
 from nemo_retriever.utils.hf_cache import collect_hf_runtime_env
 from nemo_retriever.utils.remote_auth import collect_remote_auth_runtime_env
 from nemo_retriever.utils.ray_resource_hueristics import (
@@ -446,10 +447,49 @@ class RayDataExecutor(AbstractExecutor):
             has_more_gpu_stages_downstream = any(
                 later_idx > node_idx for later_idx in gpu_node_indices
             )
-            if serialize_gpu_stages and node_idx in gpu_node_indices and has_more_gpu_stages_downstream:
+            # Decide whether to materialize after this stage.  Materialize
+            # is the GPU-release mechanism on a serialize_gpu_stages host:
+            # it forces the upstream actor pool to tear down so the next
+            # GPU stage can claim the GPU.  But it also pins the entire
+            # intermediate dataset in Ray's object store, so we want to do
+            # it on the lightest possible row shape.  When a StoreOperator
+            # immediately follows a GPU stage, defer materialize past
+            # Store so it strips image_b64/bytes first.
+            should_materialize_now = (
+                serialize_gpu_stages
+                and node_idx in gpu_node_indices
+                and has_more_gpu_stages_downstream
+            )
+            next_node_is_store = (
+                node_idx + 1 < len(nodes)
+                and issubclass(nodes[node_idx + 1].operator_class, StoreOperator)
+            )
+            this_node_is_store = issubclass(node.operator_class, StoreOperator)
+            prev_node_was_gpu_with_materialize = (
+                serialize_gpu_stages
+                and node_idx - 1 >= 0
+                and (node_idx - 1) in gpu_node_indices
+                and any(later > (node_idx - 1) for later in gpu_node_indices)
+            )
+
+            if should_materialize_now and next_node_is_store:
+                # Defer; we'll materialize after Store has stripped bytes.
+                logger.info(
+                    "Deferring materialize past Store stage so the GPU release "
+                    "barrier operates on stripped rows (after %s).",
+                    node.name,
+                )
+            elif should_materialize_now:
                 logger.info(
                     "Materializing dataset after %s to release the GPU for the "
                     "next GPU stage (single-GPU + vLLM serialization).",
+                    node.name,
+                )
+                ds = ds.materialize()
+            elif this_node_is_store and prev_node_was_gpu_with_materialize:
+                logger.info(
+                    "Materializing dataset after Store (%s) to release the GPU "
+                    "from the preceding GPU stage on stripped rows.",
                     node.name,
                 )
                 ds = ds.materialize()
