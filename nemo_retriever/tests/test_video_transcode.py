@@ -50,7 +50,7 @@ def test_av1_triggers_transcode_then_caches(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr("nemo_retriever.video.transcode._ffprobe_codec", lambda _: "av1")
 
     transcode_calls = []
-    def fake_transcode(src, dest, *, encoder, preset, crf):
+    def fake_transcode(src, dest, *, encoder, preset, crf, threads=4):
         transcode_calls.append((src, dest, encoder))
         # Simulate writing the cached file.
         from pathlib import Path

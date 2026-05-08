@@ -93,6 +93,7 @@ class HarnessConfig:
     video_transcode_encoder: str = "h264_nvenc"
     video_transcode_preset: str = "p4"
     video_transcode_crf: int = 23
+    video_transcode_threads: int = 4
     evaluation_mode: str = "recall"
     beir_loader: str | None = None
     beir_dataset_name: str | None = None
@@ -371,6 +372,7 @@ def _apply_env_overrides(config_dict: dict[str, Any]) -> None:
         "HARNESS_VIDEO_TRANSCODE_ENCODER": ("video_transcode_encoder", str),
         "HARNESS_VIDEO_TRANSCODE_PRESET": ("video_transcode_preset", str),
         "HARNESS_VIDEO_TRANSCODE_CRF": ("video_transcode_crf", _parse_number),
+        "HARNESS_VIDEO_TRANSCODE_THREADS": ("video_transcode_threads", _parse_number),
         "HARNESS_EVALUATION_MODE": ("evaluation_mode", str),
         "HARNESS_BEIR_LOADER": ("beir_loader", str),
         "HARNESS_BEIR_DATASET_NAME": ("beir_dataset_name", str),

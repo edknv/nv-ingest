@@ -288,8 +288,15 @@ class VideoTranscodeParams(_ParamsModel):
     # ffmpeg's default for libx264 and a sane mid-quality target.
     crf: int = 23
     # Encoder preset.  For NVENC: p1 (fastest) - p7 (slowest).  For libx264:
-    # ultrafast - veryslow.
+    # ultrafast - veryslow.  p4 (medium) is the balanced default; lower presets
+    # (e.g. p2/superfast) cut encode time ~3-4x at modest quality cost.
     preset: str = "p4"
+    # ffmpeg internal thread count per actor.  0 = auto (uses all cores).
+    # When multiple VideoTranscodeActors run in parallel, leave each actor's
+    # thread budget at a fraction of total CPUs so the actors don't compete.
+    # The default of 4 combined with the default 4-actor concurrency fills
+    # 16/32 cores, leaving headroom for VideoSplit, ASR, and VLM stages.
+    threads: int = 4
 
 
 class VideoFrameTextDedupParams(_ParamsModel):

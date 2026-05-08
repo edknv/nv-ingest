@@ -302,6 +302,7 @@ datasets:
     video_transcode_encoder: h264_nvenc
     video_transcode_preset: p4
     video_transcode_crf: 23
+    video_transcode_threads: 4
     recall_required: true
     recall_match_mode: audio_segment
     recall_adapter: none

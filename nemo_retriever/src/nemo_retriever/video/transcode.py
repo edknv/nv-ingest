@@ -128,12 +128,13 @@ def _normalize_preset(encoder: str, preset: str) -> str:
     return nvenc_to_x264.get(preset, preset)
 
 
-def _transcode_one(src: str, dest: str, *, encoder: str, preset: str, crf: int) -> None:
-    """Run ffmpeg to transcode src -> dest using the given encoder."""
+def _transcode_one(src: str, dest: str, *, encoder: str, preset: str, crf: int, threads: int = 4) -> None:
+    """Run ffmpeg to transcode src → dest using the given encoder."""
     Path(dest).parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         "ffmpeg",
         "-y",
+        "-threads", str(max(1, int(threads))),
         "-i", src,
         "-c:v", encoder,
         "-preset", preset,
@@ -142,7 +143,10 @@ def _transcode_one(src: str, dest: str, *, encoder: str, preset: str, crf: int) 
         "-loglevel", "warning",
         dest,
     ]
-    logger.info("Transcoding %s -> %s (encoder=%s preset=%s crf=%d)", src, dest, encoder, preset, crf)
+    logger.info(
+        "Transcoding %s -> %s (encoder=%s preset=%s crf=%d threads=%d)",
+        src, dest, encoder, preset, crf, threads,
+    )
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=None)
     if result.returncode != 0:
         # Clean up partial file.
@@ -209,6 +213,7 @@ class VideoTranscodeActor(AbstractOperator, CPUOperator):
                         encoder=self._encoder,
                         preset=_normalize_preset(self._encoder, self._params.preset),
                         crf=self._params.crf,
+                        threads=self._params.threads,
                     )
                 except Exception:
                     logger.exception("Transcode failed for %s; passing through original.", path)

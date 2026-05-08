@@ -419,6 +419,7 @@ def _build_ingestor(
     video_transcode_encoder: str = "h264_nvenc",
     video_transcode_preset: str = "p4",
     video_transcode_crf: int = 23,
+    video_transcode_threads: int = 4,
     store_text: bool = False,
     strip_base64: bool = True,
 ) -> GraphIngestor:
@@ -498,6 +499,7 @@ def _build_ingestor(
                 encoder=str(video_transcode_encoder),
                 preset=str(video_transcode_preset),
                 crf=int(video_transcode_crf),
+                threads=int(video_transcode_threads),
             ),
             extract_params=extract_params,
         )
@@ -1078,6 +1080,12 @@ def run(
         help="Constant Rate Factor; lower = better quality, larger files.",
         rich_help_panel=_PANEL_VIDEO,
     ),
+    video_transcode_threads: int = typer.Option(
+        4,
+        "--video-transcode-threads",
+        help="ffmpeg internal thread count per transcode actor; 0 = auto (uses all cores).",
+        rich_help_panel=_PANEL_VIDEO,
+    ),
     # --- VDB / outputs --------------------------------------------------
     vdb_op: str = typer.Option(
         DEFAULT_VDB_OP,
@@ -1363,6 +1371,7 @@ def run(
             video_transcode_encoder=video_transcode_encoder,
             video_transcode_preset=video_transcode_preset,
             video_transcode_crf=video_transcode_crf,
+            video_transcode_threads=video_transcode_threads,
         )
 
         # --- Execute ---------------------------------------------------
