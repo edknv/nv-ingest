@@ -300,16 +300,6 @@ datasets:
     video_vlm_temperature: 0.0
     video_av_fuse_mode: per_scene          # Blog Method 1 / Reference Approach 1
     video_av_fuse_scene_visual_max_chars: 800
-    video_transcode: true
-    video_transcode_cache_dir: transcoded_videos
-    video_transcode_encoder: h264_nvenc
-    # Fast transcode mode for first-run cache warming on AV1 corpora.
-    # ultrafast preset + 720p downscale ≈ 8x faster than medium + source
-    # resolution; quality drop is irrelevant for downstream VLM/OCR.
-    video_transcode_preset: p1            # NVENC p1 / libx264 ultrafast
-    video_transcode_crf: 23
-    video_transcode_threads: 4
-    video_transcode_max_height: 720
     recall_required: true
     recall_match_mode: audio_segment
     recall_adapter: none

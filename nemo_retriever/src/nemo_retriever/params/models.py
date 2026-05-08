@@ -272,46 +272,6 @@ class VideoFrameParams(_ParamsModel):
     vlm: VideoFrameVLMParams = Field(default_factory=VideoFrameVLMParams)
 
 
-class VideoTranscodeParams(_ParamsModel):
-    """Pre-transcode videos with slow software-decode codecs (e.g. AV1)
-    to H.264 before frame extraction.  Result is disk-cached so the cost
-    is paid once per video — every subsequent run reuses the cached H.264
-    files.
-
-    On a CUDA-capable host with NVENC, ``encoder=h264_nvenc`` runs the
-    encode step on the GPU.  The decode step is still software-bound by
-    the source codec; pre-transcoding does not speed up the *first* run
-    on AV1 footage — but it does mean every subsequent run reads H.264.
-    """
-
-    enabled: bool = False
-    cache_dir: str = "transcoded_videos"
-    target_codec: str = "h264"
-    encoder: str = "h264_nvenc"
-    encoder_fallback: str = "libx264"
-    # Codecs we don't bother transcoding (already fast on software decode).
-    skip_codecs: tuple[str, ...] = ("h264", "hevc", "h265")
-    # Quality target.  Lower CRF = better quality, larger files.  23 is
-    # ffmpeg's default for libx264 and a sane mid-quality target.
-    crf: int = 23
-    # Encoder preset.  For NVENC: p1 (fastest) - p7 (slowest).  For libx264:
-    # ultrafast - veryslow.  p4 (medium) is the balanced default; lower presets
-    # (e.g. p2/superfast) cut encode time ~3-4x at modest quality cost.
-    preset: str = "p4"
-    # ffmpeg internal thread count per actor.  0 = auto (uses all cores).
-    # When multiple VideoTranscodeActors run in parallel, leave each actor's
-    # thread budget at a fraction of total CPUs so the actors don't compete.
-    # The default of 4 combined with the default 4-actor concurrency fills
-    # 16/32 cores, leaving headroom for VideoSplit, ASR, and VLM stages.
-    threads: int = 4
-    # Optional max output height; aspect ratio preserved.  When > 0 the
-    # ffmpeg pipeline scales each video down to fit within this height
-    # before encoding.  VLMs typically preprocess to ~448x448 internally,
-    # so 720 (or even 540) loses no useful detail for captioning while
-    # cutting encode work 2-4x.  0 disables (keep source resolution).
-    max_height: int = 0
-
-
 class VideoFrameTextDedupParams(_ParamsModel):
     """Params for merging consecutive video_frame rows with identical OCR text.
 

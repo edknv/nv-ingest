@@ -32,7 +32,6 @@ from nemo_retriever.video import (
     VideoFrameVLMCaptioner,
     VideoSplitActor,
 )
-from nemo_retriever.video.transcode import VideoTranscodeActor
 from nemo_retriever.ocr.ocr import resolve_ocr_archetype
 from nemo_retriever.parse.nemotron_parse import NemotronParseActor
 from nemo_retriever.page_elements.page_elements import PageElementDetectionActor
@@ -364,15 +363,6 @@ def batch_tuning_to_node_overrides(
             # for it (default unit is bytes; 10 GiB matches observed avg).
             _set(VideoSplitActor.__name__, "memory", 10 * 1024 * 1024 * 1024)
 
-            # Default to 8 transcode actors (or cpus//2, whichever is smaller).
-            # Each ffmpeg uses ~4 internal threads (default), so 8 actors × 4
-            # threads = 32 threads — exactly saturates a 32-CPU host while
-            # still leaving headroom for VideoSplit + ASR + VLM + others.
-            # Override via NEMO_RETRIEVER_VIDEO_TRANSCODE_MAX_ACTORS.
-            video_transcode_max = int(os.environ.get("NEMO_RETRIEVER_VIDEO_TRANSCODE_MAX_ACTORS", "8"))
-            _set(VideoTranscodeActor.__name__, "concurrency", max(1, min(cpus // 2, video_transcode_max)))
-            _set(VideoTranscodeActor.__name__, "memory", 2 * 1024 * 1024 * 1024)  # 2 GiB per task
-
     return overrides
 
 
@@ -557,7 +547,6 @@ def build_graph(
     video_frame_params: Any | None = None,
     video_text_dedup_params: Any | None = None,
     av_fuse_params: Any | None = None,
-    video_transcode_params: Any | None = None,
     stage_order: tuple[str, ...] = (),
 ) -> Graph:
     """Build a batch graph from explicit params or a shared execution plan."""
@@ -622,17 +611,10 @@ def build_graph(
         method = video_frame_params.frame_text_method
         vlm_params = video_frame_params.vlm
 
-        if video_transcode_params is not None and getattr(video_transcode_params, "enabled", False):
-            graph = Graph() >> VideoTranscodeActor(params=video_transcode_params)
-            graph = graph >> VideoSplitActor(
-                audio_chunk_params=audio_chunk_params,
-                video_frame_params=video_frame_params,
-            )
-        else:
-            graph = Graph() >> VideoSplitActor(
-                audio_chunk_params=audio_chunk_params,
-                video_frame_params=video_frame_params,
-            )
+        graph = Graph() >> VideoSplitActor(
+            audio_chunk_params=audio_chunk_params,
+            video_frame_params=video_frame_params,
+        )
         if frames_enabled and method == "ocr":
             graph = graph >> VideoFrameOCRActor(
                 ocr_invoke_url=getattr(extract_params, "ocr_invoke_url", None),

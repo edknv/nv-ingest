@@ -59,7 +59,6 @@ from nemo_retriever.params import (
     VideoFrameVLMParams,
     VideoKeyFrameSelectParams,
     VideoSceneDetectParams,
-    VideoTranscodeParams,
 )
 from nemo_retriever.params.models import BatchTuningParams
 from nemo_retriever.utils.input_files import resolve_input_patterns
@@ -417,13 +416,6 @@ def _build_ingestor(
     video_vlm_temperature: float = 0.0,
     video_av_fuse_mode: str = "per_utterance",
     video_av_fuse_scene_visual_max_chars: int = 800,
-    video_transcode: bool = False,
-    video_transcode_cache_dir: str = "transcoded_videos",
-    video_transcode_encoder: str = "h264_nvenc",
-    video_transcode_preset: str = "p4",
-    video_transcode_crf: int = 23,
-    video_transcode_threads: int = 4,
-    video_transcode_max_height: int = 0,
     store_text: bool = False,
     strip_base64: bool = True,
 ) -> GraphIngestor:
@@ -499,15 +491,6 @@ def _build_ingestor(
                 enabled=bool(video_av_fuse),
                 mode=str(video_av_fuse_mode),
                 scene_visual_max_chars=int(video_av_fuse_scene_visual_max_chars),
-            ),
-            video_transcode_params=VideoTranscodeParams(
-                enabled=bool(video_transcode),
-                cache_dir=str(video_transcode_cache_dir),
-                encoder=str(video_transcode_encoder),
-                preset=str(video_transcode_preset),
-                crf=int(video_transcode_crf),
-                threads=int(video_transcode_threads),
-                max_height=int(video_transcode_max_height),
             ),
             extract_params=extract_params,
         )
@@ -1076,55 +1059,6 @@ def run(
         help="Cap on the joined visual blob in per_scene mode.",
         rich_help_panel=_PANEL_VIDEO,
     ),
-    video_transcode: bool = typer.Option(
-        False,
-        "--video-transcode/--no-video-transcode",
-        help=(
-            "Pre-transcode videos with slow-decode codecs (e.g. AV1) to H.264 "
-            "with disk caching before frame extraction."
-        ),
-        rich_help_panel=_PANEL_VIDEO,
-    ),
-    video_transcode_cache_dir: str = typer.Option(
-        "transcoded_videos",
-        "--video-transcode-cache-dir",
-        help="Directory where transcoded H.264 mp4 files are cached and reused across runs.",
-        rich_help_panel=_PANEL_VIDEO,
-    ),
-    video_transcode_encoder: str = typer.Option(
-        "h264_nvenc",
-        "--video-transcode-encoder",
-        help="ffmpeg encoder name; falls back to libx264 if not available.",
-        rich_help_panel=_PANEL_VIDEO,
-    ),
-    video_transcode_preset: str = typer.Option(
-        "p4",
-        "--video-transcode-preset",
-        help="Encoder preset (NVENC: p1-p7; libx264: ultrafast-veryslow).",
-        rich_help_panel=_PANEL_VIDEO,
-    ),
-    video_transcode_crf: int = typer.Option(
-        23,
-        "--video-transcode-crf",
-        help="Constant Rate Factor; lower = better quality, larger files.",
-        rich_help_panel=_PANEL_VIDEO,
-    ),
-    video_transcode_threads: int = typer.Option(
-        4,
-        "--video-transcode-threads",
-        help="ffmpeg internal thread count per transcode actor; 0 = auto (uses all cores).",
-        rich_help_panel=_PANEL_VIDEO,
-    ),
-    video_transcode_max_height: int = typer.Option(
-        0,
-        "--video-transcode-max-height",
-        help=(
-            "Downscale videos to this max height during transcode (preserves "
-            "aspect ratio). 0 = keep source resolution.  720 cuts encode work "
-            "~2.25x; 540 cuts ~4x."
-        ),
-        rich_help_panel=_PANEL_VIDEO,
-    ),
     # --- VDB / outputs --------------------------------------------------
     vdb_op: str = typer.Option(
         DEFAULT_VDB_OP,
@@ -1408,13 +1342,6 @@ def run(
             video_vlm_temperature=video_vlm_temperature,
             video_av_fuse_mode=video_av_fuse_mode,
             video_av_fuse_scene_visual_max_chars=video_av_fuse_scene_visual_max_chars,
-            video_transcode=video_transcode,
-            video_transcode_cache_dir=video_transcode_cache_dir,
-            video_transcode_encoder=video_transcode_encoder,
-            video_transcode_preset=video_transcode_preset,
-            video_transcode_crf=video_transcode_crf,
-            video_transcode_threads=video_transcode_threads,
-            video_transcode_max_height=video_transcode_max_height,
         )
 
         # --- Execute ---------------------------------------------------
