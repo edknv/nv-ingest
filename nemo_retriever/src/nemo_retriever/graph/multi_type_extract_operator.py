@@ -88,8 +88,6 @@ def _parse_mode_enabled(extract_params: ExtractParams) -> bool:
 def _ocr_stage_needed(extract_params: ExtractParams) -> bool:
     if extract_params.method in ("pdfium_hybrid", "ocr") and extract_params.extract_text:
         return True
-    if extract_params.extract_page_as_image:
-        return True
     if extract_params.extract_tables:
         # OCR is always needed for table crops: either to produce pseudo-markdown
         # (when use_table_structure=False) or to join against the
@@ -431,9 +429,7 @@ class _MultiTypeExtractBase(AbstractOperator):
             "use_graphic_elements": extract_params.use_graphic_elements,
             "use_table_structure": extract_params.use_table_structure,
         }
-        if (
-            extract_params.method in ("pdfium_hybrid", "ocr") and extract_params.extract_text
-        ) or extract_params.extract_page_as_image:
+        if extract_params.method in ("pdfium_hybrid", "ocr") and extract_params.extract_text:
             ocr_kwargs["extract_text"] = True
         if extract_params.extract_tables:
             ocr_kwargs["extract_tables"] = True

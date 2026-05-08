@@ -297,13 +297,10 @@ def pdf_extraction(
                     page = doc.get_page(0)
                     is_scanned_page = _is_scanned_page(page)
 
-                    ocr_extraction_needed_for_text = (
-                        extract_text
-                        and (
-                            (text_extraction_method == "pdfium_hybrid" and is_scanned_page)
-                            or text_extraction_method == "ocr"
-                        )
-                    ) or extract_page_as_image
+                    ocr_extraction_needed_for_text = extract_text and (
+                        (text_extraction_method == "pdfium_hybrid" and is_scanned_page)
+                        or text_extraction_method == "ocr"
+                    )
 
                     # extraction_needed_for_structured = (
                     #     extract_tables or extract_charts or extract_infographics
