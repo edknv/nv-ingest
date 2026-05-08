@@ -28,6 +28,7 @@ from nemo_retriever.text_embed.operators import _BatchEmbedActor
 from nemo_retriever.video import (
     AudioVisualFuser,
     VideoFrameOCRActor,
+    VideoFrameStripImagesActor,
     VideoFrameTextDedup,
     VideoFrameVLMCaptioner,
     VideoSplitActor,
@@ -460,14 +461,8 @@ def _append_ordered_transform_stages(
     stage_order: tuple[str, ...],
     supports_dedup: bool,
     reshape_for_modal_content: bool,
-    skip_store: bool = False,
 ) -> Graph:
-    """Append post-extraction transform stages in the exact recorded plan order.
-
-    ``skip_store`` lets the caller suppress the canonical store insertion when
-    a branch (e.g. the video pipeline) already wired ``StoreOperator`` upstream
-    to free per-frame image bytes before the text-only stages.
-    """
+    """Append post-extraction transform stages in the exact recorded plan order."""
 
     pending_stages = [
         stage
@@ -487,7 +482,7 @@ def _append_ordered_transform_stages(
             pending_stages.append("embed")
 
     for stage_name in pending_stages:
-        if stage_name == "store" and store_params is not None and not skip_store:
+        if stage_name == "store" and store_params is not None:
             graph = graph >> StoreOperator(params=store_params)
         elif stage_name == "dedup" and supports_dedup and dedup_params is not None:
             dedup_kwargs = cast(dict[str, Any], dedup_params.model_dump(mode="python"))
@@ -582,10 +577,6 @@ def build_graph(
         stage_order=stage_order,
     )
 
-    # Track whether a video-branch StoreOperator was wired inline so the
-    # post-extraction transform pass does not append a duplicate.
-    video_store_inserted = False
-
     # Video ingestion uses a dedicated chain so each stage (fan-out, ASR,
     # frame OCR, scene fusion) shows up as its own Ray Data MapBatches op.
     # The audio-only shortcut below would otherwise short-circuit to a
@@ -630,15 +621,11 @@ def build_graph(
             graph = graph >> VideoFrameVLMCaptioner(params=vlm_params)
         # else: method == "none" — neither OCR nor VLM is wired; frames pass through unlabelled.
 
-        # Persist frame images to disk between captioner/OCR and the
-        # downstream text-only stages.  This drops ``image_b64`` and the
-        # raw ``bytes`` column from in-memory rows, replacing them with a
-        # ``_stored_image_uri`` reference.  Without this, frame-heavy
-        # videos OOM the materialize step on a single-GPU host (we
-        # measured a 56 GB ray::MapWorker before stripping).
-        if frames_enabled and store_params is not None:
-            graph = graph >> StoreOperator(params=store_params)
-            video_store_inserted = True
+        # Strip image_b64/bytes from frame rows after the captioner/OCR
+        # has produced text — the byte columns are dead weight downstream
+        # and pin the object-store budget.
+        if frames_enabled:
+            graph = graph >> VideoFrameStripImagesActor()
 
         if audio_enabled:
             graph = graph >> ASRActor(params=asr_params)
@@ -797,7 +784,6 @@ def build_graph(
         stage_order=stage_order,
         supports_dedup=True,
         reshape_for_modal_content=True,
-        skip_store=video_store_inserted,
     )
 
 

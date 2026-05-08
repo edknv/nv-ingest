@@ -25,6 +25,7 @@ from nemo_retriever.video.ocr_actor import VideoFrameOCRActor
 from nemo_retriever.video.ocr_actor import VideoFrameOCRCPUActor
 from nemo_retriever.video.ocr_actor import VideoFrameOCRGPUActor
 from nemo_retriever.video.split import VideoSplitActor
+from nemo_retriever.video.strip_images import VideoFrameStripImagesActor
 from nemo_retriever.video.text_dedup import VideoFrameTextDedup
 from nemo_retriever.video.vlm_captioner import VideoFrameVLMCaptioner
 from nemo_retriever.video.vlm_captioner import VideoFrameVLMCaptionerCPUActor
@@ -42,6 +43,7 @@ __all__ = [
     "VideoFrameOCRCPUActor",
     "VideoFrameOCRGPUActor",
     "VideoFrameParams",
+    "VideoFrameStripImagesActor",
     "VideoFrameTextDedup",
     "VideoFrameTextDedupParams",
     "VideoFrameVLMCaptioner",

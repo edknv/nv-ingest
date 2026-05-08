@@ -78,13 +78,6 @@ def _row_image_b64_with_source(row: pd.Series) -> tuple[Any, bool]:
     if isinstance(value, str) and value.strip():
         return value, False
 
-    # Video frame rows (from ``VideoSplitActor``) carry ``image_b64`` (no
-    # leading underscore) instead of the PDF-pipeline ``_image_b64``.
-    # Fall back to it before consulting ``page_image``.
-    video_value = row.get("image_b64")
-    if isinstance(video_value, str) and video_value.strip():
-        return video_value, False
-
     page_image = row.get("page_image")
     if isinstance(page_image, dict):
         return page_image.get("image_b64"), True
@@ -111,12 +104,7 @@ def _store_row_images(
     strip_base64: bool = True,
 ) -> pd.DataFrame:
     """Return a copy of *df* with ``_stored_image_uri`` set for stored rows."""
-    image_columns_present = (
-        "_image_b64" in df.columns
-        or "image_b64" in df.columns
-        or "page_image" in df.columns
-    )
-    if df.empty or not image_columns_present:
+    if df.empty or ("_image_b64" not in df.columns and "page_image" not in df.columns):
         return df
 
     out = df.copy()
@@ -145,13 +133,6 @@ def _store_row_images(
         if strip_base64:
             if "_image_b64" in out.columns:
                 out.at[idx, "_image_b64"] = None
-            # Video frame rows carry ``image_b64`` (no underscore) and the
-            # raw PNG payload in ``bytes``; strip both so downstream
-            # text-only stages don't drag the pixel data through Ray Data.
-            if "image_b64" in out.columns:
-                out.at[idx, "image_b64"] = None
-            if "bytes" in out.columns:
-                out.at[idx, "bytes"] = None
             page_image = row.get("page_image")
             if isinstance(page_image, dict):
                 updated_page_image = dict(page_image)
