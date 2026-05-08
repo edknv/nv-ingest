@@ -423,6 +423,7 @@ def _build_ingestor(
     video_transcode_preset: str = "p4",
     video_transcode_crf: int = 23,
     video_transcode_threads: int = 4,
+    video_transcode_max_height: int = 0,
     store_text: bool = False,
     strip_base64: bool = True,
 ) -> GraphIngestor:
@@ -506,6 +507,7 @@ def _build_ingestor(
                 preset=str(video_transcode_preset),
                 crf=int(video_transcode_crf),
                 threads=int(video_transcode_threads),
+                max_height=int(video_transcode_max_height),
             ),
             extract_params=extract_params,
         )
@@ -1113,6 +1115,16 @@ def run(
         help="ffmpeg internal thread count per transcode actor; 0 = auto (uses all cores).",
         rich_help_panel=_PANEL_VIDEO,
     ),
+    video_transcode_max_height: int = typer.Option(
+        0,
+        "--video-transcode-max-height",
+        help=(
+            "Downscale videos to this max height during transcode (preserves "
+            "aspect ratio). 0 = keep source resolution.  720 cuts encode work "
+            "~2.25x; 540 cuts ~4x."
+        ),
+        rich_help_panel=_PANEL_VIDEO,
+    ),
     # --- VDB / outputs --------------------------------------------------
     vdb_op: str = typer.Option(
         DEFAULT_VDB_OP,
@@ -1402,6 +1414,7 @@ def run(
             video_transcode_preset=video_transcode_preset,
             video_transcode_crf=video_transcode_crf,
             video_transcode_threads=video_transcode_threads,
+            video_transcode_max_height=video_transcode_max_height,
         )
 
         # --- Execute ---------------------------------------------------

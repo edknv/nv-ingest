@@ -50,7 +50,7 @@ def test_av1_triggers_transcode_then_caches(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr("nemo_retriever.video.transcode._ffprobe_codec", lambda _: "av1")
 
     transcode_calls = []
-    def fake_transcode(src, dest, *, encoder, preset, crf, threads=4):
+    def fake_transcode(src, dest, *, encoder, preset, crf, threads=4, max_height=0):
         transcode_calls.append((src, dest, encoder))
         # Simulate writing the cached file.
         from pathlib import Path
@@ -96,3 +96,40 @@ def test_normalize_preset_translates_nvenc_to_x264() -> None:
     assert _normalize_preset("libx264", "p7") == "veryslow"
     # Non-mapped preset: pass through.
     assert _normalize_preset("libx264", "medium") == "medium"
+
+
+def test_max_height_adds_scale_filter(monkeypatch) -> None:
+    """When max_height>0 the ffmpeg cmd includes a scale=...:min(ih,N) filter."""
+    captured = []
+    def fake_run(cmd, **kw):
+        captured.append(list(cmd))
+        from unittest.mock import Mock
+        return Mock(returncode=0, stderr="")
+    monkeypatch.setattr("nemo_retriever.video.transcode.subprocess.run", fake_run)
+
+    from nemo_retriever.video.transcode import _transcode_one
+    _transcode_one(
+        "/tmp/in.mp4", "/tmp/out.mp4",
+        encoder="libx264", preset="ultrafast", crf=23, threads=4, max_height=720,
+    )
+    assert any(arg.startswith("scale=") for arg in captured[0])
+    # Should mention min(ih,720)
+    vf_idx = captured[0].index("-vf")
+    assert "720" in captured[0][vf_idx + 1]
+
+
+def test_max_height_zero_skips_scale_filter(monkeypatch) -> None:
+    """When max_height=0 there's no -vf filter."""
+    captured = []
+    def fake_run(cmd, **kw):
+        captured.append(list(cmd))
+        from unittest.mock import Mock
+        return Mock(returncode=0, stderr="")
+    monkeypatch.setattr("nemo_retriever.video.transcode.subprocess.run", fake_run)
+
+    from nemo_retriever.video.transcode import _transcode_one
+    _transcode_one(
+        "/tmp/in.mp4", "/tmp/out.mp4",
+        encoder="libx264", preset="medium", crf=23, threads=4, max_height=0,
+    )
+    assert "-vf" not in captured[0]

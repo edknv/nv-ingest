@@ -304,6 +304,12 @@ class VideoTranscodeParams(_ParamsModel):
     # The default of 4 combined with the default 4-actor concurrency fills
     # 16/32 cores, leaving headroom for VideoSplit, ASR, and VLM stages.
     threads: int = 4
+    # Optional max output height; aspect ratio preserved.  When > 0 the
+    # ffmpeg pipeline scales each video down to fit within this height
+    # before encoding.  VLMs typically preprocess to ~448x448 internally,
+    # so 720 (or even 540) loses no useful detail for captioning while
+    # cutting encode work 2-4x.  0 disables (keep source resolution).
+    max_height: int = 0
 
 
 class VideoFrameTextDedupParams(_ParamsModel):

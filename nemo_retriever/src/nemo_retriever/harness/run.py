@@ -551,6 +551,7 @@ def _build_command(
         cmd += ["--video-transcode-preset", cfg.video_transcode_preset]
         cmd += ["--video-transcode-crf", str(cfg.video_transcode_crf)]
         cmd += ["--video-transcode-threads", str(cfg.video_transcode_threads)]
+        cmd += ["--video-transcode-max-height", str(cfg.video_transcode_max_height)]
     if cfg.extract_infographics:
         cmd += ["--extract-infographics"]
     if cfg.embed_modality:

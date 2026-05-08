@@ -128,7 +128,16 @@ def _normalize_preset(encoder: str, preset: str) -> str:
     return nvenc_to_x264.get(preset, preset)
 
 
-def _transcode_one(src: str, dest: str, *, encoder: str, preset: str, crf: int, threads: int = 4) -> None:
+def _transcode_one(
+    src: str,
+    dest: str,
+    *,
+    encoder: str,
+    preset: str,
+    crf: int,
+    threads: int = 4,
+    max_height: int = 0,
+) -> None:
     """Run ffmpeg to transcode src → dest using the given encoder."""
     Path(dest).parent.mkdir(parents=True, exist_ok=True)
     n_threads = max(1, int(threads))
@@ -138,7 +147,19 @@ def _transcode_one(src: str, dest: str, *, encoder: str, preset: str, crf: int, 
         # Input/decoder thread count
         "-threads", str(n_threads),
         "-i", src,
-        # Output/encoder thread count (must come AFTER -i to apply to the output)
+    ]
+    # Optional downscale: keeps aspect ratio, only scales down (never up).
+    # ``min(ih, max_height)`` clamps the output height to the source's, so a
+    # 480p source isn't upscaled to 720p; ``-2`` for the width snaps to the
+    # nearest even number (required by x264/h264).  The apostrophes around
+    # the height expression aren't shell quoting — even with subprocess.run
+    # using a list, ffmpeg's own ``-vf`` parser treats unprotected commas as
+    # filter separators, so ``min(ih,720)`` would be split into a malformed
+    # ``min(ih`` token.  Single quotes scope the comma to the expression.
+    if max_height and int(max_height) > 0:
+        cmd += ["-vf", f"scale=-2:'min(ih,{int(max_height)})'"]
+    # Output/encoder thread count (must come AFTER -i to apply to the output)
+    cmd += [
         "-c:v", encoder,
         "-threads", str(n_threads),
         "-preset", preset,
@@ -152,8 +173,8 @@ def _transcode_one(src: str, dest: str, *, encoder: str, preset: str, crf: int, 
     if encoder == "libx264":
         cmd[-1:-1] = ["-x264-params", f"threads={n_threads}"]
     logger.info(
-        "Transcoding %s -> %s (encoder=%s preset=%s crf=%d threads=%d)",
-        src, dest, encoder, preset, crf, n_threads,
+        "Transcoding %s -> %s (encoder=%s preset=%s crf=%d threads=%d max_height=%d)",
+        src, dest, encoder, preset, crf, n_threads, int(max_height),
     )
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=None)
     if result.returncode != 0:
@@ -222,6 +243,7 @@ class VideoTranscodeActor(AbstractOperator, CPUOperator):
                         preset=_normalize_preset(self._encoder, self._params.preset),
                         crf=self._params.crf,
                         threads=self._params.threads,
+                        max_height=self._params.max_height,
                     )
                 except Exception:
                     logger.exception("Transcode failed for %s; passing through original.", path)
