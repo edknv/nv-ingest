@@ -27,9 +27,9 @@ def test_bundled_yaml_uses_cwd_relative_paths(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)  # avoid picking up a stray ./retriever-service.yaml
     cfg = load_config(config_path=None)
 
-    assert not Path(cfg.processing.results_dir).is_absolute(), (
-        f"bundled YAML pins absolute results_dir: {cfg.processing.results_dir!r}"
-    )
-    assert not Path(cfg.vector_store.lancedb_uri).is_absolute(), (
-        f"bundled YAML pins absolute lancedb_uri: {cfg.vector_store.lancedb_uri!r}"
-    )
+    assert not Path(
+        cfg.processing.results_dir
+    ).is_absolute(), f"bundled YAML pins absolute results_dir: {cfg.processing.results_dir!r}"
+    assert not Path(
+        cfg.vector_store.lancedb_uri
+    ).is_absolute(), f"bundled YAML pins absolute lancedb_uri: {cfg.vector_store.lancedb_uri!r}"
