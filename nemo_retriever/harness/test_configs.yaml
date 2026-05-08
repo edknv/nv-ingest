@@ -297,6 +297,11 @@ datasets:
     video_frame_text_method: vlm           # Nemotron VLM captions each significant frame
     video_av_fuse_mode: per_scene          # Blog Method 1 / Reference Approach 1
     video_av_fuse_scene_visual_max_chars: 800
+    video_transcode: true
+    video_transcode_cache_dir: transcoded_videos
+    video_transcode_encoder: h264_nvenc
+    video_transcode_preset: p4
+    video_transcode_crf: 23
     recall_required: true
     recall_match_mode: audio_segment
     recall_adapter: none

@@ -17,6 +17,7 @@ from nemo_retriever.params import AudioVisualFuseParams
 from nemo_retriever.params import VideoFrameParams
 from nemo_retriever.params import VideoFrameTextDedupParams
 from nemo_retriever.params import VideoFrameVLMParams
+from nemo_retriever.params import VideoTranscodeParams
 from nemo_retriever.video.audio_visual_fuser import AudioVisualFuser
 from nemo_retriever.video.frame_actor import VideoFrameActor
 from nemo_retriever.video.frame_actor import dedup_video_frames
@@ -26,6 +27,7 @@ from nemo_retriever.video.ocr_actor import VideoFrameOCRCPUActor
 from nemo_retriever.video.ocr_actor import VideoFrameOCRGPUActor
 from nemo_retriever.video.split import VideoSplitActor
 from nemo_retriever.video.text_dedup import VideoFrameTextDedup
+from nemo_retriever.video.transcode import VideoTranscodeActor
 from nemo_retriever.video.vlm_captioner import VideoFrameVLMCaptioner
 from nemo_retriever.video.vlm_captioner import VideoFrameVLMCaptionerCPUActor
 from nemo_retriever.video.vlm_captioner import VideoFrameVLMCaptionerGPUActor
@@ -49,5 +51,7 @@ __all__ = [
     "VideoFrameVLMCaptionerGPUActor",
     "VideoFrameVLMParams",
     "VideoSplitActor",
+    "VideoTranscodeActor",
+    "VideoTranscodeParams",
     "video_path_to_frames_df",
 ]

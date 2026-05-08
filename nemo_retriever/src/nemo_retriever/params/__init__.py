@@ -38,6 +38,7 @@ from .models import VideoFrameTextDedupParams
 from .models import VideoFrameVLMParams
 from .models import VideoKeyFrameSelectParams
 from .models import VideoSceneDetectParams
+from .models import VideoTranscodeParams
 from .models import WebhookParams
 
 __all__ = [
@@ -77,5 +78,6 @@ __all__ = [
     "VideoFrameVLMParams",
     "VideoKeyFrameSelectParams",
     "VideoSceneDetectParams",
+    "VideoTranscodeParams",
     "WebhookParams",
 ]

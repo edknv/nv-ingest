@@ -47,6 +47,7 @@ from nemo_retriever.params import (
     TextChunkParams,
     VideoFrameParams,
     VideoFrameTextDedupParams,
+    VideoTranscodeParams,
     WebhookParams,
 )
 from nemo_retriever.utils.hf_cache import collect_hf_runtime_env
@@ -151,6 +152,7 @@ class GraphIngestor(ingestor):
         self._video_frame_params: Any = None
         self._video_text_dedup_params: Any = None
         self._av_fuse_params: Any = None
+        self._video_transcode_params: Any = None
         self._embed_params: Any = None
         self._split_params: Any = None
         self._caption_params: Any = None
@@ -224,6 +226,7 @@ class GraphIngestor(ingestor):
         video_frame_params: Optional[VideoFrameParams] = None,
         video_text_dedup_params: Optional[VideoFrameTextDedupParams] = None,
         av_fuse_params: Optional[AudioVisualFuseParams] = None,
+        video_transcode_params: Optional[VideoTranscodeParams] = None,
         extract_params: Optional[ExtractParams] = None,
         **kwargs: Any,
     ) -> "GraphIngestor":
@@ -245,6 +248,7 @@ class GraphIngestor(ingestor):
         self._video_frame_params = video_frame_params or VideoFrameParams()
         self._video_text_dedup_params = video_text_dedup_params or VideoFrameTextDedupParams()
         self._av_fuse_params = av_fuse_params or AudioVisualFuseParams()
+        self._video_transcode_params = video_transcode_params or VideoTranscodeParams()
         if extract_params is not None:
             self._extract_params = _resolve_api_key(extract_params)
         elif self._extract_params is None:
@@ -358,6 +362,7 @@ class GraphIngestor(ingestor):
                 video_frame_params=self._video_frame_params,
                 video_text_dedup_params=self._video_text_dedup_params,
                 av_fuse_params=self._av_fuse_params,
+                video_transcode_params=self._video_transcode_params,
                 embed_params=self._embed_params,
                 split_params=self._split_params,
                 caption_params=self._caption_params,
@@ -405,6 +410,7 @@ class GraphIngestor(ingestor):
                 video_frame_params=self._video_frame_params,
                 video_text_dedup_params=self._video_text_dedup_params,
                 av_fuse_params=self._av_fuse_params,
+                video_transcode_params=self._video_transcode_params,
                 embed_params=self._embed_params,
                 split_params=self._split_params,
                 caption_params=self._caption_params,

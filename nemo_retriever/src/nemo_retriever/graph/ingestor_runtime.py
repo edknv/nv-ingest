@@ -32,6 +32,7 @@ from nemo_retriever.video import (
     VideoFrameVLMCaptioner,
     VideoSplitActor,
 )
+from nemo_retriever.video.transcode import VideoTranscodeActor
 from nemo_retriever.ocr.ocr import resolve_ocr_archetype
 from nemo_retriever.parse.nemotron_parse import NemotronParseActor
 from nemo_retriever.page_elements.page_elements import PageElementDetectionActor
@@ -547,6 +548,7 @@ def build_graph(
     video_frame_params: Any | None = None,
     video_text_dedup_params: Any | None = None,
     av_fuse_params: Any | None = None,
+    video_transcode_params: Any | None = None,
     stage_order: tuple[str, ...] = (),
 ) -> Graph:
     """Build a batch graph from explicit params or a shared execution plan."""
@@ -611,10 +613,17 @@ def build_graph(
         method = video_frame_params.frame_text_method
         vlm_params = video_frame_params.vlm
 
-        graph = Graph() >> VideoSplitActor(
-            audio_chunk_params=audio_chunk_params,
-            video_frame_params=video_frame_params,
-        )
+        if video_transcode_params is not None and getattr(video_transcode_params, "enabled", False):
+            graph = Graph() >> VideoTranscodeActor(params=video_transcode_params)
+            graph = graph >> VideoSplitActor(
+                audio_chunk_params=audio_chunk_params,
+                video_frame_params=video_frame_params,
+            )
+        else:
+            graph = Graph() >> VideoSplitActor(
+                audio_chunk_params=audio_chunk_params,
+                video_frame_params=video_frame_params,
+            )
         if frames_enabled and method == "ocr":
             graph = graph >> VideoFrameOCRActor(
                 ocr_invoke_url=getattr(extract_params, "ocr_invoke_url", None),

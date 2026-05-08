@@ -265,6 +265,33 @@ class VideoFrameParams(_ParamsModel):
     vlm: VideoFrameVLMParams = Field(default_factory=VideoFrameVLMParams)
 
 
+class VideoTranscodeParams(_ParamsModel):
+    """Pre-transcode videos with slow software-decode codecs (e.g. AV1)
+    to H.264 before frame extraction.  Result is disk-cached so the cost
+    is paid once per video — every subsequent run reuses the cached H.264
+    files.
+
+    On a CUDA-capable host with NVENC, ``encoder=h264_nvenc`` runs the
+    encode step on the GPU.  The decode step is still software-bound by
+    the source codec; pre-transcoding does not speed up the *first* run
+    on AV1 footage — but it does mean every subsequent run reads H.264.
+    """
+
+    enabled: bool = False
+    cache_dir: str = "transcoded_videos"
+    target_codec: str = "h264"
+    encoder: str = "h264_nvenc"
+    encoder_fallback: str = "libx264"
+    # Codecs we don't bother transcoding (already fast on software decode).
+    skip_codecs: tuple[str, ...] = ("h264", "hevc", "h265")
+    # Quality target.  Lower CRF = better quality, larger files.  23 is
+    # ffmpeg's default for libx264 and a sane mid-quality target.
+    crf: int = 23
+    # Encoder preset.  For NVENC: p1 (fastest) - p7 (slowest).  For libx264:
+    # ultrafast - veryslow.
+    preset: str = "p4"
+
+
 class VideoFrameTextDedupParams(_ParamsModel):
     """Params for merging consecutive video_frame rows with identical OCR text.
 

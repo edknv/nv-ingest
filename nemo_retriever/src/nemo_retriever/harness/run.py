@@ -537,6 +537,16 @@ def _build_command(
         cmd += ["--video-vlm-prompt", cfg.video_vlm_prompt]
         cmd += ["--video-av-fuse-mode", cfg.video_av_fuse_mode]
         cmd += ["--video-av-fuse-scene-visual-max-chars", str(cfg.video_av_fuse_scene_visual_max_chars)]
+        cmd += ["--video-transcode" if cfg.video_transcode else "--no-video-transcode"]
+        # Resolve cache_dir relative to artifact_dir so reruns share the cache.
+        transcode_cache_dir = cfg.video_transcode_cache_dir
+        transcode_cache_path = Path(transcode_cache_dir).expanduser()
+        if not transcode_cache_path.is_absolute():
+            transcode_cache_path = (artifact_dir / transcode_cache_path).resolve()
+        cmd += ["--video-transcode-cache-dir", str(transcode_cache_path)]
+        cmd += ["--video-transcode-encoder", cfg.video_transcode_encoder]
+        cmd += ["--video-transcode-preset", cfg.video_transcode_preset]
+        cmd += ["--video-transcode-crf", str(cfg.video_transcode_crf)]
     if cfg.extract_infographics:
         cmd += ["--extract-infographics"]
     if cfg.embed_modality:
