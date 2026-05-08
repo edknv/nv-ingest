@@ -399,6 +399,7 @@ def _build_ingestor(
     video_frame_text_dedup: bool,
     video_frame_text_dedup_max_dropped_frames: int,
     video_av_fuse: bool,
+    video_adaptive_fps: bool = False,
     video_frame_text_method: str = "ocr",
     video_scene_detection: bool = False,
     video_scene_threshold: float = 30.0,
@@ -463,6 +464,7 @@ def _build_ingestor(
             video_frame_params=VideoFrameParams(
                 enabled=bool(video_extract_frames),
                 fps=float(video_frame_fps),
+                adaptive_fps=bool(video_adaptive_fps),
                 dedup=bool(video_frame_dedup),
                 frame_text_method=str(video_frame_text_method),
                 scene_detection=VideoSceneDetectParams(
@@ -929,6 +931,15 @@ def run(
         help="Frames per second to extract from videos (input_type=video).",
         rich_help_panel=_PANEL_VIDEO,
     ),
+    video_adaptive_fps: bool = typer.Option(
+        False,
+        "--video-adaptive-fps/--no-video-adaptive-fps",
+        help=(
+            "Pick fps per video by duration tier (<=1h: 2.0; <=2h: 1.0; "
+            "<=4h: 0.5; <=8h: 0.25; >8h: 0.125). Overrides --video-frame-fps when true."
+        ),
+        rich_help_panel=_PANEL_VIDEO,
+    ),
     video_frame_dedup: bool = typer.Option(
         True,
         "--video-frame-dedup/--no-video-frame-dedup",
@@ -1363,6 +1374,7 @@ def run(
             video_extract_audio=video_extract_audio,
             video_extract_frames=video_extract_frames,
             video_frame_fps=video_frame_fps,
+            video_adaptive_fps=video_adaptive_fps,
             video_frame_dedup=video_frame_dedup,
             video_frame_text_dedup=video_frame_text_dedup,
             video_frame_text_dedup_max_dropped_frames=video_frame_text_dedup_max_dropped_frames,

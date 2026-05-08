@@ -249,10 +249,17 @@ class VideoFrameParams(_ParamsModel):
     key-frame selection, blur+pHash+entropy dedup, VLM captioning, and
     the OCR-vs-VLM selector.  They compose; flipping any one does not
     require flipping the others.
+
+    When ``adaptive_fps=True``, the configured ``fps`` is ignored and
+    the per-video sampling rate is auto-selected by duration tier
+    (short videos get more frames per second, long videos fewer) so
+    the per-video frame budget stays roughly bounded regardless of
+    length. See ``frame_actor._ADAPTIVE_FPS_TIERS`` for the table.
     """
 
     enabled: bool = True
     fps: float = Field(default=1.0, gt=0.0)
+    adaptive_fps: bool = False
     max_frames: Optional[int] = None
     dedup: bool = True
     dedup_max_hamming_distance: int = 5

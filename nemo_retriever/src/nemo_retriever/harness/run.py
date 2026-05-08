@@ -513,6 +513,7 @@ def _build_command(
         cmd += ["--video-extract-audio" if cfg.video_extract_audio else "--no-video-extract-audio"]
         cmd += ["--video-extract-frames" if cfg.video_extract_frames else "--no-video-extract-frames"]
         cmd += ["--video-frame-fps", str(cfg.video_frame_fps)]
+        cmd += ["--video-adaptive-fps" if cfg.video_adaptive_fps else "--no-video-adaptive-fps"]
         cmd += ["--video-frame-dedup" if cfg.video_frame_dedup else "--no-video-frame-dedup"]
         cmd += ["--video-frame-text-dedup" if cfg.video_frame_text_dedup else "--no-video-frame-text-dedup"]
         cmd += [

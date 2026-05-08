@@ -29,6 +29,30 @@ from nemo_retriever.video import _content_types as _CT
 
 logger = logging.getLogger(__name__)
 
+# Adaptive fps tiers: (max_duration_seconds, fps).  Picked when the
+# duration is at or below max_duration_seconds.  Pattern doubles
+# duration as it halves fps, so the per-video frame budget stays at
+# roughly 7,200 frames regardless of length.  Tunable per deployment
+# via the source if a corpus has very different length distributions.
+_ADAPTIVE_FPS_TIERS: tuple[tuple[float, float], ...] = (
+    (3600.0, 2.0),    # <= 1h
+    (7200.0, 1.0),    # <= 2h
+    (14400.0, 0.5),   # <= 4h
+    (28800.0, 0.25),  # <= 8h
+)
+_ADAPTIVE_FPS_FALLBACK: float = 0.125  # > 8h
+
+
+def _choose_fps_for_duration(duration_secs: float) -> float:
+    """Pick a sampling fps from :data:`_ADAPTIVE_FPS_TIERS`."""
+    if duration_secs <= 0:
+        return _ADAPTIVE_FPS_TIERS[0][1]  # default to highest fps when duration unknown
+    for max_secs, fps in _ADAPTIVE_FPS_TIERS:
+        if duration_secs <= max_secs:
+            return fps
+    return _ADAPTIVE_FPS_FALLBACK
+
+
 # Output columns for downstream (OCR, embed, VDB).
 FRAME_COLUMNS = [
     "path",
@@ -108,6 +132,21 @@ class VideoFrameActor(AbstractOperator, CPUOperator):
 def _extract_one_legacy(source_path: str, params: VideoFrameParams, interface: MediaInterface) -> List[Dict[str, Any]]:
     """Extract frames from one video file and return a list of row dicts."""
     fps = float(params.fps)
+    if getattr(params, "adaptive_fps", False):
+        # Reuse scene_detection's CV2 fallback prober to avoid a hard PySceneDetect dep.
+        from nemo_retriever.video.scene_detection import _probe_duration_seconds
+
+        duration_secs = _probe_duration_seconds(source_path)
+        adaptive = _choose_fps_for_duration(duration_secs)
+        if adaptive != fps:
+            logger.info(
+                "Adaptive fps: %s (duration %.1fs) -> %.3f fps (override of configured %.3f).",
+                source_path,
+                duration_secs,
+                adaptive,
+                fps,
+            )
+        fps = adaptive
     half_window = 0.5 / fps
     with tempfile.TemporaryDirectory(prefix="retriever_video_frames_") as tmpdir:
         frames = interface.extract_frames(

@@ -69,6 +69,7 @@ class HarnessConfig:
     video_extract_audio: bool = True
     video_extract_frames: bool = True
     video_frame_fps: float = 1.0
+    video_adaptive_fps: bool = False
     video_frame_dedup: bool = True
     video_frame_text_dedup: bool = True
     video_frame_text_dedup_max_dropped_frames: int = 2
@@ -341,6 +342,7 @@ def _apply_env_overrides(config_dict: dict[str, Any]) -> None:
         "HARNESS_VIDEO_EXTRACT_AUDIO": ("video_extract_audio", _parse_bool),
         "HARNESS_VIDEO_EXTRACT_FRAMES": ("video_extract_frames", _parse_bool),
         "HARNESS_VIDEO_FRAME_FPS": ("video_frame_fps", _parse_number),
+        "HARNESS_VIDEO_ADAPTIVE_FPS": ("video_adaptive_fps", _parse_bool),
         "HARNESS_VIDEO_FRAME_DEDUP": ("video_frame_dedup", _parse_bool),
         "HARNESS_VIDEO_FRAME_TEXT_DEDUP": ("video_frame_text_dedup", _parse_bool),
         "HARNESS_VIDEO_FRAME_TEXT_DEDUP_MAX_DROPPED_FRAMES": (

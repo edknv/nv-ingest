@@ -176,3 +176,18 @@ def test_video_split_actor_scene_aware_paths(tmp_path) -> None:
         md = row["metadata"]
         assert md["scene_start_seconds"] >= 0.0
         assert md["scene_end_seconds"] > md["scene_start_seconds"]
+
+
+def test_choose_fps_for_duration_short_to_long() -> None:
+    from nemo_retriever.video.frame_actor import _choose_fps_for_duration
+
+    assert _choose_fps_for_duration(60.0) == 2.0       # 1 minute -> 2 fps
+    assert _choose_fps_for_duration(3599.0) == 2.0     # just under 1h
+    assert _choose_fps_for_duration(3600.0) == 2.0     # exactly 1h
+    assert _choose_fps_for_duration(3601.0) == 1.0     # just over 1h
+    assert _choose_fps_for_duration(7200.0) == 1.0     # exactly 2h
+    assert _choose_fps_for_duration(14400.0) == 0.5    # exactly 4h
+    assert _choose_fps_for_duration(28800.0) == 0.25   # exactly 8h
+    assert _choose_fps_for_duration(50000.0) == 0.125  # > 8h fallback
+    assert _choose_fps_for_duration(0.0) == 2.0        # unknown duration -> highest fps
+    assert _choose_fps_for_duration(-1.0) == 2.0       # negative -> highest fps
