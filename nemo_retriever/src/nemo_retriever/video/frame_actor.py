@@ -129,14 +129,37 @@ class VideoFrameActor(AbstractOperator, CPUOperator):
         return data
 
 
-def _extract_one_legacy(source_path: str, params: VideoFrameParams, interface: MediaInterface) -> List[Dict[str, Any]]:
-    """Extract frames from one video file and return a list of row dicts."""
+def _extract_one_legacy(
+    source_path: str,
+    params: VideoFrameParams,
+    interface: MediaInterface,
+    *,
+    start_seconds: float = 0.0,
+    end_seconds: float | None = None,
+) -> List[Dict[str, Any]]:
+    """Extract frames from one video file (or a time window of it) and return row dicts.
+
+    When ``start_seconds`` / ``end_seconds`` are set the ffmpeg invocation is
+    bounded to that window of the source video (no temp slicing — the original
+    file is read with output-side ``-ss`` / ``-t``). Frame timestamps in the
+    returned metadata are shifted back into the source video's absolute
+    timeline so downstream stages do not need to know about the chunking.
+    """
     fps = float(params.fps)
+    # When chunking, ``adaptive_fps`` should reflect chunk duration, not the
+    # whole video — short chunks otherwise force a low fps tier and miss
+    # detail. If a window was supplied, derive duration from it; else fall
+    # back to probing the source file.
     if getattr(params, "adaptive_fps", False):
         # Reuse scene_detection's CV2 fallback prober to avoid a hard PySceneDetect dep.
         from nemo_retriever.video.scene_detection import _probe_duration_seconds
 
-        duration_secs = _probe_duration_seconds(source_path)
+        if end_seconds is not None and end_seconds > start_seconds:
+            duration_secs = float(end_seconds) - float(start_seconds)
+        else:
+            duration_secs = _probe_duration_seconds(source_path)
+            if start_seconds > 0.0 and duration_secs > start_seconds:
+                duration_secs = duration_secs - float(start_seconds)
         adaptive = _choose_fps_for_duration(duration_secs)
         if adaptive != fps:
             logger.info(
@@ -148,12 +171,15 @@ def _extract_one_legacy(source_path: str, params: VideoFrameParams, interface: M
             )
         fps = adaptive
     half_window = 0.5 / fps
+    abs_offset = float(start_seconds or 0.0)
     with tempfile.TemporaryDirectory(prefix="retriever_video_frames_") as tmpdir:
         frames = interface.extract_frames(
             source_path,
             tmpdir,
             fps=fps,
             max_frames=params.max_frames,
+            start_seconds=abs_offset,
+            end_seconds=end_seconds,
         )
         if not frames:
             logger.warning("No frames extracted from %s (ffmpeg returned 0 files)", source_path)
@@ -168,13 +194,15 @@ def _extract_one_legacy(source_path: str, params: VideoFrameParams, interface: M
                 logger.warning("Could not read frame %s: %s", frame_path, e)
                 continue
             image_b64 = base64.b64encode(frame_bytes).decode("ascii")
+            # Shift bounded-window timestamps back into the source-video timeline.
+            abs_ts = float(timestamp) + abs_offset
             metadata = {
                 "source_path": source_path,
                 "frame_index": idx,
                 "fps": fps,
-                "frame_timestamp_seconds": float(timestamp),
-                "segment_start_seconds": max(0.0, float(timestamp) - half_window),
-                "segment_end_seconds": float(timestamp) + half_window,
+                "frame_timestamp_seconds": abs_ts,
+                "segment_start_seconds": max(0.0, abs_ts - half_window),
+                "segment_end_seconds": abs_ts + half_window,
                 "modality": _CT.VIDEO_FRAME,
                 "_content_type": _CT.VIDEO_FRAME,
             }
@@ -195,11 +223,102 @@ def _extract_one_legacy(source_path: str, params: VideoFrameParams, interface: M
         return rows
 
 
-def _extract_one(source_path: str, params: VideoFrameParams, interface: MediaInterface) -> List[Dict[str, Any]]:
-    """Route to scene-aware extraction when ``params.scene_detection.enabled``."""
+def _extract_one(
+    source_path: str,
+    params: VideoFrameParams,
+    interface: MediaInterface,
+    *,
+    start_seconds: float = 0.0,
+    end_seconds: float | None = None,
+) -> List[Dict[str, Any]]:
+    """Route to scene-aware extraction when ``params.scene_detection.enabled``.
+
+    Forwards ``start_seconds`` / ``end_seconds`` so per-chunk extraction
+    (used by :class:`~nemo_retriever.video.VideoFrameExtractActor`) flows
+    through both the legacy and scene-aware code paths.
+    """
     if params.scene_detection.enabled:
-        return _scene_aware_extract(source_path, params, interface)
-    return _extract_one_legacy(source_path, params, interface)
+        return _scene_aware_extract(
+            source_path,
+            params,
+            interface,
+            start_seconds=start_seconds,
+            end_seconds=end_seconds,
+        )
+    return _extract_one_legacy(
+        source_path,
+        params,
+        interface,
+        start_seconds=start_seconds,
+        end_seconds=end_seconds,
+    )
+
+
+def _emit_video_time_chunks(
+    source_path: str,
+    params: VideoFrameParams,
+) -> List[Dict[str, Any]]:
+    """Emit ``video_time_chunk`` descriptor rows — one per chunk_seconds window.
+
+    Each row carries ``path``, ``source_path``, content type, and metadata
+    with ``chunk_start_seconds`` / ``chunk_end_seconds`` and the configured
+    ``fps``.  No frames are extracted yet — that happens in
+    :class:`~nemo_retriever.video.VideoFrameExtractActor` (one Ray task
+    per chunk, so a long video parallelises across actors).
+
+    Falls back to a single ``[0.0, 0.0]`` chunk (downstream interprets as
+    "extract the whole file") when the source duration cannot be probed.
+    """
+    from nemo_retriever.video.scene_detection import _probe_duration_seconds
+
+    duration = _probe_duration_seconds(source_path)
+    if duration <= 0.0:
+        # Unknown duration — emit a single chunk covering the whole file.
+        duration = 0.0
+    chunk_seconds = max(1, int(params.time_chunking.chunk_seconds))
+    chunks: List[Dict[str, Any]] = []
+    if duration <= 0.0:
+        # Single chunk; downstream extracts the whole file (end=0 -> open-ended).
+        chunks.append(
+            {
+                "path": source_path,
+                "source_path": source_path,
+                "_content_type": _CT.VIDEO_TIME_CHUNK,
+                "metadata": {
+                    "_content_type": _CT.VIDEO_TIME_CHUNK,
+                    "modality": _CT.VIDEO_TIME_CHUNK,
+                    "source_path": source_path,
+                    "chunk_index": 0,
+                    "chunk_start_seconds": 0.0,
+                    "chunk_end_seconds": 0.0,  # 0 = "until end"
+                    "fps": float(params.fps),
+                },
+            }
+        )
+        return chunks
+    t = 0.0
+    chunk_idx = 0
+    while t < duration:
+        end = min(t + chunk_seconds, duration)
+        chunks.append(
+            {
+                "path": source_path,
+                "source_path": source_path,
+                "_content_type": _CT.VIDEO_TIME_CHUNK,
+                "metadata": {
+                    "_content_type": _CT.VIDEO_TIME_CHUNK,
+                    "modality": _CT.VIDEO_TIME_CHUNK,
+                    "source_path": source_path,
+                    "chunk_index": chunk_idx,
+                    "chunk_start_seconds": float(t),
+                    "chunk_end_seconds": float(end),
+                    "fps": float(params.fps),
+                },
+            }
+        )
+        chunk_idx += 1
+        t = end
+    return chunks
 
 
 def _attach_scene_metadata(
@@ -231,20 +350,36 @@ def _scene_aware_extract(
     source_path: str,
     params: VideoFrameParams,
     interface: MediaInterface,
+    *,
+    start_seconds: float = 0.0,
+    end_seconds: float | None = None,
 ) -> List[Dict[str, Any]]:
     """Run scene-aware frame extraction with optional SSIM and advanced dedup.
 
     Strategy: extract all frames once at ``params.fps`` (matching the
     legacy path), label each with its scene_id from PySceneDetect, then
     apply SSIM key-frame select and advanced dedup *per-scene* before
-    merging the surviving rows.  This avoids modifying ``MediaInterface``
-    to support time-bounded extraction.
+    merging the surviving rows.
+
+    When ``start_seconds`` / ``end_seconds`` are provided (per-chunk
+    extraction from :class:`~nemo_retriever.video.VideoFrameExtractActor`),
+    raw extraction is bounded to that window and PySceneDetect runs on
+    the full source file; we filter the returned scene list down to the
+    window, clamping any scene that crosses a chunk border. This means
+    a scene boundary that crosses a chunk border becomes two scenes —
+    an accepted trade-off to gain per-chunk parallelism.
     """
     from nemo_retriever.video.advanced_dedup import advanced_dedup_indices
     from nemo_retriever.video.key_frame_select import select_key_frame_indices
     from nemo_retriever.video.scene_detection import detect_scenes
 
-    raw_rows = _extract_one_legacy(source_path, params, interface)
+    raw_rows = _extract_one_legacy(
+        source_path,
+        params,
+        interface,
+        start_seconds=start_seconds,
+        end_seconds=end_seconds,
+    )
     if not raw_rows:
         return raw_rows
 
@@ -262,6 +397,35 @@ def _scene_aware_extract(
         )
         scenes = [(0.0, max_ts + 1.0)]
     assert scenes, "detect_scenes must return at least one scene; see scene_detection.detect_scenes fallback"
+
+    # Restrict / clamp scenes to the chunk window when one was supplied.
+    chunk_start = float(start_seconds or 0.0)
+    chunk_end = float(end_seconds) if (end_seconds is not None and end_seconds > 0.0) else None
+    if chunk_start > 0.0 or chunk_end is not None:
+        clamped: List[tuple[float, float]] = []
+        for s_start, s_end in scenes:
+            s_start = float(s_start)
+            s_end = float(s_end)
+            if chunk_end is not None and s_start >= chunk_end:
+                continue
+            if s_end <= chunk_start:
+                continue
+            clamped.append(
+                (
+                    max(s_start, chunk_start),
+                    min(s_end, chunk_end) if chunk_end is not None else s_end,
+                )
+            )
+        if clamped:
+            scenes = clamped
+        else:
+            # No scene overlapped the window; fall back to a single scene
+            # spanning the chunk so frames still get a scene_id stamped.
+            max_ts = max(
+                float((r.get("metadata") or {}).get("frame_timestamp_seconds") or 0.0)
+                for r in raw_rows
+            )
+            scenes = [(chunk_start, max(chunk_end if chunk_end is not None else max_ts + 1.0, max_ts + 1.0))]
 
     rows = _attach_scene_metadata(list(raw_rows), scenes)
 

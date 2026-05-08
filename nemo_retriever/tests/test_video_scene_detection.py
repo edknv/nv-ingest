@@ -146,6 +146,7 @@ def test_video_split_actor_scene_aware_paths(tmp_path) -> None:
         AudioChunkParams,
         VideoAdvancedDedupParams,
         VideoFrameParams,
+        VideoFrameTimeChunkParams,
         VideoKeyFrameSelectParams,
         VideoSceneDetectParams,
     )
@@ -161,6 +162,10 @@ def test_video_split_actor_scene_aware_paths(tmp_path) -> None:
         key_frame_selection=VideoKeyFrameSelectParams(enabled=True, z_threshold=2.0),
         advanced_dedup=VideoAdvancedDedupParams(enabled=True),
         dedup=False,  # legacy dhash off
+        # This test exercises VideoSplitActor's legacy single-pass scene-aware
+        # extraction path; with time_chunking on (the default) frame extraction
+        # moves to VideoFrameExtractActor and VideoSplit emits chunk descriptors.
+        time_chunking=VideoFrameTimeChunkParams(enabled=False),
     )
     audio = AudioChunkParams(enabled=False)
     actor = VideoSplitActor(audio_chunk_params=audio, video_frame_params=params)

@@ -18,5 +18,10 @@ AUDIO = "audio"
 # Single OCR'd video frame.
 VIDEO_FRAME = "video_frame"
 
+# Time-window descriptor for a slice of the source video; consumed by
+# :class:`~nemo_retriever.video.VideoFrameExtractActor` to do per-chunk
+# frame extraction so long videos can be parallelised across actors.
+VIDEO_TIME_CHUNK = "video_time_chunk"
+
 # Fused row: an audio utterance joined with concurrent frame OCR text.
 AUDIO_VISUAL = "audio_visual"

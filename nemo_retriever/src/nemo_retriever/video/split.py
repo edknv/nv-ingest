@@ -33,7 +33,7 @@ from nemo_retriever.graph.cpu_operator import CPUOperator
 from nemo_retriever.graph.designer import designer_component
 from nemo_retriever.params import AudioChunkParams, VideoFrameParams
 from nemo_retriever.video import _content_types as _CT
-from nemo_retriever.video.frame_actor import _extract_one, dedup_video_frames
+from nemo_retriever.video.frame_actor import _emit_video_time_chunks, _extract_one, dedup_video_frames
 
 logger = logging.getLogger(__name__)
 
@@ -96,12 +96,24 @@ class VideoSplitActor(AbstractOperator, CPUOperator):
                     rows.append(chunk_row)
 
             if self._video_frame_params.enabled:
-                try:
-                    frame_rows = _extract_one(path_str, self._video_frame_params, self._interface)
-                except Exception as exc:
-                    logger.exception("Frame extraction failed for %s: %s", path_str, exc)
-                    frame_rows = []
-                rows.extend(frame_rows)
+                if getattr(self._video_frame_params.time_chunking, "enabled", True):
+                    # Emit time-chunk descriptors; frame extraction happens in
+                    # VideoFrameExtractActor so a long video is parallelised
+                    # across multiple Ray actors.
+                    try:
+                        chunk_rows = _emit_video_time_chunks(path_str, self._video_frame_params)
+                    except Exception as exc:
+                        logger.exception("Time-chunk emission failed for %s: %s", path_str, exc)
+                        chunk_rows = []
+                    rows.extend(chunk_rows)
+                else:
+                    # Legacy single-pass extraction.
+                    try:
+                        frame_rows = _extract_one(path_str, self._video_frame_params, self._interface)
+                    except Exception as exc:
+                        logger.exception("Frame extraction failed for %s: %s", path_str, exc)
+                        frame_rows = []
+                    rows.extend(frame_rows)
 
         if not rows:
             return pd.DataFrame()

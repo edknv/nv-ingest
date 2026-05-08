@@ -21,6 +21,7 @@ from nemo_retriever.video.audio_visual_fuser import AudioVisualFuser
 from nemo_retriever.video.frame_actor import VideoFrameActor
 from nemo_retriever.video.frame_actor import dedup_video_frames
 from nemo_retriever.video.frame_actor import video_path_to_frames_df
+from nemo_retriever.video.frame_extract import VideoFrameExtractActor
 from nemo_retriever.video.ocr_actor import VideoFrameOCRActor
 from nemo_retriever.video.ocr_actor import VideoFrameOCRCPUActor
 from nemo_retriever.video.ocr_actor import VideoFrameOCRGPUActor
@@ -39,6 +40,7 @@ __all__ = [
     "AudioVisualFuseParams",
     "dedup_video_frames",
     "VideoFrameActor",
+    "VideoFrameExtractActor",
     "VideoFrameOCRActor",
     "VideoFrameOCRCPUActor",
     "VideoFrameOCRGPUActor",

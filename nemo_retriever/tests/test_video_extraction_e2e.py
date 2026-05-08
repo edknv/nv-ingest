@@ -53,6 +53,7 @@ from nemo_retriever.params import (
 )
 from nemo_retriever.video import (
     AudioVisualFuser,
+    VideoFrameExtractActor,
     VideoFrameTextDedup,
     VideoFrameVLMCaptionerCPUActor,
     VideoSplitActor,
@@ -95,7 +96,12 @@ def test_full_pipeline_with_all_five_gaps_enabled(tmp_path: pathlib.Path) -> Non
         audio_chunk_params=AudioChunkParams(enabled=False),
         video_frame_params=frame_params,
     )
-    rows = split_actor.process(pd.DataFrame([{"path": str(video)}]))
+    chunk_rows = split_actor.process(pd.DataFrame([{"path": str(video)}]))
+    # With time_chunking enabled (default), VideoSplit emits chunk descriptors;
+    # VideoFrameExtractActor turns those into video_frame rows.
+    assert (chunk_rows["_content_type"] == "video_time_chunk").any()
+    extract_actor = VideoFrameExtractActor(params=frame_params)
+    rows = extract_actor.process(chunk_rows)
     assert (rows["_content_type"] == "video_frame").any()
     assert {row["metadata"]["scene_id"] for _, row in rows.iterrows()} == {0, 1, 2}
 

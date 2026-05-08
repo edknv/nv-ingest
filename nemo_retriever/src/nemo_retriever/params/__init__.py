@@ -35,6 +35,7 @@ from .models import VdbUploadParams
 from .models import VideoAdvancedDedupParams
 from .models import VideoFrameParams
 from .models import VideoFrameTextDedupParams
+from .models import VideoFrameTimeChunkParams
 from .models import VideoFrameVLMParams
 from .models import VideoKeyFrameSelectParams
 from .models import VideoSceneDetectParams
@@ -74,6 +75,7 @@ __all__ = [
     "VideoAdvancedDedupParams",
     "VideoFrameParams",
     "VideoFrameTextDedupParams",
+    "VideoFrameTimeChunkParams",
     "VideoFrameVLMParams",
     "VideoKeyFrameSelectParams",
     "VideoSceneDetectParams",

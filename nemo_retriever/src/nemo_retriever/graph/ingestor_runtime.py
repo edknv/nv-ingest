@@ -27,6 +27,7 @@ from nemo_retriever.graph.multi_type_extract_operator import MultiTypeExtractOpe
 from nemo_retriever.text_embed.operators import _BatchEmbedActor
 from nemo_retriever.video import (
     AudioVisualFuser,
+    VideoFrameExtractActor,
     VideoFrameOCRActor,
     VideoFrameStripImagesActor,
     VideoFrameTextDedup,
@@ -364,6 +365,27 @@ def batch_tuning_to_node_overrides(
             # for it (default unit is bytes; 10 GiB matches observed avg).
             _set(VideoSplitActor.__name__, "memory", 10 * 1024 * 1024 * 1024)
 
+            # VideoFrameExtractActor is per-chunk (typically 10 min of
+            # source video), so it parallelises far better than
+            # VideoSplitActor.  Default to cpus // 4 (capped at 8); each
+            # chunk task holds ~chunk_seconds worth of frames so 4 GiB
+            # per task is ample headroom for the default 10-min chunk.
+            # Override via NEMO_RETRIEVER_VIDEO_FRAME_EXTRACT_MAX_ACTORS.
+            if getattr(video_frame_params.time_chunking, "enabled", True):
+                video_frame_extract_max = int(
+                    os.environ.get("NEMO_RETRIEVER_VIDEO_FRAME_EXTRACT_MAX_ACTORS", "8")
+                )
+                _set(
+                    VideoFrameExtractActor.__name__,
+                    "concurrency",
+                    max(1, min(cpus // 4, video_frame_extract_max)),
+                )
+                _set(
+                    VideoFrameExtractActor.__name__,
+                    "memory",
+                    4 * 1024 * 1024 * 1024,
+                )
+
     return overrides
 
 
@@ -606,6 +628,12 @@ def build_graph(
             audio_chunk_params=audio_chunk_params,
             video_frame_params=video_frame_params,
         )
+        # When time_chunking is enabled (default), VideoSplitActor emits
+        # only chunk descriptors and per-chunk frame extraction happens
+        # in VideoFrameExtractActor — Ray Data spreads the chunk rows
+        # across multiple actors so a single long video parallelises.
+        if frames_enabled and getattr(video_frame_params.time_chunking, "enabled", True):
+            graph = graph >> VideoFrameExtractActor(params=video_frame_params)
         if frames_enabled and method == "ocr":
             graph = graph >> VideoFrameOCRActor(
                 ocr_invoke_url=getattr(extract_params, "ocr_invoke_url", None),

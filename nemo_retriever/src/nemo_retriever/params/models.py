@@ -228,6 +228,22 @@ class VideoFrameVLMParams(_ParamsModel):
     max_tokens: int = 1024
 
 
+class VideoFrameTimeChunkParams(_ParamsModel):
+    """Time-chunk videos so a single long file can be processed by
+    multiple Ray actors in parallel.
+
+    When enabled, ``VideoSplitActor`` emits ``video_time_chunk`` rows —
+    one per ``chunk_seconds`` window of the source video — and
+    ``VideoFrameExtractActor`` does the actual frame extraction per chunk.
+    Scene detection, SSIM key-frame select, and advanced dedup all run
+    per-chunk (scene boundaries that cross a chunk border become two
+    scenes; the recall hit is small for typical lecture content).
+    """
+
+    enabled: bool = True
+    chunk_seconds: int = 600  # 10 min default; small enough to parallelise long videos, big enough not to fragment scene detection
+
+
 class VideoFrameParams(_ParamsModel):
     """Params for video frame extraction (ffmpeg fps + perceptual-hash dedup).
 
@@ -255,6 +271,13 @@ class VideoFrameParams(_ParamsModel):
     (short videos get more frames per second, long videos fewer) so
     the per-video frame budget stays roughly bounded regardless of
     length. See ``frame_actor._ADAPTIVE_FPS_TIERS`` for the table.
+
+    When ``time_chunking.enabled=True`` (default), ``VideoSplitActor``
+    only emits ``video_time_chunk`` descriptor rows; the actual frame
+    extraction happens per-chunk in ``VideoFrameExtractActor`` so a
+    single long video can be parallelised across multiple Ray actors.
+    Set ``time_chunking.enabled=False`` to fall back to the legacy
+    single-pass extraction performed inside ``VideoSplitActor``.
     """
 
     enabled: bool = True
@@ -270,6 +293,7 @@ class VideoFrameParams(_ParamsModel):
     key_frame_selection: VideoKeyFrameSelectParams = Field(default_factory=VideoKeyFrameSelectParams)
     advanced_dedup: VideoAdvancedDedupParams = Field(default_factory=VideoAdvancedDedupParams)
     vlm: VideoFrameVLMParams = Field(default_factory=VideoFrameVLMParams)
+    time_chunking: VideoFrameTimeChunkParams = Field(default_factory=VideoFrameTimeChunkParams)
 
 
 class VideoFrameTextDedupParams(_ParamsModel):

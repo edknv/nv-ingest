@@ -282,13 +282,23 @@ class MediaInterface(_LoaderInterface):
         output_dir: str,
         fps: float = 1.0,
         max_frames: Optional[int] = None,
+        start_seconds: float = 0.0,
+        end_seconds: Optional[float] = None,
     ) -> List[Tuple[str, float]]:
         """Extract frames at ``fps`` frames/second; return ``[(png_path, timestamp_s), ...]``.
 
-        Each timestamp is the wall-clock midpoint of the frame's window in the
-        original video: ``frame_index / fps + 0.5 / fps``. This matches the
+        Each timestamp is the wall-clock midpoint of the frame's window relative
+        to the bounded extraction window: ``frame_index / fps + 0.5 / fps``.
+        Callers that pass ``start_seconds > 0`` are responsible for shifting
+        timestamps back into the original video's timeline. This matches the
         canonical ``segment_start_seconds`` / ``segment_end_seconds`` convention
         used downstream by the recall scorer.
+
+        When ``start_seconds > 0`` ffmpeg uses ``-ss`` as an *output* seek (after
+        ``-i``) so the seek lands on the exact wall-clock instant rather than the
+        nearest preceding keyframe. When ``end_seconds`` is provided the
+        extraction is bounded to ``end_seconds - start_seconds`` of duration via
+        ``-t``; setting ``end_seconds=None`` extracts to the end of the file.
 
         Returns an empty list when ffmpeg fails or no frames are produced.
         """
@@ -303,11 +313,32 @@ class MediaInterface(_LoaderInterface):
         file_name = path_file.stem
         output_pattern = str(out_dir / f"{file_name}_frame_%06d.png")
 
+        start_seconds = float(start_seconds or 0.0)
+        if start_seconds < 0.0:
+            raise ValueError(f"start_seconds must be >= 0, got {start_seconds}")
+        duration: Optional[float] = None
+        if end_seconds is not None:
+            duration = float(end_seconds) - start_seconds
+            if duration <= 0.0:
+                # Empty window — nothing to extract.
+                return []
+
         try:
             output_kwargs: dict = {"vf": f"fps={fps}", "q:v": 2}
             if max_frames is not None and int(max_frames) > 0:
                 output_kwargs["frames:v"] = int(max_frames)
-            stream = ffmpeg.input(str(input_path)).output(output_pattern, **output_kwargs).overwrite_output()
+            if duration is not None:
+                output_kwargs["t"] = duration
+            input_kwargs: dict = {}
+            if start_seconds > 0.0:
+                # Output-side seek (after -i) for accuracy: lands exactly on
+                # ``start_seconds`` rather than the nearest preceding keyframe.
+                output_kwargs["ss"] = start_seconds
+            stream = (
+                ffmpeg.input(str(input_path), **input_kwargs)
+                .output(output_pattern, **output_kwargs)
+                .overwrite_output()
+            )
             _run_ffmpeg(stream, label="extract_frames", input_path=str(input_path))
         except ffmpeg.Error as e:
             stderr = e.stderr.decode() if getattr(e, "stderr", None) else ""

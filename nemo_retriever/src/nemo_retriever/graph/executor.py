@@ -56,6 +56,19 @@ def _vllm_actor_classes() -> tuple[type, ...]:
     )
 
 
+def _path_only_first_stage_classes() -> tuple[type, ...]:
+    """Actor classes whose ``process()`` reads the file from disk via ffmpeg
+    and never touches a ``bytes`` column.
+
+    When the linearized graph starts with one of these, use a path-only
+    Ray Data reader so the file's bytes never enter the object store.
+    """
+    from nemo_retriever.audio.chunk_actor import MediaChunkActor
+    from nemo_retriever.video.split import VideoSplitActor
+
+    return (MediaChunkActor, VideoSplitActor)
+
+
 class AbstractExecutor(ABC):
     """Base class for pipeline executors.
 
@@ -287,6 +300,8 @@ class RayDataExecutor(AbstractExecutor):
         available_gpus = cluster.available_gpu_count()
         resolved_graph = resolve_graph(self.graph, cluster)
 
+        nodes = self._linearize(resolved_graph)
+
         if isinstance(data, rd.Dataset):
             ds = data
         elif isinstance(data, (str, list)):
@@ -295,8 +310,20 @@ class RayDataExecutor(AbstractExecutor):
             for pattern in paths:
                 matches = _glob.glob(pattern, recursive=True)
                 expanded.extend(sorted(matches) if matches else [pattern])
-            ds = rd.read_binary_files(expanded, include_paths=True)
-        nodes = self._linearize(resolved_graph)
+            first_stage_class = nodes[0].operator_class if nodes else None
+            path_only_classes = _path_only_first_stage_classes()
+            if first_stage_class is not None and issubclass(first_stage_class, path_only_classes):
+                # ffmpeg reads the path from disk; we don't need to load
+                # bytes into the object store.  Saves 40+ GiB on a
+                # video-corpus run.
+                logger.info(
+                    "First graph stage %s is path-only; using ray.data.from_items "
+                    "instead of read_binary_files (no bytes column will be loaded).",
+                    first_stage_class.__name__,
+                )
+                ds = rd.from_items([{"path": p} for p in expanded])
+            else:
+                ds = rd.read_binary_files(expanded, include_paths=True)
 
         # On a single-GPU host, vLLM-backed actors require exclusive GPU
         # access (VLLM_GPUS_PER_ACTOR = 1.0).  If any non-vLLM GPU actor
