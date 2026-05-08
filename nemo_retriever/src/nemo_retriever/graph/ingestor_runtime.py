@@ -364,15 +364,13 @@ def batch_tuning_to_node_overrides(
             # for it (default unit is bytes; 10 GiB matches observed avg).
             _set(VideoSplitActor.__name__, "memory", 10 * 1024 * 1024 * 1024)
 
-            # VideoTranscodeActor runs ffmpeg per row.  Default to 4 actors so
-            # software-encode parallelism actually uses the host's CPUs.  Each
-            # actor's per-ffmpeg thread count (VideoTranscodeParams.threads,
-            # default 4) keeps the total active thread count bounded — 4
-            # actors × 4 threads = 16 threads on a 32-CPU host, leaving
-            # headroom for VideoSplit, ASR, VLM, and Store stages.
+            # Default to 8 transcode actors (or cpus//2, whichever is smaller).
+            # Each ffmpeg uses ~4 internal threads (default), so 8 actors × 4
+            # threads = 32 threads — exactly saturates a 32-CPU host while
+            # still leaving headroom for VideoSplit + ASR + VLM + others.
             # Override via NEMO_RETRIEVER_VIDEO_TRANSCODE_MAX_ACTORS.
-            video_transcode_max = int(os.environ.get("NEMO_RETRIEVER_VIDEO_TRANSCODE_MAX_ACTORS", "4"))
-            _set(VideoTranscodeActor.__name__, "concurrency", max(1, min(cpus // 4, video_transcode_max)))
+            video_transcode_max = int(os.environ.get("NEMO_RETRIEVER_VIDEO_TRANSCODE_MAX_ACTORS", "8"))
+            _set(VideoTranscodeActor.__name__, "concurrency", max(1, min(cpus // 2, video_transcode_max)))
             _set(VideoTranscodeActor.__name__, "memory", 2 * 1024 * 1024 * 1024)  # 2 GiB per task
 
     return overrides

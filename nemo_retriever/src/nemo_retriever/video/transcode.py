@@ -131,21 +131,29 @@ def _normalize_preset(encoder: str, preset: str) -> str:
 def _transcode_one(src: str, dest: str, *, encoder: str, preset: str, crf: int, threads: int = 4) -> None:
     """Run ffmpeg to transcode src → dest using the given encoder."""
     Path(dest).parent.mkdir(parents=True, exist_ok=True)
+    n_threads = max(1, int(threads))
     cmd = [
         "ffmpeg",
         "-y",
-        "-threads", str(max(1, int(threads))),
+        # Input/decoder thread count
+        "-threads", str(n_threads),
         "-i", src,
+        # Output/encoder thread count (must come AFTER -i to apply to the output)
         "-c:v", encoder,
+        "-threads", str(n_threads),
         "-preset", preset,
         "-crf", str(crf),
         "-c:a", "copy",
         "-loglevel", "warning",
         dest,
     ]
+    # libx264 specifically also takes its own internal threads via x264-params,
+    # which has stronger guarantees than the generic -threads on the codec.
+    if encoder == "libx264":
+        cmd[-1:-1] = ["-x264-params", f"threads={n_threads}"]
     logger.info(
         "Transcoding %s -> %s (encoder=%s preset=%s crf=%d threads=%d)",
-        src, dest, encoder, preset, crf, threads,
+        src, dest, encoder, preset, crf, n_threads,
     )
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=None)
     if result.returncode != 0:
