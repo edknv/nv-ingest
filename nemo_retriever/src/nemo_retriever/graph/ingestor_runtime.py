@@ -365,26 +365,27 @@ def batch_tuning_to_node_overrides(
             # for it (default unit is bytes; 10 GiB matches observed avg).
             _set(VideoSplitActor.__name__, "memory", 10 * 1024 * 1024 * 1024)
 
-            # VideoFrameExtractActor is per-chunk (typically 10 min of
-            # source video), so it parallelises far better than
-            # VideoSplitActor.  Default to cpus // 4 (capped at 8); each
-            # chunk task holds ~chunk_seconds worth of frames so 4 GiB
-            # per task is ample headroom for the default 10-min chunk.
-            # Override via NEMO_RETRIEVER_VIDEO_FRAME_EXTRACT_MAX_ACTORS.
+            # VideoFrameExtractActor processes one ~10-min chunk per task,
+            # decoded by ffmpeg with internal threading.  Each task is
+            # short and memory-bounded by adaptive_fps, so we can run many
+            # in parallel.  Reserve ~8 CPUs for the other stages (VLM,
+            # ASR, Embed, VideoSplit, ReadBinary, Strip/TextDedup/Fuser)
+            # and give the rest to extraction.  Override via
+            # NEMO_RETRIEVER_VIDEO_FRAME_EXTRACT_MAX_ACTORS.
             if getattr(video_frame_params.time_chunking, "enabled", True):
+                video_frame_extract_default_cap = max(2, cpus - 8)
                 video_frame_extract_max = int(
-                    os.environ.get("NEMO_RETRIEVER_VIDEO_FRAME_EXTRACT_MAX_ACTORS", "8")
+                    os.environ.get(
+                        "NEMO_RETRIEVER_VIDEO_FRAME_EXTRACT_MAX_ACTORS",
+                        str(video_frame_extract_default_cap),
+                    )
                 )
-                _set(
-                    VideoFrameExtractActor.__name__,
-                    "concurrency",
-                    max(1, min(cpus // 4, video_frame_extract_max)),
-                )
-                _set(
-                    VideoFrameExtractActor.__name__,
-                    "memory",
-                    4 * 1024 * 1024 * 1024,
-                )
+                # Hard upper bound to keep ffmpeg session counts reasonable.
+                video_frame_extract_concurrency = max(1, min(cpus, video_frame_extract_max, 24))
+                _set(VideoFrameExtractActor.__name__, "concurrency", video_frame_extract_concurrency)
+                # Per-task memory: chunks are bounded by adaptive_fps (≤ ~7200
+                # frames at low resolution) so 2 GiB is generous.
+                _set(VideoFrameExtractActor.__name__, "memory", 2 * 1024 * 1024 * 1024)
 
     return overrides
 

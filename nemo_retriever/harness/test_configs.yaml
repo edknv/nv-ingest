@@ -275,7 +275,7 @@ datasets:
     audio_split_interval: 36000
     video_extract_audio: true
     video_extract_frames: true
-    video_frame_fps: 4.0  # reference samples at 4 fps before scene-aware filtering
+    video_frame_fps: 2.0  # reference samples at 2 fps before scene-aware filtering
     video_adaptive_fps: true   # auto-tier sampling fps by duration; bounds per-video frame count
     video_frame_dedup: false  # legacy dhash off; advanced dedup handles it per-scene
     video_av_fuse: true
