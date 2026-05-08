@@ -15,7 +15,7 @@ from nemo_retriever.params import VideoTranscodeParams
 def test_disabled_passthrough() -> None:
     from nemo_retriever.video.transcode import VideoTranscodeActor
 
-    with mock.patch("nemo_retriever.video.transcode._encoder_available", return_value=True):
+    with mock.patch("nemo_retriever.video.transcode._encoder_works", return_value=True):
         actor = VideoTranscodeActor(VideoTranscodeParams(enabled=False))
     df = pd.DataFrame([{"path": "/tmp/foo.mp4", "bytes": b"abc"}])
     out = actor.process(df)
@@ -26,7 +26,7 @@ def test_disabled_passthrough() -> None:
 def test_skips_h264_codec(monkeypatch) -> None:
     from nemo_retriever.video.transcode import VideoTranscodeActor
 
-    with mock.patch("nemo_retriever.video.transcode._encoder_available", return_value=True):
+    with mock.patch("nemo_retriever.video.transcode._encoder_works", return_value=True):
         actor = VideoTranscodeActor(VideoTranscodeParams(enabled=True))
     monkeypatch.setattr("nemo_retriever.video.transcode._ffprobe_codec", lambda _: "h264")
     transcode_called = []
@@ -43,7 +43,7 @@ def test_skips_h264_codec(monkeypatch) -> None:
 def test_av1_triggers_transcode_then_caches(tmp_path, monkeypatch) -> None:
     from nemo_retriever.video.transcode import VideoTranscodeActor
 
-    with mock.patch("nemo_retriever.video.transcode._encoder_available", return_value=True):
+    with mock.patch("nemo_retriever.video.transcode._encoder_works", return_value=True):
         actor = VideoTranscodeActor(
             VideoTranscodeParams(enabled=True, cache_dir=str(tmp_path), encoder="h264_nvenc"),
         )
@@ -67,3 +67,32 @@ def test_av1_triggers_transcode_then_caches(tmp_path, monkeypatch) -> None:
     out2 = actor.process(df)
     assert len(transcode_calls) == 0
     assert out2.iloc[0]["path"] == out.iloc[0]["path"]
+
+
+def test_resolve_encoder_falls_back_when_primary_probe_fails(monkeypatch) -> None:
+    from nemo_retriever.video.transcode import _resolve_encoder
+
+    probed = []
+    def fake_works(enc: str) -> bool:
+        probed.append(enc)
+        return enc == "libx264"
+
+    monkeypatch.setattr("nemo_retriever.video.transcode._encoder_works", fake_works)
+    chosen = _resolve_encoder(
+        VideoTranscodeParams(encoder="h264_nvenc", encoder_fallback="libx264"),
+    )
+    assert chosen == "libx264"
+    assert probed == ["h264_nvenc", "libx264"]
+
+
+def test_normalize_preset_translates_nvenc_to_x264() -> None:
+    from nemo_retriever.video.transcode import _normalize_preset
+
+    # NVENC encoder: pass through.
+    assert _normalize_preset("h264_nvenc", "p4") == "p4"
+    # libx264 encoder: translate.
+    assert _normalize_preset("libx264", "p4") == "medium"
+    assert _normalize_preset("libx264", "p1") == "ultrafast"
+    assert _normalize_preset("libx264", "p7") == "veryslow"
+    # Non-mapped preset: pass through.
+    assert _normalize_preset("libx264", "medium") == "medium"

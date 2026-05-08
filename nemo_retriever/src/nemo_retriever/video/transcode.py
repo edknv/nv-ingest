@@ -52,33 +52,80 @@ def _ffprobe_codec(path: str) -> str:
         return ""
 
 
-def _encoder_available(encoder: str) -> bool:
-    """Return True if the given ffmpeg encoder is available on this host."""
+def _encoder_works(encoder: str) -> bool:
+    """Run a minimal encode test to verify the encoder actually works in this process.
+
+    Checks not just whether the encoder is registered (``ffmpeg -encoders``),
+    but whether it can actually initialize and encode a single frame in the
+    current Ray worker context.  This catches the
+    ``CUDA_ERROR_NO_DEVICE: no CUDA-capable device is detected`` failure
+    that happens when NVENC is registered in ffmpeg but the worker has
+    ``CUDA_VISIBLE_DEVICES=""`` (the default for Ray ``num_gpus=0`` actors).
+    """
+    cmd = [
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        "-f", "lavfi", "-i", "color=size=64x64:rate=1:color=black",
+        "-t", "0.5",
+        "-c:v", encoder,
+        "-f", "null", "-",
+    ]
     try:
-        result = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-encoders"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        return f" {encoder} " in result.stdout
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        if result.returncode != 0:
+            logger.debug(
+                "Encoder %s probe failed (rc=%d): %s",
+                encoder, result.returncode, result.stderr[:200],
+            )
+            return False
+        return True
     except Exception:
+        logger.debug("Encoder %s probe raised", encoder, exc_info=True)
         return False
 
 
 def _resolve_encoder(params: VideoTranscodeParams) -> str:
-    """Pick the configured encoder if available, else the fallback."""
-    if _encoder_available(params.encoder):
+    """Pick the configured encoder if it actually works, else the fallback.
+
+    Probes the encoder by running a short synthetic encode — registry
+    presence isn't enough because NVENC encoders register without CUDA
+    visibility and only fail when invoked.
+    """
+    if _encoder_works(params.encoder):
         return params.encoder
-    if _encoder_available(params.encoder_fallback):
+    if _encoder_works(params.encoder_fallback):
         logger.warning(
-            "Encoder %s not available; falling back to %s.",
+            "Encoder %s failed runtime probe (likely no CUDA visibility "
+            "in this Ray worker); falling back to %s.",
             params.encoder, params.encoder_fallback,
         )
         return params.encoder_fallback
     raise RuntimeError(
-        f"Neither {params.encoder!r} nor {params.encoder_fallback!r} is available in ffmpeg."
+        f"Neither {params.encoder!r} nor {params.encoder_fallback!r} "
+        "passes the runtime probe.  Check that ffmpeg is installed and "
+        "the encoders are linked."
     )
+
+
+def _normalize_preset(encoder: str, preset: str) -> str:
+    """Translate NVENC presets to libx264 presets when falling back.
+
+    NVENC uses p1 (fastest) - p7 (slowest); libx264 uses the
+    ultrafast..veryslow ladder.  We map p1->ultrafast, p4->medium,
+    p7->veryslow with linear interpolation in between.  Non-mapped
+    presets pass through (libx264 will validate).
+    """
+    if encoder.startswith("h264_nvenc") or encoder.startswith("hevc_nvenc"):
+        return preset  # already an NVENC preset
+    nvenc_to_x264 = {
+        "p1": "ultrafast",
+        "p2": "superfast",
+        "p3": "veryfast",
+        "p4": "medium",
+        "p5": "slow",
+        "p6": "slower",
+        "p7": "veryslow",
+    }
+    return nvenc_to_x264.get(preset, preset)
 
 
 def _transcode_one(src: str, dest: str, *, encoder: str, preset: str, crf: int) -> None:
@@ -160,7 +207,7 @@ class VideoTranscodeActor(AbstractOperator, CPUOperator):
                         path,
                         cache_path,
                         encoder=self._encoder,
-                        preset=self._params.preset,
+                        preset=_normalize_preset(self._encoder, self._params.preset),
                         crf=self._params.crf,
                     )
                 except Exception:
