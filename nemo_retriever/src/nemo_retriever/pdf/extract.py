@@ -202,6 +202,7 @@ def pdf_extraction(
     extract_tables: bool = False,
     extract_charts: bool = False,
     extract_infographics: bool = False,
+    extract_page_as_image: bool = False,
     dpi: int = 200,
     image_format: str = "jpeg",
     jpeg_quality: int = 100,
@@ -296,10 +297,13 @@ def pdf_extraction(
                     page = doc.get_page(0)
                     is_scanned_page = _is_scanned_page(page)
 
-                    ocr_extraction_needed_for_text = extract_text and (
-                        (text_extraction_method == "pdfium_hybrid" and is_scanned_page)
-                        or text_extraction_method == "ocr"
-                    )
+                    ocr_extraction_needed_for_text = (
+                        extract_text
+                        and (
+                            (text_extraction_method == "pdfium_hybrid" and is_scanned_page)
+                            or text_extraction_method == "ocr"
+                        )
+                    ) or extract_page_as_image
 
                     # extraction_needed_for_structured = (
                     #     extract_tables or extract_charts or extract_infographics
@@ -324,6 +328,7 @@ def pdf_extraction(
                         or extract_tables
                         or extract_charts
                         or extract_infographics
+                        or extract_page_as_image
                         or ocr_extraction_needed_for_text
                     )
                     render_info: Optional[Dict[str, Any]] = None
