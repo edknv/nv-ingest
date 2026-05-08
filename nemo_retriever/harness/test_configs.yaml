@@ -295,6 +295,8 @@ datasets:
     video_advanced_dedup_similarity_threshold: 5
     video_advanced_dedup_entropy_gain: 0.1
     video_frame_text_method: vlm           # Nemotron VLM captions each significant frame
+    video_vlm_max_tokens: 256        # output token cap; lower = larger effective vLLM batches → faster captioning
+    video_vlm_temperature: 0.0
     video_av_fuse_mode: per_scene          # Blog Method 1 / Reference Approach 1
     video_av_fuse_scene_visual_max_chars: 800
     video_transcode: true

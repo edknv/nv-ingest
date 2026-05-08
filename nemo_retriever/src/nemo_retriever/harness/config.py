@@ -86,6 +86,8 @@ class HarnessConfig:
     video_vlm_api_key: str | None = None
     video_vlm_model_name: str = "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16"
     video_vlm_prompt: str = "Transcribe this image, word to word."
+    video_vlm_max_tokens: int = 1024
+    video_vlm_temperature: float = 0.0
     video_av_fuse_mode: str = "per_utterance"
     video_av_fuse_scene_visual_max_chars: int = 800
     video_transcode: bool = False
@@ -362,6 +364,8 @@ def _apply_env_overrides(config_dict: dict[str, Any]) -> None:
         "HARNESS_VIDEO_VLM_API_KEY": ("video_vlm_api_key", str),
         "HARNESS_VIDEO_VLM_MODEL_NAME": ("video_vlm_model_name", str),
         "HARNESS_VIDEO_VLM_PROMPT": ("video_vlm_prompt", str),
+        "HARNESS_VIDEO_VLM_MAX_TOKENS": ("video_vlm_max_tokens", _parse_number),
+        "HARNESS_VIDEO_VLM_TEMPERATURE": ("video_vlm_temperature", _parse_number),
         "HARNESS_VIDEO_AV_FUSE_MODE": ("video_av_fuse_mode", str),
         "HARNESS_VIDEO_AV_FUSE_SCENE_VISUAL_MAX_CHARS": (
             "video_av_fuse_scene_visual_max_chars",
