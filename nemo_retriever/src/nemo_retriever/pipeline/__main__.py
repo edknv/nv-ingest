@@ -414,6 +414,7 @@ def _build_ingestor(
     video_vlm_prompt: str = "Transcribe this image, word to word.",
     video_vlm_max_tokens: int = 1024,
     video_vlm_temperature: float = 0.0,
+    video_vlm_gpu_memory_utilization: float = 0.4,
     video_av_fuse_mode: str = "per_utterance",
     video_av_fuse_scene_visual_max_chars: int = 800,
     store_text: bool = False,
@@ -481,6 +482,7 @@ def _build_ingestor(
                     prompt=str(video_vlm_prompt),
                     max_tokens=int(video_vlm_max_tokens),
                     temperature=float(video_vlm_temperature),
+                    gpu_memory_utilization=float(video_vlm_gpu_memory_utilization),
                 ),
             ),
             video_text_dedup_params=VideoFrameTextDedupParams(
@@ -1047,6 +1049,17 @@ def run(
         help="VLM sampling temperature.  0.0 = deterministic.",
         rich_help_panel=_PANEL_VIDEO,
     ),
+    video_vlm_gpu_memory_utilization: float = typer.Option(
+        0.4,
+        "--video-vlm-gpu-memory-utilization",
+        help=(
+            "Fraction of GPU memory vLLM may reserve for the local frame captioner. "
+            "Default 0.4 leaves headroom for leftover allocations on shared GPUs; "
+            "vLLM startup fails when free memory < requested fraction, so values "
+            "above ~0.5 are fragile after a prior failed run."
+        ),
+        rich_help_panel=_PANEL_VIDEO,
+    ),
     video_av_fuse_mode: str = typer.Option(
         "per_utterance",
         "--video-av-fuse-mode",
@@ -1340,6 +1353,7 @@ def run(
             video_vlm_prompt=video_vlm_prompt,
             video_vlm_max_tokens=video_vlm_max_tokens,
             video_vlm_temperature=video_vlm_temperature,
+            video_vlm_gpu_memory_utilization=video_vlm_gpu_memory_utilization,
             video_av_fuse_mode=video_av_fuse_mode,
             video_av_fuse_scene_visual_max_chars=video_av_fuse_scene_visual_max_chars,
         )

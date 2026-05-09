@@ -291,6 +291,7 @@ datasets:
     video_frame_text_method: vlm           # Nemotron VLM captions each significant frame
     video_vlm_max_tokens: 256        # output token cap; lower = larger effective vLLM batches → faster captioning
     video_vlm_temperature: 0.0
+    video_vlm_gpu_memory_utilization: 0.4   # leave ~7 GiB headroom on 80 GiB GPUs so vLLM init survives leftover allocations
     video_av_fuse_mode: per_scene          # Blog Method 1 / Reference Approach 1
     video_av_fuse_scene_visual_max_chars: 800
     recall_required: true

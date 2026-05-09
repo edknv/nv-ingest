@@ -89,6 +89,7 @@ class HarnessConfig:
     video_vlm_prompt: str = "Transcribe this image, word to word."
     video_vlm_max_tokens: int = 1024
     video_vlm_temperature: float = 0.0
+    video_vlm_gpu_memory_utilization: float = 0.4
     video_av_fuse_mode: str = "per_utterance"
     video_av_fuse_scene_visual_max_chars: int = 800
     evaluation_mode: str = "recall"
@@ -187,6 +188,8 @@ class HarnessConfig:
                 errors.append("video_advanced_dedup_similarity_threshold must be >= 0")
             if float(self.video_advanced_dedup_entropy_gain) < 0.0:
                 errors.append("video_advanced_dedup_entropy_gain must be >= 0.0")
+            if not (0.0 < float(self.video_vlm_gpu_memory_utilization) <= 1.0):
+                errors.append("video_vlm_gpu_memory_utilization must be in (0.0, 1.0]")
             if self.video_av_fuse_mode not in {"per_utterance", "per_scene", "per_sentence"}:
                 errors.append("video_av_fuse_mode must be one of per_utterance/per_scene/per_sentence")
             if int(self.video_av_fuse_scene_visual_max_chars) < 0:
@@ -362,6 +365,7 @@ def _apply_env_overrides(config_dict: dict[str, Any]) -> None:
         "HARNESS_VIDEO_VLM_PROMPT": ("video_vlm_prompt", str),
         "HARNESS_VIDEO_VLM_MAX_TOKENS": ("video_vlm_max_tokens", _parse_number),
         "HARNESS_VIDEO_VLM_TEMPERATURE": ("video_vlm_temperature", _parse_number),
+        "HARNESS_VIDEO_VLM_GPU_MEMORY_UTILIZATION": ("video_vlm_gpu_memory_utilization", _parse_number),
         "HARNESS_VIDEO_AV_FUSE_MODE": ("video_av_fuse_mode", str),
         "HARNESS_VIDEO_AV_FUSE_SCENE_VISUAL_MAX_CHARS": (
             "video_av_fuse_scene_visual_max_chars",

@@ -226,6 +226,10 @@ class VideoFrameVLMParams(_ParamsModel):
     prompt: str = "Transcribe this image, word to word."
     temperature: float = 0.0
     max_tokens: int = 1024
+    # Lower than CaptionParams.gpu_memory_utilization=0.5 so vLLM init
+    # tolerates leftover allocations on shared GPUs; passed through to
+    # caption._create_local_model via model_dump().
+    gpu_memory_utilization: float = 0.4
 
 
 class VideoFrameTimeChunkParams(_ParamsModel):

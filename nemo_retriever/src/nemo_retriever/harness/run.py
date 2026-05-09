@@ -538,6 +538,7 @@ def _build_command(
         cmd += ["--video-vlm-prompt", cfg.video_vlm_prompt]
         cmd += ["--video-vlm-max-tokens", str(cfg.video_vlm_max_tokens)]
         cmd += ["--video-vlm-temperature", str(cfg.video_vlm_temperature)]
+        cmd += ["--video-vlm-gpu-memory-utilization", str(cfg.video_vlm_gpu_memory_utilization)]
         cmd += ["--video-av-fuse-mode", cfg.video_av_fuse_mode]
         cmd += ["--video-av-fuse-scene-visual-max-chars", str(cfg.video_av_fuse_scene_visual_max_chars)]
     if cfg.extract_infographics:
