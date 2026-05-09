@@ -111,6 +111,7 @@ class NemotronVLMCaptioner(BaseModel):
         max_new_tokens: int = 1024,
         tensor_parallel_size: int = 1,
         gpu_memory_utilization: float = 0.5,
+        max_model_len: int = 4096,
     ) -> None:
         super().__init__()
 
@@ -160,6 +161,13 @@ class NemotronVLMCaptioner(BaseModel):
             trust_remote_code=True,
             tensor_parallel_size=tensor_parallel_size,
             gpu_memory_utilization=gpu_memory_utilization,
+            # Cap context length: frame/image captioning needs at most a few
+            # thousand tokens (image tokens + short prompt + max_new_tokens),
+            # so the model's full ~32k context is gratuitous. The default vLLM
+            # KV cache reservation is sized for max_num_seqs * max_model_len
+            # blocks; capping here cuts the minimum KV memory by ~8x and is
+            # what makes gpu_memory_utilization=0.4 fit on an 80 GiB GPU.
+            max_model_len=max_model_len,
             **engine_kwargs,
         )
 

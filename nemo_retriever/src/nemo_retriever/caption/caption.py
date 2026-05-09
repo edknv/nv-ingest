@@ -45,6 +45,7 @@ def _create_local_model(kwargs: dict) -> "Any":
         max_new_tokens=kwargs.get("max_tokens", 1024),
         tensor_parallel_size=kwargs.get("tensor_parallel_size", 1),
         gpu_memory_utilization=kwargs.get("gpu_memory_utilization", 0.5),
+        max_model_len=kwargs.get("max_model_len", 4096),
     )
 
 
