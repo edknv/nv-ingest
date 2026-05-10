@@ -74,5 +74,40 @@ def test_strips_multiple_rows_uniformly() -> None:
     )
     out = actor.process(df)
     assert out["image_b64"].tolist() == [None, None, None]
+    # Audio row's bytes were already None; frame rows get stripped.
     assert out["bytes"].tolist() == [None, None, None]
     assert out["text"].tolist() == ["c1", "c2", "spoken"]
+
+
+def test_audio_chunk_bytes_preserved_for_downstream_asr() -> None:
+    """Regression: audio chunk rows carry MP4 bytes for ASR; the strip must
+    only null bytes on video_frame rows.  The chunker tears down its tmpdir
+    on context exit, so the `path` field is stale by the time ASR sees the
+    row — ASR's only viable input is the `bytes` column.
+    """
+    actor = VideoFrameStripImagesActor()
+    df = pd.DataFrame(
+        [
+            {"_content_type": "video_frame", "image_b64": "A", "bytes": b"frame", "text": "c1"},
+            {"_content_type": "audio", "image_b64": None, "bytes": b"mp4-chunk", "text": ""},
+        ]
+    )
+    out = actor.process(df)
+    assert out.iloc[0]["image_b64"] is None
+    assert out.iloc[0]["bytes"] is None
+    # Audio chunk bytes must survive the strip.
+    assert out.iloc[1]["bytes"] == b"mp4-chunk"
+
+
+def test_strips_when_content_type_column_absent() -> None:
+    """Legacy callers may not tag rows with _content_type; preserve the old
+    'strip everything' behaviour so we don't silently keep bytes alive."""
+    actor = VideoFrameStripImagesActor()
+    df = pd.DataFrame(
+        [
+            {"image_b64": "A", "bytes": b"raw", "text": "c1"},
+        ]
+    )
+    out = actor.process(df)
+    assert out.iloc[0]["image_b64"] is None
+    assert out.iloc[0]["bytes"] is None
