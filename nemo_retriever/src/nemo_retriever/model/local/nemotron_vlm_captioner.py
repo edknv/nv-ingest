@@ -7,9 +7,11 @@ from __future__ import annotations
 import atexit
 import base64
 import logging
+import os
 import signal
 import subprocess
 import sys
+import time
 import weakref
 from io import BytesIO
 from typing import Any, List, Optional
@@ -21,6 +23,65 @@ from nemo_retriever.utils.nvtx import gpu_inference_range
 from ..model import BaseModel, RunMode
 
 logger = logging.getLogger(__name__)
+
+_RECLAIM_ENV_VAR = "NEMO_RETRIEVER_RECLAIM_VLLM_PROCESSES"
+
+
+def _parse_nvidia_smi_apps(stdout: str) -> list[tuple[int, str, int]]:
+    """Parse ``nvidia-smi --query-compute-apps=pid,process_name,used_memory``
+    output into ``(pid, process_name, used_mib)`` tuples. Silent on malformed
+    rows."""
+    parsed: list[tuple[int, str, int]] = []
+    for row in stdout.splitlines():
+        parts = [p.strip() for p in row.split(",")]
+        if len(parts) < 3:
+            continue
+        try:
+            pid = int(parts[0])
+        except ValueError:
+            continue
+        name = parts[1]
+        mib_str = parts[2].replace("MiB", "").strip()
+        try:
+            mib = int(mib_str)
+        except ValueError:
+            mib = 0
+        parsed.append((pid, name, mib))
+    return parsed
+
+
+def _try_reclaim_vllm_zombies(apps_stdout: str) -> list[int]:
+    """Kill user-owned ``VLLM::EngineCore`` processes from ``nvidia-smi`` output.
+
+    Returns the PIDs we successfully killed. Permission errors are silent
+    (the caller continues to raise as before, which produces the manual
+    ``kill -9`` instruction). Only fires when ``NEMO_RETRIEVER_RECLAIM_VLLM_PROCESSES=1``
+    is set — never auto-reaps by default, since a shared GPU machine could
+    have a co-tenant's vLLM that we have no business killing.
+    """
+    if os.environ.get(_RECLAIM_ENV_VAR, "").strip() not in {"1", "true", "yes", "on"}:
+        return []
+    killed: list[int] = []
+    for pid, name, _mib in _parse_nvidia_smi_apps(apps_stdout):
+        if "VLLM::EngineCore" not in name:
+            continue
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            killed.append(pid)  # already gone — that's fine
+            continue
+        except PermissionError:
+            logger.warning("Cannot reclaim PID %s (%s): owned by another user.", pid, name)
+            continue
+        except OSError as exc:
+            logger.warning("Failed to reclaim PID %s (%s): %s", pid, name, exc)
+            continue
+        killed.append(pid)
+        logger.warning("Reclaimed leaked vLLM EngineCore subprocess: pid=%s name=%s", pid, name)
+    if killed:
+        # Give the kernel a moment to release GPU memory before re-checking.
+        time.sleep(1.5)
+    return killed
 
 
 def _shutdown_vllm_engine(llm: Any) -> None:
@@ -125,6 +186,34 @@ def _preflight_gpu_memory_check(gpu_memory_utilization: float) -> None:
         ).stdout.strip()
     except Exception:
         apps = ""
+
+    # Opt-in auto-reclaim: when the env var is set, terminate user-owned
+    # VLLM::EngineCore zombies and re-query memory. This is the only place
+    # we ever take destructive action on a foreign process — gated behind
+    # an env var so a shared GPU machine doesn't accidentally kill a
+    # co-tenant's vLLM.
+    if apps and _try_reclaim_vllm_zombies(apps):
+        try:
+            usage_after = subprocess.run(
+                ["nvidia-smi", "--query-gpu=memory.free,memory.total",
+                 "--format=csv,noheader,nounits"],
+                check=False, capture_output=True, text=True, timeout=10,
+            )
+            rows_after = [r.strip() for r in usage_after.stdout.splitlines() if r.strip()]
+            if rows_after:
+                free_after_s, _ = [x.strip() for x in rows_after[0].split(",")]
+                free_after = int(free_after_s)
+                if free_after >= required_mib:
+                    logger.warning(
+                        "Reclaimed enough GPU memory after killing zombies: "
+                        "free=%s MiB >= required=%s MiB. Proceeding with vLLM init.",
+                        free_after, required_mib,
+                    )
+                    return
+                free_mib = free_after  # report the post-reclaim figure
+        except Exception:
+            pass
+
     pid_info = apps or "(no compute apps reported)"
     raise RuntimeError(
         "GPU memory insufficient for vLLM init: "
@@ -136,7 +225,9 @@ def _preflight_gpu_memory_check(gpu_memory_utilization: float) -> None:
         "Mitigation: kill the leftover PID(s) above, then retry. To clear "
         "all GPU clients: `ray stop --force && "
         "nvidia-smi --query-compute-apps=pid --format=csv,noheader | "
-        "xargs -r kill -9`."
+        "xargs -r kill -9`.\n"
+        f"Or set {_RECLAIM_ENV_VAR}=1 to have this preflight reclaim "
+        "user-owned VLLM::EngineCore zombies automatically."
     )
 
 
