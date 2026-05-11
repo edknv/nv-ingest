@@ -4,7 +4,13 @@
 
 from __future__ import annotations
 
+import atexit
 import base64
+import logging
+import signal
+import subprocess
+import sys
+import weakref
 from io import BytesIO
 from typing import Any, List, Optional
 
@@ -13,6 +19,125 @@ from PIL import Image
 from nemo_retriever.utils.hf_cache import configure_global_hf_cache_base
 from nemo_retriever.utils.nvtx import gpu_inference_range
 from ..model import BaseModel, RunMode
+
+logger = logging.getLogger(__name__)
+
+
+def _shutdown_vllm_engine(llm: Any) -> None:
+    """Best-effort termination of vLLM v1's EngineCore subprocess.
+
+    vLLM v1 spawns ``EngineCore_DP0`` as a multiprocessing child of the
+    actor process. Its teardown lives on ``SyncMPClient.shutdown()`` via
+    ``weakref.finalize``, which only fires reliably on graceful Python
+    exit. Ray frequently sends SIGTERM or SIGKILL to actors (eviction,
+    init retries, OOM) — in those paths the finalizer never runs and the
+    EngineCore is reparented to PID 1, squatting on GPU memory until
+    reboot. We resolve ``llm.llm_engine.engine_core.shutdown()`` and call
+    it explicitly. Silent on any error — already-dead is a successful
+    outcome here.
+    """
+    if llm is None:
+        return
+    try:
+        client = llm.llm_engine.engine_core
+    except Exception:
+        return
+    shutdown = getattr(client, "shutdown", None)
+    if not callable(shutdown):
+        return
+    try:
+        shutdown()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("vLLM engine shutdown raised (ignored): %s", exc)
+
+
+def _install_sigterm_shutdown_hook() -> None:
+    """Make atexit-registered cleanups run when Ray sends SIGTERM.
+
+    By default Python's SIGTERM handler terminates the process WITHOUT
+    invoking ``atexit`` hooks or weakref finalizers, which is how vLLM
+    EngineCore subprocesses survive their parent. Replace it with one
+    that calls ``sys.exit(0)`` so cleanup runs. Best-effort: only install
+    when the current handler is the default (SIG_DFL) — never stomp on a
+    user-installed handler. Idempotent.
+    """
+    try:
+        current = signal.getsignal(signal.SIGTERM)
+    except (ValueError, OSError):
+        return
+    if current is not signal.SIG_DFL:
+        return  # Someone already installed a handler; respect it.
+
+    def _on_sigterm(signum: int, frame: Any) -> None:  # noqa: ANN401
+        logger.info("Received SIGTERM; running atexit cleanups before exit.")
+        sys.exit(0)
+
+    try:
+        signal.signal(signal.SIGTERM, _on_sigterm)
+    except (ValueError, OSError):
+        # Not in main thread (Ray actor workers): ignore. atexit still runs
+        # on normal interpreter shutdown, which is the common Ray path.
+        pass
+
+
+def _preflight_gpu_memory_check(gpu_memory_utilization: float) -> None:
+    """Raise a readable error when the GPU is too full for vLLM init.
+
+    vLLM v1 runs its own ``free >= requested`` check inside an
+    ``EngineCore_DP0`` subprocess; when it fails, the parent traceback only
+    says ``Engine core initialization failed`` and the actual ``Free memory
+    on device cuda:0 (X/Y GiB)`` message is buried in a worker ``.err``
+    file. This pre-flight surfaces the same condition synchronously in the
+    parent process, with the offending compute-app PIDs included so the
+    operator can identify zombie engine subprocesses from prior crashes.
+
+    Silent on any nvidia-smi failure (treat as 'unknown' rather than
+    blocking): the downstream vLLM init still runs and will fail in the
+    legacy way if memory truly is insufficient.
+    """
+    try:
+        usage = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.free,memory.total",
+             "--format=csv,noheader,nounits"],
+            check=False, capture_output=True, text=True, timeout=10,
+        )
+    except Exception:
+        return
+    if usage.returncode != 0:
+        return
+    rows = [r.strip() for r in usage.stdout.splitlines() if r.strip()]
+    if not rows:
+        return
+    try:
+        free_mib_s, total_mib_s = [x.strip() for x in rows[0].split(",")]
+        free_mib = int(free_mib_s)
+        total_mib = int(total_mib_s)
+    except (ValueError, IndexError):
+        return
+    required_mib = int(float(gpu_memory_utilization) * total_mib)
+    if free_mib >= required_mib:
+        return
+    try:
+        apps = subprocess.run(
+            ["nvidia-smi", "--query-compute-apps=pid,process_name,used_memory",
+             "--format=csv,noheader"],
+            check=False, capture_output=True, text=True, timeout=10,
+        ).stdout.strip()
+    except Exception:
+        apps = ""
+    pid_info = apps or "(no compute apps reported)"
+    raise RuntimeError(
+        "GPU memory insufficient for vLLM init: "
+        f"free={free_mib} MiB, required={required_mib} MiB at "
+        f"gpu_memory_utilization={gpu_memory_utilization} "
+        f"(total={total_mib} MiB). Likely a zombie EngineCore subprocess "
+        "from a prior failed run.\n"
+        f"Resident compute apps:\n{pid_info}\n"
+        "Mitigation: kill the leftover PID(s) above, then retry. To clear "
+        "all GPU clients: `ray stop --force && "
+        "nvidia-smi --query-compute-apps=pid --format=csv,noheader | "
+        "xargs -r kill -9`."
+    )
 
 
 def _b64_to_pil(b64: str) -> Image.Image:
@@ -145,6 +270,10 @@ class NemotronVLMCaptioner(BaseModel):
 
         configure_global_hf_cache_base(hf_cache_dir)
 
+        # Surface "GPU has leftover allocations" as a readable parent-process
+        # error before vLLM's own (subprocess-buried) check fires.
+        _preflight_gpu_memory_check(gpu_memory_utilization)
+
         revision = self._MODEL_REVISIONS.get(model_path)
 
         # Pick vLLM engine kwargs based on the model variant.
@@ -170,6 +299,25 @@ class NemotronVLMCaptioner(BaseModel):
             max_model_len=max_model_len,
             **engine_kwargs,
         )
+
+        # Force EngineCore subprocess to be reaped on any reachable exit
+        # path. weakref.finalize fires on object GC OR interpreter exit,
+        # whichever comes first; atexit fires on normal exit and (via the
+        # SIGTERM hook below) on Ray's eviction signal. Belt and braces
+        # because Ray restarts add even more failure modes (the actor PID
+        # changes but the subprocess of the old one keeps living).
+        self._engine_finalizer = weakref.finalize(self, _shutdown_vllm_engine, self._llm)
+        atexit.register(_shutdown_vllm_engine, self._llm)
+        _install_sigterm_shutdown_hook()
+
+    def close(self) -> None:
+        """Explicitly terminate the vLLM EngineCore subprocess.
+
+        Safe to call multiple times; idempotent via ``weakref.finalize``.
+        """
+        finalizer = getattr(self, "_engine_finalizer", None)
+        if finalizer is not None and finalizer.alive:
+            finalizer()
 
     def _build_messages(
         self,

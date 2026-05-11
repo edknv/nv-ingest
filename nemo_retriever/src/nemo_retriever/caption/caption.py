@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import atexit
 import base64
 from io import BytesIO
 from typing import Any, Dict, List, Tuple
@@ -49,10 +50,26 @@ def _create_local_model(kwargs: dict) -> "Any":
     )
 
 
+def _shutdown_cached_local_model() -> None:
+    """Tear down the cached captioner on interpreter exit so its vLLM
+    EngineCore subprocess doesn't outlive the Ray worker. Idempotent."""
+    global _cached_local_model
+    if _cached_local_model is None:
+        return
+    close = getattr(_cached_local_model, "close", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:
+            pass
+    _cached_local_model = None
+
+
 def _get_cached_local_model(kwargs: dict) -> "Any":
     global _cached_local_model
     if _cached_local_model is None:
         _cached_local_model = _create_local_model(kwargs)
+        atexit.register(_shutdown_cached_local_model)
     return _cached_local_model
 
 
