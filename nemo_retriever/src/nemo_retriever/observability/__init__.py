@@ -24,7 +24,7 @@ Two usage patterns:
 from __future__ import annotations
 
 from nemo_retriever.observability import attributes
-from nemo_retriever.observability.configure import OTELConfig, configure
+from nemo_retriever.observability.configure import OTELConfig, apply_otel_env_defaults, configure
 from nemo_retriever.observability.propagate import extract_context, inject_current_context
 from nemo_retriever.observability.ray_integration import RayOperatorSpanWrapper, collect_otel_env
 from nemo_retriever.observability.spans import (
@@ -54,6 +54,7 @@ from nemo_retriever.observability.tracer import (
 __all__ = [
     "OTELConfig",
     "RayOperatorSpanWrapper",
+    "apply_otel_env_defaults",
     "attributes",
     "collect_otel_env",
     "configure",

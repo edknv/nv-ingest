@@ -406,6 +406,10 @@ def _worker_initializer(
     if otel_config is not None:
         try:
             _worker_otel_shutdown = configure_otel(OTELConfig(**otel_config))
+            if _worker_otel_shutdown is not None:
+                import atexit
+
+                atexit.register(_worker_otel_shutdown)
         except Exception:  # noqa: BLE001 — never block worker startup on telemetry
             logger.exception("[pid %d] Worker OTEL configure failed", os.getpid())
             _worker_otel_shutdown = None

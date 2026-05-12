@@ -65,6 +65,37 @@ def _noop_shutdown() -> None:
     return None
 
 
+_HF_HUB_URL_PATTERN = r"huggingface\.co"
+
+
+def apply_otel_env_defaults(*, default_service_name: str) -> None:
+    """Seed ``OTEL_*`` env vars with sensible defaults without clobbering
+    values the caller has already set.
+
+    Must run BEFORE :func:`configure` (the ``requests`` instrumentor reads
+    ``OTEL_PYTHON_REQUESTS_EXCLUDED_URLS`` at instrument-time) and BEFORE
+    :func:`collect_otel_env` (so Ray actors inherit the same values via
+    runtime_env propagation).
+
+    Currently sets:
+
+    * ``OTEL_SERVICE_NAME`` — falls back to *default_service_name* when
+      unset, preventing the SDK's ``"unknown_service"`` placeholder from
+      surfacing in the collector.
+    * ``OTEL_PYTHON_REQUESTS_EXCLUDED_URLS`` — appends a HuggingFace Hub
+      regex so HEAD probes for optional config files (which legitimately
+      return 404) don't show up as ``STATUS_CODE_ERROR`` spans.  Any
+      caller-supplied patterns are preserved.
+    """
+    os.environ.setdefault("OTEL_SERVICE_NAME", default_service_name)
+
+    existing = os.environ.get("OTEL_PYTHON_REQUESTS_EXCLUDED_URLS", "").strip()
+    if _HF_HUB_URL_PATTERN not in existing:
+        os.environ["OTEL_PYTHON_REQUESTS_EXCLUDED_URLS"] = (
+            f"{existing},{_HF_HUB_URL_PATTERN}" if existing else _HF_HUB_URL_PATTERN
+        )
+
+
 def _configure_sdk(cfg: OTELConfig) -> Callable[[], None]:
     """Lazy SDK import + provider wiring; runs only when ``cfg.enabled``."""
     from opentelemetry import metrics, trace

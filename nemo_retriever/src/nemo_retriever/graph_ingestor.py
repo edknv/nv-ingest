@@ -34,7 +34,7 @@ from nemo_retriever.graph import InprocessExecutor, RayDataExecutor
 from nemo_retriever.graph.ingestor_runtime import batch_tuning_to_node_overrides, build_graph
 from nemo_retriever.ingestor import ingestor
 from nemo_retriever.observability import OTELConfig
-from nemo_retriever.observability.configure import configure as _configure_otel
+from nemo_retriever.observability.configure import apply_otel_env_defaults, configure as _configure_otel
 from nemo_retriever.observability.spans import pipeline_span
 from nemo_retriever.params import (
     ASRParams,
@@ -223,8 +223,18 @@ class GraphIngestor(ingestor):
         self._show_progress = show_progress
         self._error_policy = error_policy
         self._rd_dataset: Any = None
+        # Seed env defaults BEFORE _configure_otel (the requests instrumentor
+        # reads OTEL_PYTHON_REQUESTS_EXCLUDED_URLS at instrument-time) and
+        # BEFORE the executor calls collect_otel_env (so Ray actors inherit
+        # the same service name + exclude list via runtime_env).
+        apply_otel_env_defaults(default_service_name=f"nemo-retriever-{run_mode}")
         if otel is not None:
-            _configure_otel(otel)
+            # Register the shutdown callback at atexit so library-mode
+            # callers flush the BatchSpanProcessor queue without needing
+            # to invoke it manually. Idempotent on the SDK side.
+            import atexit
+
+            atexit.register(_configure_otel(otel))
 
         # Pipeline configuration accumulated by fluent methods
         self._extraction_mode: str = "pdf"

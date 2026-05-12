@@ -24,7 +24,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from pathlib import Path
 
 from nemo_retriever.observability import OTELConfig, attributes as otel_attrs, tag_current_span
-from nemo_retriever.observability.configure import configure as configure_otel
+from nemo_retriever.observability.configure import apply_otel_env_defaults, configure as configure_otel
 from nemo_retriever.service.config import OTELServiceConfig, ServiceConfig
 from nemo_retriever.service.db.engine import DatabaseEngine
 from nemo_retriever.service.db.repository import Repository
@@ -239,6 +239,10 @@ def create_app(config: ServiceConfig) -> FastAPI:
 
     # OTEL setup must run before lifespan: FastAPIInstrumentor adds a
     # middleware, and Starlette locks the middleware stack once lifespan begins.
+    # Env defaults precede configure_otel so the requests instrumentor sees
+    # the HF exclude list at instrument-time and worker subprocesses inherit
+    # the service name from os.environ.
+    apply_otel_env_defaults(default_service_name=config.otel.service_name)
     app_state_otel_shutdown = configure_otel(_to_otel_config(config.otel))
 
     app = FastAPI(
