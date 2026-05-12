@@ -96,6 +96,10 @@ def _configure_sdk(cfg: OTELConfig) -> Callable[[], None]:
         meter_provider = MeterProvider(resource=resource)
     metrics.set_meter_provider(meter_provider)
 
+    from nemo_retriever.observability.tracer import reset_instrument_cache
+
+    reset_instrument_cache()
+
     if cfg.auto_instrument:
         _install_auto_instrumentations()
 
