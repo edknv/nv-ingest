@@ -23,6 +23,7 @@ from nemo_retriever.params import (
     ASRParams,
     AudioChunkParams,
     AudioVisualFuseParams,
+    CaptionParams,
     EmbedParams,
     ExtractParams,
     VideoFrameParams,
@@ -80,15 +81,16 @@ def test_readme_video_pipeline_build_graph_chain() -> None:
     """``build_graph`` for the README video params starts with the documented chain."""
     graph = build_graph(
         extraction_mode="auto",
-        extract_params=ExtractParams(
-            ocr_invoke_url="https://ai.api.nvidia.com/v1/cv/nvidia/nemoretriever-ocr-v1",
-        ),
+        extract_params=ExtractParams(),
         audio_chunk_params=AudioChunkParams(
             enabled=True,
             split_type="time",
             split_interval=60,
         ),
         asr_params=ASRParams(),
+        caption_params=CaptionParams(
+            endpoint_url="https://ai.api.nvidia.com/v1/vlm/nvidia/nemotron-nano-12b-v2-vl",
+        ),
         video_frame_params=VideoFrameParams(enabled=True, fps=1.0, dedup=True),
         video_text_dedup_params=VideoFrameTextDedupParams(enabled=True),
         av_fuse_params=AudioVisualFuseParams(enabled=True),
@@ -99,7 +101,7 @@ def test_readme_video_pipeline_build_graph_chain() -> None:
     expected_prefix = [
         "VideoSplitActor",
         "ASRActor",
-        "VideoFrameOCRActor",
+        "VideoFrameCaptionActor",
         "VideoFrameTextDedup",
         "AudioVisualFuser",
     ]

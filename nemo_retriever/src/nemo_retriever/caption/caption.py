@@ -5,8 +5,9 @@
 from __future__ import annotations
 
 import base64
+import logging
 from io import BytesIO
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Sequence, Tuple
 
 import pandas as pd
 from PIL import Image
@@ -18,6 +19,8 @@ from nemo_retriever.graph.cpu_operator import CPUOperator
 from nemo_retriever.graph.gpu_operator import GPUOperator
 from nemo_retriever.graph.operator_archetype import ArchetypeOperator
 from nemo_retriever.params import CaptionParams
+
+_logger = logging.getLogger(__name__)
 
 _DEFAULT_MODEL_NAME = "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16"
 _MAX_CONTEXT_TEXT_CHARS = 4096
@@ -198,6 +201,130 @@ def _caption_batch_local(
         top_p=top_p,
         max_tokens=max_tokens,
     )
+
+
+def caption_b64_to_text(
+    image_b64_list: Sequence[str],
+    *,
+    model: Any = None,
+    nim_client: Any = None,
+    model_name: str = _DEFAULT_MODEL_NAME,
+    prompt: str = "Caption the content of this image:",
+    system_prompt: str | None = "/no_think",
+    temperature: float = 1.0,
+    top_p: float | None = None,
+    max_tokens: int = 1024,
+    batch_size: int = 8,
+) -> List[str]:
+    """Caption a list of base64 PNG images; returns one caption per input.
+
+    Mirrors :func:`nemo_retriever.ocr.shared.ocr_b64_to_text`. Routes to a
+    remote NIM client when ``nim_client`` is provided, or to a local
+    ``NemotronVLMCaptioner`` when ``model`` is provided. Empty / non-string
+    inputs map to ``""``; per-image failures are logged and also map to
+    ``""`` so the output preserves input order and length.
+    """
+    n = len(image_b64_list)
+    if n == 0:
+        return []
+    if model is None and nim_client is None:
+        raise ValueError("caption_b64_to_text requires either a local model or a nim_client.")
+
+    valid_idx = [i for i, b in enumerate(image_b64_list) if isinstance(b, str) and b]
+    valid_b64 = [image_b64_list[i] for i in valid_idx]
+    out = [""] * n
+    if not valid_b64:
+        return out
+
+    try:
+        if model is not None:
+            captions = _caption_batch_local(
+                valid_b64,
+                model=model,
+                prompt=prompt,
+                system_prompt=system_prompt,
+                temperature=temperature,
+                top_p=top_p,
+                max_tokens=max_tokens,
+            )
+        else:
+            captions = []
+            for start in range(0, len(valid_b64), batch_size):
+                captions.extend(
+                    _caption_batch_remote(
+                        valid_b64[start : start + batch_size],
+                        nim_client=nim_client,
+                        model_name=model_name,
+                        prompt=prompt,
+                        system_prompt=system_prompt,
+                        temperature=temperature,
+                        top_p=top_p,
+                        max_tokens=max_tokens,
+                    )
+                )
+    except Exception:
+        _logger.exception("Caption batch failed; returning empty strings")
+        return out
+
+    for cap, dst in zip(captions, valid_idx):
+        out[dst] = cap if isinstance(cap, str) else ""
+    return out
+
+
+def caption_full_image_df(
+    batch_df: pd.DataFrame,
+    *,
+    model: Any = None,
+    endpoint_url: str | None = None,
+    api_key: str | None = None,
+    model_name: str = _DEFAULT_MODEL_NAME,
+    prompt: str = "Caption the content of this image:",
+    system_prompt: str | None = "/no_think",
+    temperature: float = 1.0,
+    top_p: float | None = None,
+    max_tokens: int = 1024,
+    batch_size: int = 8,
+) -> pd.DataFrame:
+    """Caption a DataFrame whose rows carry a top-level ``image_b64`` column.
+
+    Writes ``text`` and drops rows whose caption is empty (mirrors the
+    behavior of :func:`nemo_retriever.ocr.shared.full_image_ocr_df` so frames
+    where captioning fails don't pollute downstream stages). Pre-existing
+    non-empty ``text`` values are preserved — only blank rows get captioned.
+    """
+    if not isinstance(batch_df, pd.DataFrame) or batch_df.empty:
+        return pd.DataFrame()
+
+    out = batch_df.copy()
+    b64s = [b if isinstance(b, str) else "" for b in out.get("image_b64", [])]
+
+    existing_text: List[str] = out["text"].fillna("").astype(str).tolist() if "text" in out.columns else [""] * len(out)
+    need_caption = [i for i, t in enumerate(existing_text) if not t]
+    if not need_caption:
+        out["text"] = existing_text
+        return out[out["text"].astype(bool)].reset_index(drop=True)
+
+    nim_client = (
+        _create_remote_client(endpoint_url, api_key) if (endpoint_url or "").strip() and model is None else None
+    )
+
+    captions = caption_b64_to_text(
+        [b64s[i] for i in need_caption],
+        model=model,
+        nim_client=nim_client,
+        model_name=model_name,
+        prompt=prompt,
+        system_prompt=system_prompt,
+        temperature=temperature,
+        top_p=top_p,
+        max_tokens=max_tokens,
+        batch_size=batch_size,
+    )
+    for idx, cap in zip(need_caption, captions):
+        existing_text[idx] = cap
+
+    out["text"] = existing_text
+    return out[out["text"].astype(bool)].reset_index(drop=True)
 
 
 def _caption_one(

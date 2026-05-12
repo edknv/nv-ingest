@@ -45,7 +45,7 @@ from nemo_retriever.txt.ray_data import TextChunkCPUActor, TxtSplitActor
 from nemo_retriever.utils.convert.to_pdf import DocToPdfConversionActor
 from nemo_retriever.video import AudioVisualFuser
 from nemo_retriever.video import VideoFrameActor
-from nemo_retriever.video import VideoFrameOCRActor
+from nemo_retriever.video import VideoFrameCaptionActor
 from nemo_retriever.video import VideoFrameTextDedup
 from nemo_retriever.video import dedup_video_frames
 from nemo_retriever.graph.designer import designer_component
@@ -316,23 +316,17 @@ class _MultiTypeExtractBase(AbstractOperator):
         batch_df = self._run_detection_pipeline(batch_df)
         return self._maybe_chunk(batch_df, "image")
 
-    def _video_ocr_kwargs(self) -> dict[str, Any]:
-        """Build OCR kwargs for the video frame branch from ``extract_params``.
+    def _video_caption_params(self) -> CaptionParams:
+        """Return the :class:`CaptionParams` used for video-frame captioning.
 
-        Video OCR shares its endpoint, API key, batch size, and timeout with
-        the PDF/image OCR config — the user only configures OCR once via
-        :class:`ExtractParams`.
+        Falls back to a default :class:`CaptionParams` when the caller did
+        not supply one — matches the always-on behavior of the previous
+        OCR-based frame stage.
         """
-        ep = self.extract_params
-        return {
-            "ocr_invoke_url": ep.ocr_invoke_url,
-            "api_key": ep.ocr_api_key or ep.api_key,
-            "inference_batch_size": int(ep.inference_batch_size),
-            "request_timeout_s": float(ep.ocr_request_timeout_s or ep.request_timeout_s),
-        }
+        return self.caption_params if self.caption_params is not None else CaptionParams()
 
     def _run_video_pipeline(self, batch_df: pd.DataFrame) -> pd.DataFrame:
-        """Run audio-from-video ASR + frame OCR + (optional) scene fusion.
+        """Run audio-from-video ASR + frame captioning + (optional) scene fusion.
 
         Branch A: ``MediaChunkActor`` chunks the video and ``ASRActor``
         runs ASR on the chunks (audio is implicit — Parakeet reads from
@@ -340,15 +334,15 @@ class _MultiTypeExtractBase(AbstractOperator):
 
         Branch B: ``VideoFrameActor`` extracts frames at
         ``video_frame_params.fps``; optional content-hash dedup;
-        ``VideoFrameOCRActor`` (Nemotron OCR v1) runs full-frame OCR
-        directly — no page-elements detection; ``VideoFrameTextDedup``
-        then collapses time-adjacent runs of identical OCR text per
-        ``source_path`` (mirrors the Ray graph in ``build_graph``).
-        Emits per-frame rows.
+        ``VideoFrameCaptionActor`` (Nemotron VLM) runs full-frame
+        captioning directly — no page-elements detection;
+        ``VideoFrameTextDedup`` then collapses time-adjacent runs of
+        identical caption text per ``source_path`` (mirrors the Ray graph
+        in ``build_graph``). Emits per-frame rows.
 
         Branch C: ``AudioVisualFuser`` self-joins audio rows against
-        concurrent frame OCR rows and appends fused per-utterance rows
-        with text = audio + visible OCR. Skipped when
+        concurrent frame caption rows and appends fused per-utterance rows
+        with text = audio + visible caption. Skipped when
         ``av_fuse_params.enabled`` is False or when neither branch
         produced rows.
         """
@@ -362,13 +356,14 @@ class _MultiTypeExtractBase(AbstractOperator):
         else:
             audio_out = pd.DataFrame()
 
-        # Branch B: frame extraction → optional dedup → full-frame OCR → text dedup
+        # Branch B: frame extraction → optional dedup → full-frame captioning → text dedup
         frame_df = VideoFrameActor(params=self.video_frame_params).run(batch_df)
         if self.video_frame_params.dedup and isinstance(frame_df, pd.DataFrame) and not frame_df.empty:
             frame_df = dedup_video_frames(frame_df)
         if isinstance(frame_df, pd.DataFrame) and not frame_df.empty:
-            ocr_kwargs = self._video_ocr_kwargs()
-            frame_out = self._instantiate_resolved(VideoFrameOCRActor, **ocr_kwargs).run(frame_df)
+            frame_out = self._instantiate_resolved(VideoFrameCaptionActor, params=self._video_caption_params()).run(
+                frame_df
+            )
             if self.video_text_dedup_params.enabled and isinstance(frame_out, pd.DataFrame) and not frame_out.empty:
                 frame_out = VideoFrameTextDedup(params=self.video_text_dedup_params).run(frame_out)
         else:

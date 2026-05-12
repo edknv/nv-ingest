@@ -323,6 +323,7 @@ class GraphIngestor(ingestor):
         video_text_dedup_params: Optional[VideoFrameTextDedupParams] = None,
         av_fuse_params: Optional[AudioVisualFuseParams] = None,
         extract_params: Optional[ExtractParams] = None,
+        caption_params: Optional[CaptionParams] = None,
         split_config: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> "GraphIngestor":
@@ -330,13 +331,16 @@ class GraphIngestor(ingestor):
 
         Sets ``extraction_mode='auto'`` so :class:`MultiTypeExtractOperator`
         dispatches by file extension; ``.mp4``/``.mov``/``.mkv``
-        files are routed to a combined audio-from-video ASR + frame OCR +
-        scene fusion pipeline.
+        files are routed to a combined audio-from-video ASR + frame
+        captioning + scene fusion pipeline.
 
-        Frame OCR config (``ocr_invoke_url``, ``ocr_api_key``,
-        ``inference_batch_size``, ``ocr_request_timeout_s``) is read from
-        :class:`ExtractParams` — the same object the PDF/image pipelines
-        use — so the user only configures OCR once.
+        Frame captioning is driven by :class:`CaptionParams`
+        (``endpoint_url``, ``api_key``, ``model_name``, ``prompt``,
+        ``batch_size``, ...). When ``caption_params`` is omitted a default
+        :class:`CaptionParams` is used so the pipeline still emits
+        per-frame text. Pass ``CaptionParams(endpoint_url=..., api_key=...)``
+        to route captioning to a remote NIM endpoint instead of the local
+        VLM.
 
         The ``split_config`` keyword honors the ``"video"`` key (chunking the
         fused audio+visual transcript). The ``"audio"`` key is ignored on the
@@ -353,6 +357,10 @@ class GraphIngestor(ingestor):
             self._extract_params = _resolve_api_key(extract_params)
         elif self._extract_params is None:
             self._extract_params = ExtractParams()
+        if caption_params is not None:
+            self._caption_params = _resolve_api_key(caption_params)
+        elif self._caption_params is None:
+            self._caption_params = CaptionParams()
         self._apply_split_config(split_config)
         self._record_stage("extract")
         return self

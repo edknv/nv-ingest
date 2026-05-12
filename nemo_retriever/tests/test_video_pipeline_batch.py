@@ -18,6 +18,7 @@ from nemo_retriever.params import (
     ASRParams,
     AudioChunkParams,
     AudioVisualFuseParams,
+    CaptionParams,
     ExtractParams,
     VideoFrameParams,
 )
@@ -57,20 +58,21 @@ def _make_test_mp4_with_av(path: Path, duration_sec: int = 5) -> None:
 def test_run_video_pipeline_emits_audio_frame_and_scene_rows(tmp_path: Path) -> None:
     """End-to-end through MultiTypeExtractOperator._run_video_pipeline.
 
-    Mocks the OCR + ASR backends so the test runs offline.
+    Mocks the caption + ASR backends so the test runs offline.
     """
     fixture = tmp_path / "fixture.mp4"
     _make_test_mp4_with_av(fixture, duration_sec=5)
 
     from nemo_retriever.graph.multi_type_extract_operator import _MultiTypeExtractBase
 
-    # Build a base operator with a remote-ocr URL so VideoFrameOCRActor
+    # Build a base operator with a caption endpoint_url so VideoFrameCaptionActor
     # resolves to its CPU (NIM) variant.
     op = _MultiTypeExtractBase(
         extraction_mode="auto",
-        extract_params=ExtractParams(ocr_invoke_url="https://example/ocr"),
+        extract_params=ExtractParams(),
         audio_chunk_params=AudioChunkParams(split_type="time", split_interval=10),
         asr_params=ASRParams(),
+        caption_params=CaptionParams(endpoint_url="https://example/vlm", api_key="k"),
         video_frame_params=VideoFrameParams(fps=1.0, dedup=False),
         av_fuse_params=AudioVisualFuseParams(enabled=True),
     )
@@ -100,17 +102,21 @@ def test_run_video_pipeline_emits_audio_frame_and_scene_rows(tmp_path: Path) -> 
     ]
     fake_asr_df = pd.DataFrame(fake_asr_rows)
 
-    # Mock the NIM client's batched call so all five frames return distinct OCR text.
-    fake_responses = [[{"text_prediction": {"text": f"frame_text_{i}"}}] for i in range(5)]
+    # Mock the remote VLM call: emit one distinct caption per input frame.
+    def _fake_infer(payload, **_infer_kwargs):
+        return [f"frame_caption_{i}" for i in range(len(payload["base64_images"]))]
+
+    nim_instance = MagicMock()
+    nim_instance.infer = MagicMock(side_effect=_fake_infer)
 
     with patch("nemo_retriever.graph.multi_type_extract_operator.MediaChunkActor") as MockChunk, patch(
         "nemo_retriever.graph.multi_type_extract_operator.ASRActor"
-    ) as MockASR, patch("nemo_retriever.video.ocr_actor.NIMClient") as MockNIM:
+    ) as MockASR, patch(
+        "nemo_retriever.video.caption_actor._create_remote_client",
+        return_value=nim_instance,
+    ):
         MockChunk.return_value.run.return_value = pd.DataFrame()
         MockASR.return_value.run.return_value = fake_asr_df
-        nim_instance = MagicMock()
-        nim_instance.invoke_image_inference_batches.return_value = fake_responses
-        MockNIM.return_value = nim_instance
 
         batch = pd.DataFrame([{"path": str(fixture)}])
         out = op._run_video_pipeline(batch)

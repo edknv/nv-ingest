@@ -26,7 +26,7 @@ from nemo_retriever.graph.multi_type_extract_operator import MultiTypeExtractOpe
 from nemo_retriever.text_embed.operators import _BatchEmbedActor
 from nemo_retriever.video import (
     AudioVisualFuser,
-    VideoFrameOCRActor,
+    VideoFrameCaptionActor,
     VideoFrameTextDedup,
     VideoSplitActor,
 )
@@ -631,16 +631,10 @@ def build_graph(
         if audio_enabled:
             graph = graph >> ASRActor(params=asr_params)
         if frames_enabled:
-            graph = graph >> VideoFrameOCRActor(
-                ocr_invoke_url=getattr(extract_params, "ocr_invoke_url", None),
-                api_key=getattr(extract_params, "ocr_api_key", None) or getattr(extract_params, "api_key", None),
-                inference_batch_size=int(getattr(extract_params, "inference_batch_size", None) or 8),
-                request_timeout_s=float(
-                    getattr(extract_params, "ocr_request_timeout_s", None)
-                    or getattr(extract_params, "request_timeout_s", None)
-                    or 120.0
-                ),
-            )
+            from nemo_retriever.params import CaptionParams
+
+            frame_caption_params = caption_params if caption_params is not None else CaptionParams()
+            graph = graph >> VideoFrameCaptionActor(params=frame_caption_params)
         if text_dedup_enabled:
             graph = graph >> VideoFrameTextDedup(params=video_text_dedup_params)
         if fuse_enabled:

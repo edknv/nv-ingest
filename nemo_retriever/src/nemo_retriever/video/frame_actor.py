@@ -56,7 +56,7 @@ class VideoFrameActor(AbstractOperator, CPUOperator):
       - ``path``: original video path (frames are not persisted on disk;
         ``image_b64`` / ``bytes`` carry the pixels)
       - ``source_path``: original video path
-      - ``image_b64``: base64-encoded PNG (the ``VideoFrameOCRActor`` reads this)
+      - ``image_b64``: base64-encoded PNG (the ``VideoFrameCaptionActor`` reads this)
       - ``bytes``: raw PNG bytes (kept for compatibility with Ray Data binary readers)
       - ``page_number``: frame index (0, 1, 2, ...)
       - ``metadata``: dict with ``frame_timestamp_seconds``, ``segment_start_seconds``,
