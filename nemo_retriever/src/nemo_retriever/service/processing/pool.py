@@ -1982,6 +1982,7 @@ class ProcessingPool:
                 return
             progress.fired = True
             seen, failed = progress.seen, progress.failed
+            self._job_progress.pop(job_id, None)
 
         any_success = failed < seen
         if any_success:
