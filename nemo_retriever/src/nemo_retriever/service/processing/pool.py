@@ -1963,9 +1963,14 @@ class ProcessingPool:
             progress.seen += 1
             if not success:
                 progress.failed += 1
+            # Snapshot inside the lock so the SSE payload reflects the
+            # result count at *this* call's threshold crossing, not
+            # whatever extra results other threads stack on while we
+            # release the lock to do the DB lookup below.
+            seen, failed, expected = progress.seen, progress.failed, progress.expected
             # Fast path: ``expect_results`` declared a known target.
             # Skip the DB lookup for the N-1 non-terminal results.
-            if progress.expected is not None and progress.seen < progress.expected:
+            if expected is not None and seen < expected:
                 return
 
         repo = Repository(self._db_engine)
@@ -1974,14 +1979,13 @@ class ProcessingPool:
             return
 
         with self._job_progress_lock:
-            progress = self._job_progress[job_id]
-            if progress.fired:
+            progress = self._job_progress.get(job_id)
+            if progress is None or progress.fired:
                 return
-            target = progress.expected if progress.expected is not None else job.total_pages
-            if target <= 0 or progress.seen < target:
+            target = expected if expected is not None else job.total_pages
+            if target <= 0 or seen < target:
                 return
             progress.fired = True
-            seen, failed = progress.seen, progress.failed
             self._job_progress.pop(job_id, None)
 
         any_success = failed < seen
