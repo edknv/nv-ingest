@@ -33,6 +33,9 @@ from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Unio
 from nemo_retriever.graph import InprocessExecutor, RayDataExecutor
 from nemo_retriever.graph.ingestor_runtime import batch_tuning_to_node_overrides, build_graph
 from nemo_retriever.ingestor import ingestor
+from nemo_retriever.observability import OTELConfig
+from nemo_retriever.observability.configure import configure as _configure_otel
+from nemo_retriever.observability.spans import pipeline_span
 from nemo_retriever.params import (
     ASRParams,
     AudioChunkParams,
@@ -177,6 +180,11 @@ class GraphIngestor(ingestor):
         ``"raise"`` raises when explicitly configured remote NIM stages report
         row-level errors. ``"collect"`` returns partial results with the stage
         error payloads preserved.
+    otel
+        Optional :class:`~nemo_retriever.observability.OTELConfig` for
+        one-shot SDK setup.  ``None`` (default) means defer to whatever
+        provider the host application has already registered globally —
+        no spans are emitted unless the host has wired up OTEL.
     """
 
     RUN_MODE = "graph"
@@ -196,6 +204,7 @@ class GraphIngestor(ingestor):
         node_overrides: Optional[Dict[str, Dict[str, Any]]] = None,
         show_progress: bool = True,
         error_policy: str = "raise",
+        otel: Optional[OTELConfig] = None,
     ) -> None:
         super().__init__(documents=documents)
         if run_mode not in {"batch", "inprocess"}:
@@ -214,6 +223,8 @@ class GraphIngestor(ingestor):
         self._show_progress = show_progress
         self._error_policy = error_policy
         self._rd_dataset: Any = None
+        if otel is not None:
+            _configure_otel(otel)
 
         # Pipeline configuration accumulated by fluent methods
         self._extraction_mode: str = "pdf"
@@ -436,6 +447,15 @@ class GraphIngestor(ingestor):
 
         post_extract_order = tuple(s for s in self._stage_order if s != "extract")
 
+        with pipeline_span(
+            self._run_mode,
+            extraction_mode=self._extraction_mode,
+            stages=post_extract_order,
+        ):
+            return self._run_pipeline(post_extract_order)
+
+    def _run_pipeline(self, post_extract_order: tuple[str, ...]) -> Any:
+        """Build the executor and run the pipeline."""
         if self._run_mode == "batch":
             import ray
 
