@@ -288,9 +288,11 @@ class RayDataExecutor(AbstractExecutor):
             # (continuous batching), so feed them more rows per map_batches call.
             from nemo_retriever.parse.nemotron_parse import NemotronParseActor, NemotronParseGPUActor
             from nemo_retriever.caption.caption import CaptionGPUActor
+            from nemo_retriever.video.caption_actor import VideoFrameCaptionGPUActor
 
             if batch_size == self._default_batch_size and issubclass(
-                node.operator_class, (NemotronParseActor, NemotronParseGPUActor, CaptionGPUActor)
+                node.operator_class,
+                (NemotronParseActor, NemotronParseGPUActor, CaptionGPUActor, VideoFrameCaptionGPUActor),
             ):
                 batch_size = NEMOTRON_PARSE_BATCH_SIZE
 
@@ -329,8 +331,12 @@ class RayDataExecutor(AbstractExecutor):
                     # manage their own KV-cache and require exclusive GPU access.
                     from nemo_retriever.parse.nemotron_parse import NemotronParseActor, NemotronParseGPUActor
                     from nemo_retriever.caption.caption import CaptionGPUActor
+                    from nemo_retriever.video.caption_actor import VideoFrameCaptionGPUActor
 
-                    if issubclass(node.operator_class, (NemotronParseActor, NemotronParseGPUActor, CaptionGPUActor)):
+                    if issubclass(
+                        node.operator_class,
+                        (NemotronParseActor, NemotronParseGPUActor, CaptionGPUActor, VideoFrameCaptionGPUActor),
+                    ):
                         num_gpus = max(self._default_num_gpus, VLLM_GPUS_PER_ACTOR)
                     else:
                         num_gpus = max(self._default_num_gpus, _DEFAULT_GPU_OPERATOR_NUM_GPUS)
