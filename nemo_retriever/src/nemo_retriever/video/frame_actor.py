@@ -14,7 +14,10 @@ from __future__ import annotations
 import base64
 import io
 import logging
+import os
+import shutil
 import tempfile
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 import pandas as pd
@@ -28,6 +31,61 @@ from nemo_retriever.params import VideoFrameParams
 from nemo_retriever.video import _content_types as _CT
 
 logger = logging.getLogger(__name__)
+
+_FRAME_TMPDIR_PREFIX = "retriever_video_frames_pid"
+
+
+def _frame_tmpdir_prefix() -> str:
+    """Tmpdir prefix tagged with the current PID so orphans from dead Ray
+    workers (SIGKILL on memory pressure, init-retry restarts) can be
+    distinguished from live ones at startup."""
+    return f"{_FRAME_TMPDIR_PREFIX}{os.getpid()}_"
+
+
+def _reap_orphaned_frame_tmpdirs(tmp_root: str = tempfile.gettempdir()) -> int:
+    """Remove ``retriever_video_frames_pid<PID>_*`` directories whose owning
+    PID is no longer alive. Returns the number of dirs removed.
+
+    Why: prior runs that crashed via SIGKILL (Ray actor eviction, oomd, hard
+    OOM) leave 80+ GiB of extracted frames per dead worker behind, because
+    ``tempfile.TemporaryDirectory``'s context-manager cleanup never runs.
+    20 such orphans is how we filled a 1.5 TB disk to 97%. Runs at module
+    import so it fires once per Ray worker startup. Silent on any failure —
+    cleanup is best-effort.
+    """
+    removed = 0
+    try:
+        entries = os.listdir(tmp_root)
+    except OSError:
+        return 0
+    for name in entries:
+        if not name.startswith(_FRAME_TMPDIR_PREFIX):
+            continue
+        # Parse the PID suffix: "retriever_video_frames_pid<PID>_<random>".
+        rest = name[len(_FRAME_TMPDIR_PREFIX):]
+        pid_str, _, _ = rest.partition("_")
+        try:
+            pid = int(pid_str)
+        except ValueError:
+            continue
+        # /proc/<pid> exists iff the process is alive (Linux). Skip when
+        # the owner is still around — that's a live extract actor.
+        if Path(f"/proc/{pid}").exists():
+            continue
+        path = os.path.join(tmp_root, name)
+        try:
+            shutil.rmtree(path, ignore_errors=True)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Could not remove orphan frame tmpdir %s: %s", path, exc)
+            continue
+        removed += 1
+        logger.warning("Reaped orphaned video-frame tmpdir from dead worker: %s", path)
+    return removed
+
+
+# Fire on import so each fresh Ray worker reclaims disk from prior crashes
+# before its own extract starts.
+_reap_orphaned_frame_tmpdirs()
 
 # Adaptive fps tiers: (max_duration_seconds, fps).  Picked when the
 # duration is at or below max_duration_seconds.  Pattern doubles
@@ -172,7 +230,7 @@ def _extract_one_legacy(
         fps = adaptive
     half_window = 0.5 / fps
     abs_offset = float(start_seconds or 0.0)
-    with tempfile.TemporaryDirectory(prefix="retriever_video_frames_") as tmpdir:
+    with tempfile.TemporaryDirectory(prefix=_frame_tmpdir_prefix()) as tmpdir:
         frames = interface.extract_frames(
             source_path,
             tmpdir,
@@ -193,6 +251,14 @@ def _extract_one_legacy(
             except Exception as e:
                 logger.warning("Could not read frame %s: %s", frame_path, e)
                 continue
+            # Free the on-disk frame the moment we have it in memory. ffmpeg
+            # wrote all frames before returning, so the tmpdir peaks at the
+            # full extract size (~80 GiB for a long video) — deleting as we
+            # read brings it back down before the next chunk extracts.
+            try:
+                os.unlink(frame_path)
+            except OSError:
+                pass
             image_b64 = base64.b64encode(frame_bytes).decode("ascii")
             # Shift bounded-window timestamps back into the source-video timeline.
             abs_ts = float(timestamp) + abs_offset
