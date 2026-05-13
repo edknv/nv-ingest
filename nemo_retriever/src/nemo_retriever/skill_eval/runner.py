@@ -37,7 +37,7 @@ class TrialResult:
     trial_id: str
     condition: str
     entry_id: int
-    query_id: int
+    query_id: str
     status: str
     extraction_method: str
     duration_ms: int
@@ -59,19 +59,41 @@ class TrialResult:
     retriever_used_ever: bool = False
     skill_fired: bool | None = None
     is_setup: bool = False
+    domain: str = ""
+
+
+_TESTDATA_PREFIXES = (
+    "test-data/vidorev3-fda/pdfs",
+    "test-data/vidorev3-finance/pdfs",
+    "test-data/vidorev3-hr/pdfs",
+)
+
+
+def _remap_pdf_paths(text: str) -> str:
+    """Rewrite the dataset's ``test-data/.../pdfs/`` references to ``./pdfs/``.
+
+    The BEIR dataset's paraphrased prompts hard-code paths from the dataset
+    source repo. Each trial workdir symlinks the domain's PDFs to ``./pdfs/`` so
+    the agent only needs the basename — rewriting the prefix lets the natural-
+    language reference resolve to a real file.
+    """
+    for prefix in _TESTDATA_PREFIXES:
+        text = text.replace(prefix, "./pdfs")
+    return text
 
 
 def _render_prompt(entry: DatasetEntry, condition: str) -> str:
     tpl_name = "trial_user_slash.j2" if condition == "c3_retriever_skill" else "trial_user_nl.j2"
     text = _load_prompt_template(tpl_name)
-    return text.replace("{{ paraphrased_prompt }}", entry.paraphrased_prompt).replace(
+    return text.replace("{{ paraphrased_prompt }}", _remap_pdf_paths(entry.paraphrased_prompt)).replace(
         "{{ original_query }}", entry.original_query
     )
 
 
-def _render_setup_prompt(condition: str) -> str:
+def _render_setup_prompt(condition: str, domain_label: str = "PDFs") -> str:
     tpl_name = "setup_slash.j2" if condition == "c3_retriever_skill" else "setup_nl.j2"
-    return _load_prompt_template(tpl_name)
+    text = _load_prompt_template(tpl_name)
+    return text.replace("{{ domain_label }}", domain_label)
 
 
 def _build_pdf_symlinks(pdf_source: Path, dest: Path) -> None:
@@ -103,11 +125,44 @@ def _copy_skill(skill_source: Path, dest: Path) -> None:
         shutil.copytree(ref_src, dest / "references", dirs_exist_ok=True)
 
 
+# Bash patterns that route the agent into the nemo_retriever library, regardless
+# of whether it tries the CLI, a Python module invocation, or a direct full-path
+# call into the project's venv. Used in c1's project-level settings.json. The
+# patterns are intentionally written as substring globs (Claude Code semantics)
+# so they catch the command line as the agent assembled it.
+_C1_BASH_DENY_PATTERNS: tuple[str, ...] = (
+    "Bash(retriever:*)",
+    "Bash(*nemo_retriever*)",
+    "Bash(*nemo-retriever*)",
+    "Bash(python*-m*nemo_retriever*)",
+    "Bash(uv*run*retriever*)",
+    "Bash(/home/edwardk/git/skills/retriever/bin/*)",
+    # Hide the HuggingFace model cache so the agent can't enumerate the
+    # NVIDIA stack that c2/c3 populated. HF env vars (HF_HOME etc.) are
+    # redirected in _env_for; these deny patterns close the `ls`/`find`
+    # side channel that bypasses env-var resolution.
+    "Bash(*huggingface*)",
+    "Bash(*.cache/huggingface*)",
+)
+
+
+def _c1_settings_json() -> str:
+    """Project-level settings for the c1_base trial.
+
+    `--permission-mode bypassPermissions` auto-approves tool calls that aren't
+    explicitly denied; the deny patterns below catch every reasonable path
+    into the nemo_retriever library so the agent has to fall back on CPU-only
+    primitives (Read, Grep, pdftotext, etc.).
+    """
+    return json.dumps({"permissions": {"deny": list(_C1_BASH_DENY_PATTERNS)}}, indent=2) + "\n"
+
+
 def _build_condition_workdir(
     condition: str,
     root: Path,
     pdf_source: Path,
     skill_source: Path,
+    domain: str = "",
 ) -> Path:
     """Build one workdir per condition. Shared across all turns in the session.
 
@@ -119,17 +174,22 @@ def _build_condition_workdir(
     The agent itself creates any retrieval artifacts (e.g., ./lancedb/) inside the
     workdir on the setup turn.
     """
-    workdir = root / f"{condition}_{uuid.uuid4().hex[:8]}"
+    domain_seg = f"_{domain}" if domain else ""
+    workdir = root / f"{condition}{domain_seg}_{uuid.uuid4().hex[:8]}"
     workdir.mkdir(parents=True, exist_ok=True)
     _build_pdf_symlinks(pdf_source, workdir / "pdfs")
     (workdir / ".claude").mkdir(parents=True, exist_ok=True)
-    (workdir / ".claude" / "settings.json").write_text("{}\n", encoding="utf-8")
+    # c1 gets explicit Bash deny rules; c2/c3 keep the empty settings.json.
+    settings_text = _c1_settings_json() if condition == "c1_base" else "{}\n"
+    (workdir / ".claude" / "settings.json").write_text(settings_text, encoding="utf-8")
     # c2 and c3 both have retriever installed AND the nemo-retriever skill loaded.
     # The c2/c3 distinction is purely the prompt style (NL vs explicit slash command).
     if condition in ("c2_retriever", "c3_retriever_skill"):
         _copy_skill(skill_source, workdir / ".claude" / "skills" / "nemo-retriever")
     if condition == "c1_base":
         _write_shim(workdir / ".bin", "retriever")
+        # Empty HuggingFace cache redirect; env vars are wired up in _env_for.
+        (workdir / ".hf_empty").mkdir(parents=True, exist_ok=True)
     return workdir
 
 
@@ -148,6 +208,14 @@ def _env_for(condition: str, workdir: Path) -> dict[str, str]:
     env = os.environ.copy()
     if condition == "c1_base":
         env["PATH"] = f"{workdir / '.bin'}{os.pathsep}{env.get('PATH', '')}"
+        # Point HuggingFace cache env vars at an empty workdir-local dir so
+        # any HF Python tooling the agent invokes sees no cached models.
+        # Direct filesystem reads (e.g. `ls ~/.cache/huggingface/`) are
+        # blocked separately by the Bash deny rules in settings.json.
+        hf_empty = str(workdir / ".hf_empty")
+        env["HF_HOME"] = hf_empty
+        env["HF_HUB_CACHE"] = hf_empty
+        env["TRANSFORMERS_CACHE"] = hf_empty
     return env
 
 
@@ -180,8 +248,12 @@ def _build_command(
         str(budget_usd),
         "--setting-sources",
         "project",
-        "--allow-dangerously-skip-permissions",
     ]
+    # c2/c3 run fully un-gated. c1 omits --allow-dangerously-skip-permissions
+    # so the project-level settings.json deny rules are actually consulted by
+    # Claude Code instead of being short-circuited.
+    if condition != "c1_base":
+        cmd.append("--allow-dangerously-skip-permissions")
     if resume:
         cmd.extend(["--resume", session_uuid])
     else:
@@ -274,7 +346,8 @@ def _run_one_turn(
     prompt: str,
     trial_id: str,
     entry_id: int,
-    query_id: int,
+    query_id: str,
+    domain: str,
     is_setup: bool,
     turn_idx: int,
     workdir: Path,
@@ -290,8 +363,9 @@ def _run_one_turn(
     if out_path.exists():
         out_path.unlink()
 
+    domain_tag = f"[{domain}] " if domain else ""
     label = "setup" if is_setup else f"entry_id={entry_id}, query_id={query_id}"
-    logger.info("turn %d for %s (%s)", turn_idx + 1, condition, label)
+    logger.info("turn %d for %s %s(%s)", turn_idx + 1, condition, domain_tag, label)
     t0 = time.monotonic()
     try:
         proc = subprocess.run(
@@ -320,6 +394,7 @@ def _run_one_turn(
             session_id=session_uuid,
             errors=[f"turn exceeded {timeout_s}s wall timeout"],
             is_setup=is_setup,
+            domain=domain,
         )
 
     envelope = _parse_envelope(proc.stdout)
@@ -338,6 +413,7 @@ def _run_one_turn(
         model_id=_extract_model_id(envelope, fallback=model),
         session_id=str(envelope.get("session_id") or session_uuid),
         is_setup=is_setup,
+        domain=domain,
     )
     _populate_tokens(result, envelope)
     if proc.returncode != 0:
@@ -380,28 +456,40 @@ def run_condition(
     model: str,
     budget_usd: float,
     timeout_s: int,
+    domain: str = "",
+    domain_label: str = "PDFs",
 ) -> tuple[Path, list[TrialResult]]:
     """Run one Claude Code session covering setup + all `entries` for `condition`.
 
     Turn 1 creates the session via --session-id; subsequent turns resume it. The
     first TrialResult has is_setup=True; the rest are query results, one per entry.
+    All ``entries`` are expected to share the same ``domain`` (the caller groups
+    by domain so each session sees a single PDF corpus).
     """
     if condition not in CONDITIONS:
         raise ValueError(f"unknown condition: {condition}")
-    workdir = _build_condition_workdir(condition, workdir_root, pdf_source, skill_source)
+    workdir = _build_condition_workdir(condition, workdir_root, pdf_source, skill_source, domain=domain)
     session_uuid = str(uuid.uuid4())
     env = _env_for(condition, workdir)
-    logger.info("starting session for %s: workdir=%s session_id=%s", condition, workdir, session_uuid)
+    logger.info(
+        "starting session for %s/%s: workdir=%s session_id=%s",
+        condition,
+        domain or "default",
+        workdir,
+        session_uuid,
+    )
 
     results: list[TrialResult] = []
 
+    setup_trial_id = f"{condition}_{domain or 'default'}_setup_t1"
     setup_cmd = _build_command(condition, model, budget_usd, session_uuid, workdir, resume=False)
     setup_result = _run_one_turn(
         condition=condition,
-        prompt=_render_setup_prompt(condition),
-        trial_id=f"{condition}_setup_t1",
+        prompt=_render_setup_prompt(condition, domain_label),
+        trial_id=setup_trial_id,
         entry_id=0,
-        query_id=0,
+        query_id="",
+        domain=domain,
         is_setup=True,
         turn_idx=0,
         workdir=workdir,
@@ -419,9 +507,10 @@ def run_condition(
         result = _run_one_turn(
             condition=condition,
             prompt=_render_prompt(entry, condition),
-            trial_id=f"{condition}_e{entry.entry_id}_t{turn_idx + 1}",
+            trial_id=f"{condition}_{domain or 'default'}_e{entry.entry_id}_t{turn_idx + 1}",
             entry_id=entry.entry_id,
             query_id=entry.query_id,
+            domain=domain,
             is_setup=False,
             turn_idx=turn_idx,
             workdir=workdir,
@@ -436,7 +525,10 @@ def run_condition(
 
 
 def save_trial(result: TrialResult, session_dir: Path) -> Path:
-    out = session_dir / "trials" / result.condition / f"{result.trial_id}.json"
+    parts = [session_dir, "trials", result.condition]
+    if result.domain:
+        parts.append(result.domain)
+    out = Path(*[str(p) for p in parts]) / f"{result.trial_id}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(asdict(result), indent=2) + "\n", encoding="utf-8")
     return out

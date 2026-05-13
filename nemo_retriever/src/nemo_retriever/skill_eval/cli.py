@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+from collections import defaultdict
 from pathlib import Path
 from typing import Optional
 
@@ -15,7 +16,7 @@ import typer
 
 from nemo_retriever.harness.artifacts import create_session_dir
 from nemo_retriever.harness.config import REPO_ROOT
-from nemo_retriever.skill_eval.dataset import load_config, load_dataset
+from nemo_retriever.skill_eval.dataset import DatasetEntry, load_config, load_eval_manifest
 from nemo_retriever.skill_eval.report import overall_recall, write_summary
 from nemo_retriever.skill_eval.runner import (
     CONDITIONS,
@@ -30,25 +31,64 @@ app = typer.Typer(help="Benchmark Claude with vs. without the /nemo-retriever sk
 logger = logging.getLogger(__name__)
 
 
+def _resolve_pdf_source(
+    cfg: dict,
+    domain: str,
+) -> Path:
+    pdf_dirs = cfg.get("pdf_dirs")
+    if isinstance(pdf_dirs, dict):
+        if domain not in pdf_dirs:
+            raise typer.BadParameter(
+                f"config 'pdf_dirs' is missing an entry for domain '{domain}'. "
+                f"Known domains: {sorted(pdf_dirs.keys())}"
+            )
+        return Path(str(pdf_dirs[domain])).expanduser().resolve()
+    if cfg.get("pdf_dir"):
+        return Path(str(cfg["pdf_dir"])).expanduser().resolve()
+    raise typer.BadParameter("config must define either 'pdf_dirs' (per-domain map) or 'pdf_dir'.")
+
+
+def _resolve_domain_label(entries: list[DatasetEntry], cfg: dict, domain: str) -> str:
+    """Pick a human-readable label for the setup prompt.
+
+    Prefers the manifest-provided ``domain_label`` carried on the entry. Falls
+    back to an optional ``domain_labels`` map in the config, then to ``"PDFs"``.
+    """
+    for e in entries:
+        if e.domain == domain and e.domain_label:
+            return e.domain_label
+    labels = cfg.get("domain_labels")
+    if isinstance(labels, dict) and domain in labels:
+        return str(labels[domain])
+    return "PDFs"
+
+
 @app.command("run")
 def run_command(
     config: Optional[Path] = typer.Option(None, "--config", help="Path to run.yaml; defaults to the packaged config."),
-    dataset: Optional[Path] = typer.Option(
-        None, "--dataset", help="Path to dataset.yaml; defaults to the packaged 5-entry dataset."
+    eval_manifest: Optional[Path] = typer.Option(
+        None,
+        "--eval-manifest",
+        help="Path to a retriever-sdg eval_manifest.json. Overrides config.eval_manifest_path.",
     ),
     conditions: str = typer.Option(
         ",".join(DEFAULT_ORDER),
         "--conditions",
         help=(
-            "Comma-separated conditions in execution order. Each condition's workdir is deleted after it runs, "
+            "Comma-separated conditions in execution order. Each (condition, domain) workdir is deleted after it runs, "
             "so only one LanceDB is on disk at a time."
         ),
+    ),
+    domains: Optional[str] = typer.Option(
+        None,
+        "--domains",
+        help="Optional comma-separated list of domains to include. Defaults to all domains present in the dataset.",
     ),
     artifacts_root: Optional[Path] = typer.Option(
         None, "--artifacts-root", help="Override the artifact root; defaults to <repo>/nemo_retriever/artifacts/"
     ),
 ) -> None:
-    """Run the v1 benchmark: 5 entries × selected conditions, sequential."""
+    """Run the benchmark across the dataset's domains × selected conditions, sequentially."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     if shutil.which("claude") is None:
         typer.echo("Error: `claude` CLI is not on PATH; install Claude Code first.", err=True)
@@ -61,13 +101,31 @@ def run_command(
             typer.echo(f"Error: unknown condition '{c}'. Choose from {CONDITIONS}.", err=True)
             raise typer.Exit(code=2)
 
-    entries = load_dataset(dataset)
+    manifest_path = eval_manifest or cfg.get("eval_manifest_path")
+    if not manifest_path:
+        typer.echo("Error: config is missing 'eval_manifest_path' and --eval-manifest was not provided.", err=True)
+        raise typer.Exit(code=2)
+    entries = load_eval_manifest(Path(str(manifest_path)).expanduser().resolve())
     typer.echo(f"Loaded {len(entries)} dataset entries.")
 
-    if not cfg.get("pdf_dir"):
-        typer.echo("Error: config is missing required key 'pdf_dir'.", err=True)
-        raise typer.Exit(code=2)
-    pdf_source = Path(str(cfg["pdf_dir"])).expanduser().resolve()
+    by_domain: dict[str, list[DatasetEntry]] = defaultdict(list)
+    for e in entries:
+        by_domain[e.domain].append(e)
+
+    if domains:
+        wanted = {d.strip() for d in domains.split(",") if d.strip()}
+        unknown = wanted - set(by_domain)
+        if unknown:
+            typer.echo(
+                f"Error: --domains references unknown domains {sorted(unknown)}. " f"Available: {sorted(by_domain)}",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+        by_domain = {d: by_domain[d] for d in wanted}
+
+    domain_order = sorted(by_domain.keys())
+    typer.echo(f"Domains in this run: {domain_order} ({sum(len(v) for v in by_domain.values())} entries total)")
+
     skill_source = Path(
         str(cfg.get("skill_source_dir") or REPO_ROOT / ".claude" / "skills" / "nemo-retriever")
     ).expanduser()
@@ -83,44 +141,54 @@ def run_command(
 
     (session_dir / "config.yaml").write_text("\n".join(f"{k}: {v}" for k, v in cfg.items()) + "\n", encoding="utf-8")
 
-    results_by_condition: dict[str, list] = {c: [] for c in selected}
+    # Results are keyed (condition, domain) so the report can break out per-domain numbers.
+    results_by_key: dict[tuple[str, str], list] = {}
     for cond in selected:
-        typer.echo(f"Starting session for {cond} — setup + {len(entries)} query turns")
-        workdir, results = run_condition(
-            condition=cond,
-            entries=entries,
-            workdir_root=workdir_root,
-            pdf_source=pdf_source,
-            skill_source=skill_source,
-            model=model,
-            budget_usd=budget,
-            timeout_s=timeout,
-        )
-        for r in results:
-            save_trial(r, session_dir)
-            kind = "setup" if r.is_setup else f"entry_id={r.entry_id} query_id={r.query_id}"
+        for domain in domain_order:
+            domain_entries = by_domain[domain]
+            pdf_source = _resolve_pdf_source(cfg, domain)
+            domain_label = _resolve_domain_label(domain_entries, cfg, domain)
             typer.echo(
-                f"  turn {r.num_turns} {kind}: status={r.status} "
-                f"tokens(in/out/cache_r)={r.input_tokens}/{r.output_tokens}/{r.cache_read_input_tokens} "
-                f"cost=${r.total_cost_usd:.3f} retrieved={len(r.ranked_retrieved)}"
+                f"Starting session for {cond}/{domain} — setup + {len(domain_entries)} query turns "
+                f"(pdfs={pdf_source})"
             )
-            results_by_condition[cond].append(r)
+            workdir, results = run_condition(
+                condition=cond,
+                entries=domain_entries,
+                workdir_root=workdir_root,
+                pdf_source=pdf_source,
+                skill_source=skill_source,
+                model=model,
+                budget_usd=budget,
+                timeout_s=timeout,
+                domain=domain,
+                domain_label=domain_label,
+            )
+            for r in results:
+                save_trial(r, session_dir)
+                kind = "setup" if r.is_setup else f"entry_id={r.entry_id} query_id={r.query_id}"
+                typer.echo(
+                    f"  turn {r.num_turns} [{domain}] {kind}: status={r.status} "
+                    f"tokens(in/out/cache_r)={r.input_tokens}/{r.output_tokens}/{r.cache_read_input_tokens} "
+                    f"cost=${r.total_cost_usd:.3f} retrieved={len(r.ranked_retrieved)}"
+                )
+            results_by_key[(cond, domain)] = results
 
-        entries_by_id = {e.entry_id: e for e in entries}
-        scores = overall_recall(results, entries_by_id)
-        typer.echo(
-            f"\nOverall recall for {cond}: "
-            f"recall@1={scores['recall_1']:.3f}  "
-            f"recall@5={scores['recall_5']:.3f}  "
-            f"recall@10={scores['recall_10']:.3f}"
-        )
+            entries_by_id = {e.entry_id: e for e in domain_entries}
+            scores = overall_recall(results, entries_by_id)
+            typer.echo(
+                f"\nRecall for {cond}/{domain}: "
+                f"recall@1={scores['recall_1']:.3f}  "
+                f"recall@5={scores['recall_5']:.3f}  "
+                f"recall@10={scores['recall_10']:.3f}"
+            )
 
-        cleanup_condition_workdir(workdir)
-        typer.echo(f"Cleaned up workdir for {cond}\n")
+            cleanup_condition_workdir(workdir)
+            typer.echo(f"Cleaned up workdir for {cond}/{domain}\n")
 
     json_path, md_path = write_summary(
         session_dir=session_dir,
-        results_by_condition=results_by_condition,
+        results_by_key=results_by_key,
         entries=entries,
         config=cfg,
         config_path=str(config) if config else "<packaged default>",
