@@ -142,6 +142,7 @@ benchmarks = [
 llm = [
   "litellm>=1.40.0",
 ]
+
 dev = [
   "build>=1.2.2",
   "pytest>=8.0.2",
@@ -193,6 +194,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 "nemo_retriever.harness.portal" = ["static/**/*"]
 "nemo_retriever.service" = ["retriever-service.yaml"]
+"nemo_retriever.skill_eval" = ["prompts/*.j2", "data/*.yaml", "configs/*.yaml"]
 
 [tool.pytest.ini_options]
 # ``src`` exposes the ``nemo_retriever`` package (src layout). ``.`` keeps ``from tests import …``

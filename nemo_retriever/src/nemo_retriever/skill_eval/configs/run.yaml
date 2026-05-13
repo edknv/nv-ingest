@@ -1,0 +1,12 @@
+agent_model: claude-opus-4-7
+per_trial_budget_usd: 5.0
+per_trial_timeout_s: 600
+per_trial_workdir_root: /tmp/skill_eval
+conditions:
+  - c1_base
+  - c2_retriever
+  - c3_retriever_skill
+# Path to the skill source tree the eval should test. Defaults to
+# <repo>/.claude/skills/nemo-retriever when unset.
+# skill_source_dir: /path/to/.claude/skills/nemo-retriever
+pdf_dir: ~/data/vidore_v3_pharmaceuticals/pdfs

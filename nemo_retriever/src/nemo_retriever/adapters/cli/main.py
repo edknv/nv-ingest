@@ -22,6 +22,7 @@ from nemo_retriever.pdf import app as pdf_app
 from nemo_retriever.pipeline import __main__ as pipeline_main
 from nemo_retriever.recall import app as recall_app
 from nemo_retriever.service.cli import app as service_app
+from nemo_retriever.skill_eval import app as skill_eval_app
 from nemo_retriever.txt import __main__ as txt_main
 from nemo_retriever.vector_store import app as vector_store_app
 from nemo_retriever.version import get_version_info
@@ -40,6 +41,7 @@ app.add_typer(harness_app, name="harness")
 app.add_typer(vector_store_app, name="vector-store")
 app.add_typer(recall_app, name="recall")
 app.add_typer(service_app, name="service")
+app.add_typer(skill_eval_app, name="skill-eval")
 app.add_typer(txt_main.app, name="txt")
 app.add_typer(html_main.app, name="html")
 app.add_typer(pipeline_main.app, name="pipeline")
