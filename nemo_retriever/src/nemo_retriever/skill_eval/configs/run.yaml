@@ -20,3 +20,11 @@ pdf_dirs:
   vidore_v3_pharmaceuticals: ~/git/retriever-sdg-v3/test-data/vidorev3-fda/pdfs
   vidore_v3_finance_en: ~/git/retriever-sdg-v3/test-data/vidorev3-finance/pdfs
   vidore_v3_hr: ~/git/retriever-sdg-v3/test-data/vidorev3-hr/pdfs
+
+# LLM-as-judge scoring of each query turn's final_answer against the manifest's
+# ground-truth answer. Skipped silently when the api_key_env var is unset.
+judge:
+  enabled: true
+  model: nvidia_nim/mistralai/mixtral-8x22b-instruct-v0.1
+  api_base: https://integrate.api.nvidia.com/v1
+  api_key_env: NVIDIA_API_KEY

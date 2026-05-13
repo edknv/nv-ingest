@@ -60,6 +60,9 @@ class TrialResult:
     skill_fired: bool | None = None
     is_setup: bool = False
     domain: str = ""
+    judge_score: int | None = None
+    judge_reasoning: str = ""
+    judge_error: str = ""
 
 
 _TESTDATA_PREFIXES = (
@@ -446,6 +449,31 @@ def _run_one_turn(
     return result
 
 
+def _apply_judge(judge: Any, entry: DatasetEntry, result: TrialResult) -> None:
+    """Score ``result.final_answer`` against ``entry.ground_truth_answer``.
+
+    Mutates the result in place. Skips silently when the judge is unset, the
+    ground-truth answer is empty, or the trial didn't produce a final answer.
+    Errors are recorded on the result rather than raised so a flaky judge
+    endpoint never breaks an in-flight session.
+    """
+    if judge is None or not entry.ground_truth_answer or not result.final_answer:
+        return
+    try:
+        verdict = judge.judge(
+            query=entry.original_query,
+            reference=entry.ground_truth_answer,
+            candidate=result.final_answer,
+        )
+    except Exception as exc:  # defensive — LLMJudge already catches, but be safe.
+        result.judge_error = f"judge_invocation_error: {exc}"
+        return
+    result.judge_score = verdict.score
+    result.judge_reasoning = verdict.reasoning or ""
+    if verdict.error:
+        result.judge_error = verdict.error
+
+
 def run_condition(
     *,
     condition: str,
@@ -458,6 +486,7 @@ def run_condition(
     timeout_s: int,
     domain: str = "",
     domain_label: str = "PDFs",
+    judge: Any = None,
 ) -> tuple[Path, list[TrialResult]]:
     """Run one Claude Code session covering setup + all `entries` for `condition`.
 
@@ -520,6 +549,7 @@ def run_condition(
             timeout_s=timeout_s,
             model=model,
         )
+        _apply_judge(judge, entry, result)
         results.append(result)
     return workdir, results
 

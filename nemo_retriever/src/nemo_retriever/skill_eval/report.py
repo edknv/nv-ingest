@@ -102,6 +102,10 @@ def _aggregate(
     skill_fired = [r.skill_fired for r in results if r.skill_fired is not None]
     if skill_fired:
         metrics["skill_fired_rate"] = sum(1 for x in skill_fired if x) / len(skill_fired)
+    judge_scores = [r.judge_score for r in query_results if r.judge_score is not None]
+    if judge_scores:
+        metrics["judge_score_mean"] = sum(judge_scores) / len(judge_scores)
+        metrics["judge_score_n"] = len(judge_scores)
 
     return {
         "run_name": run_name,
@@ -127,15 +131,17 @@ def aggregate_condition(results: Iterable[TrialResult], entries_by_id: dict[int,
 
 def _md_row(row: dict[str, Any]) -> str:
     m = row.get("metrics", {})
+    judge_cell = f"{m['judge_score_mean']:.2f} (n={m.get('judge_score_n', 0)})" if "judge_score_mean" in m else "—"
     return (
-        "| {cond} | {sr:.2f} | {r1:.3f} | {r5:.3f} | {r10:.3f} | {ipt:.0f} | {opt:.0f} "
-        "| {cr:.0f} | {cc:.0f} | ${cost:.3f} |"
+        "| {cond} | {sr:.2f} | {r1:.3f} | {r5:.3f} | {r10:.3f} | {judge} "
+        "| {ipt:.0f} | {opt:.0f} | {cr:.0f} | {cc:.0f} | ${cost:.3f} |"
     ).format(
         cond=row.get("run_name", "?"),
         sr=m.get("success_rate", 0.0),
         r1=m.get("recall_1", 0.0),
         r5=m.get("recall_5", 0.0),
         r10=m.get("recall_10", 0.0),
+        judge=judge_cell,
         ipt=m.get("input_tokens", 0.0),
         opt=m.get("output_tokens", 0.0),
         cr=m.get("cache_read_input_tokens", 0.0),
@@ -163,10 +169,10 @@ def write_summary_md(
         "## Overall (averaged across all queries in this run)",
         "",
         (
-            "| condition | success_rate | recall@1 | recall@5 | recall@10 | q_input | q_output "
+            "| condition | success_rate | recall@1 | recall@5 | recall@10 | judge | q_input | q_output "
             "| q_cache_read | q_cache_create | q_cost |"
         ),
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for row in overall_rows:
         lines.append(_md_row(row))

@@ -7,10 +7,11 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 from collections import defaultdict
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import typer
 
@@ -46,6 +47,36 @@ def _resolve_pdf_source(
     if cfg.get("pdf_dir"):
         return Path(str(cfg["pdf_dir"])).expanduser().resolve()
     raise typer.BadParameter("config must define either 'pdf_dirs' (per-domain map) or 'pdf_dir'.")
+
+
+def _build_judge(cfg: dict) -> Optional[Any]:
+    """Construct an ``LLMJudge`` from ``cfg['judge']`` or return ``None``.
+
+    Skips silently (with a console note) when the API key env var is unset, so
+    runs work end-to-end without network access. Import is deferred so the
+    ``litellm`` extra isn't required when judging is disabled.
+    """
+    judge_cfg = cfg.get("judge") or {}
+    if not judge_cfg.get("enabled", True):
+        typer.echo("Judge disabled by config (judge.enabled=false).")
+        return None
+    api_key_env = str(judge_cfg.get("api_key_env", "NVIDIA_API_KEY"))
+    api_key = os.environ.get(api_key_env)
+    if not api_key:
+        typer.echo(f"Judge disabled: ${api_key_env} is not set in the environment.")
+        return None
+    try:
+        from nemo_retriever.llm.clients.judge import LLMJudge
+    except ImportError as exc:
+        typer.echo(f"Judge disabled: failed to import LLMJudge ({exc}). Install nemo-retriever[llm].")
+        return None
+    judge = LLMJudge.from_kwargs(
+        model=str(judge_cfg.get("model", "nvidia_nim/mistralai/mixtral-8x22b-instruct-v0.1")),
+        api_base=judge_cfg.get("api_base"),
+        api_key=api_key,
+    )
+    typer.echo(f"Judge enabled: model={judge.model}")
+    return judge
 
 
 def _resolve_domain_label(entries: list[DatasetEntry], cfg: dict, domain: str) -> str:
@@ -135,6 +166,8 @@ def run_command(
     budget = float(cfg.get("per_trial_budget_usd", 5.0))
     timeout = int(cfg.get("per_trial_timeout_s", 600))
 
+    judge = _build_judge(cfg)
+
     base_dir = str(artifacts_root) if artifacts_root else None
     session_dir = create_session_dir("skilleval", base_dir=base_dir)
     typer.echo(f"Session dir: {session_dir}")
@@ -163,14 +196,16 @@ def run_command(
                 timeout_s=timeout,
                 domain=domain,
                 domain_label=domain_label,
+                judge=judge,
             )
             for r in results:
                 save_trial(r, session_dir)
                 kind = "setup" if r.is_setup else f"entry_id={r.entry_id} query_id={r.query_id}"
+                judge_str = "" if r.is_setup or r.judge_score is None else f" judge={r.judge_score}"
                 typer.echo(
                     f"  turn {r.num_turns} [{domain}] {kind}: status={r.status} "
                     f"tokens(in/out/cache_r)={r.input_tokens}/{r.output_tokens}/{r.cache_read_input_tokens} "
-                    f"cost=${r.total_cost_usd:.3f} retrieved={len(r.ranked_retrieved)}"
+                    f"cost=${r.total_cost_usd:.3f} retrieved={len(r.ranked_retrieved)}{judge_str}"
                 )
             results_by_key[(cond, domain)] = results
 
@@ -185,6 +220,25 @@ def run_command(
 
             cleanup_condition_workdir(workdir)
             typer.echo(f"Cleaned up workdir for {cond}/{domain}\n")
+
+    if judge is not None:
+        typer.echo("\nLLM-as-judge scores (mean over query turns, 0-5 scale):")
+        for cond in selected:
+            scored: list[int] = []
+            errored = 0
+            for domain in domain_order:
+                for r in results_by_key.get((cond, domain), []):
+                    if r.is_setup:
+                        continue
+                    if r.judge_score is not None:
+                        scored.append(int(r.judge_score))
+                    elif r.judge_error:
+                        errored += 1
+            if scored:
+                mean_score = sum(scored) / len(scored)
+                typer.echo(f"  {cond}: mean={mean_score:.2f}  n={len(scored)}  errors={errored}")
+            else:
+                typer.echo(f"  {cond}: no scores  errors={errored} (check judge config / litellm install)")
 
     json_path, md_path = write_summary(
         session_dir=session_dir,
