@@ -37,7 +37,7 @@ from nemo_retriever.table.table_detection import TableStructureActor
 from nemo_retriever.pdf.extract import PDFExtractionActor
 from nemo_retriever.pdf.split import PDFSplitActor
 from nemo_retriever.params import TextChunkParams, VdbUploadParams, resolve_split_params
-from nemo_retriever.vdb import IngestVdbOperator
+from nemo_retriever.vdb import IngestVdbOperator, VdbBuildIndexOperator
 from nemo_retriever.txt.ray_data import TextChunkActor
 from nemo_retriever.utils.convert.to_pdf import DocToPdfConversionActor
 from nemo_retriever.ingest_plans import IngestExecutionPlan
@@ -365,6 +365,12 @@ def batch_tuning_to_node_overrides(
         store_override["concurrency"] = (1, store_workers, 1) if store_workers > 1 else 1
         store_override["num_cpus"] = DEFAULT_STORE_CPUS_PER_ACTOR
 
+    # IngestVdbOperator's first-batch-overwrites / rest-appends handshake is
+    # only coherent with a single writer actor. (VdbBuildIndexOperator is already
+    # single-instance via REQUIRES_GLOBAL_BATCH; pinning is just defense in depth.)
+    overrides.setdefault(IngestVdbOperator.__name__, {})["concurrency"] = 1
+    overrides.setdefault(VdbBuildIndexOperator.__name__, {})["concurrency"] = 1
+
     return overrides
 
 
@@ -527,7 +533,13 @@ def _append_ordered_transform_stages(
             graph = graph >> _BatchEmbedActor(params=embed_params)
 
     if vdb_upload_params is not None:
+        # Streaming write then a barrier stage that builds the index once all
+        # writes have landed. See concurrency pin in batch_tuning_to_node_overrides.
         graph = graph >> IngestVdbOperator(
+            vdb_op=vdb_upload_params.vdb_op,
+            vdb_kwargs=vdb_upload_params.to_ingest_operator_kwargs(),
+        )
+        graph = graph >> VdbBuildIndexOperator(
             vdb_op=vdb_upload_params.vdb_op,
             vdb_kwargs=vdb_upload_params.to_ingest_operator_kwargs(),
         )

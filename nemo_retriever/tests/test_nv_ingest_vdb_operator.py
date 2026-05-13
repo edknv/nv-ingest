@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from nemo_retriever.vdb.adt_vdb import VDB
-from nemo_retriever.vdb import IngestVdbOperator, RetrieveVdbOperator
+from nemo_retriever.vdb import IngestVdbOperator, RetrieveVdbOperator, VdbBuildIndexOperator
 from nemo_retriever.vdb import operators as vdb_operator_module
 
 
@@ -17,6 +17,8 @@ class FakeVDB(VDB):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.run_calls: list[Any] = []
+        self.append_calls: list[tuple[Any, bool]] = []
+        self.build_index_calls: int = 0
         self.retrieval_calls: list[tuple[Any, dict[str, Any]]] = []
 
     def create_index(self, **kwargs: Any) -> None:
@@ -47,6 +49,12 @@ class FakeVDB(VDB):
         self.run_calls.append(records)
         return {"records": records}
 
+    def append(self, records: Any, *, overwrite: bool) -> None:
+        self.append_calls.append((records, overwrite))
+
+    def build_index(self) -> None:
+        self.build_index_calls += 1
+
 
 def _graph_rows() -> list[dict[str, Any]]:
     return [
@@ -65,19 +73,6 @@ def _graph_rows() -> list[dict[str, Any]]:
             "metadata": {"content_metadata": {"type": "text"}},
         },
     ]
-
-
-def test_process_returns_original_graph_rows_and_delegates_converted_records_to_run() -> None:
-    data = _graph_rows()
-    vdb = FakeVDB()
-    operator = IngestVdbOperator(vdb=vdb)
-
-    assert operator.preprocess(data) is data
-    assert operator.process(data) is data
-    assert operator.postprocess(data) is data
-    assert vdb.run_calls[0][0][0]["document_type"] == "text"
-    assert vdb.run_calls[0][0][0]["metadata"]["content"] == "first chunk"
-    assert vdb.run_calls[0][0][0]["metadata"]["embedding"] == [0.1] * 2048
 
 
 def test_vdb_op_constructs_client_vdb(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -114,23 +109,26 @@ def test_ingest_operator_converts_graph_rows_to_client_vdb_records() -> None:
 
     assert operator(data) is data
 
-    assert vdb.run_calls == [
-        [
+    assert vdb.append_calls == [
+        (
             [
-                {
-                    "document_type": "text",
-                    "metadata": {
-                        "embedding": [0.1] * 2048,
-                        "content": "graph chunk",
-                        "content_metadata": {"page_number": 7},
-                        "source_metadata": {
-                            "source_id": "/tmp/doc-a.pdf",
-                            "source_name": "doc-a.pdf",
+                [
+                    {
+                        "document_type": "text",
+                        "metadata": {
+                            "embedding": [0.1] * 2048,
+                            "content": "graph chunk",
+                            "content_metadata": {"page_number": 7},
+                            "source_metadata": {
+                                "source_id": "/tmp/doc-a.pdf",
+                                "source_name": "doc-a.pdf",
+                            },
                         },
-                    },
-                }
-            ]
-        ]
+                    }
+                ]
+            ],
+            True,
+        )
     ]
 
 
@@ -167,3 +165,29 @@ def test_constructor_requires_exactly_one_vdb_source() -> None:
 
     with pytest.raises(ValueError, match="Pass either vdb or vdb_op"):
         IngestVdbOperator(vdb=FakeVDB(), vdb_op="lancedb")
+
+
+def test_ingest_operator_streams_with_overwrite_flag_flip() -> None:
+    """First batch overwrites the table; subsequent batches append. This handshake
+    is the entire streaming contract — without concurrency=1 it'd be impossible to
+    keep coherent, and without the flag flip we'd either rewrite per batch or
+    never overwrite at all."""
+    vdb = FakeVDB()
+    operator = IngestVdbOperator(vdb=vdb)
+
+    operator.process(_graph_rows())
+    operator.process(_graph_rows())
+    operator.process(_graph_rows())
+
+    overwrites = [overwrite for _records, overwrite in vdb.append_calls]
+    assert overwrites == [True, False, False]
+    assert vdb.run_calls == []  # legacy global-batch path must not be invoked
+
+
+def test_vdb_build_index_operator_calls_build_index() -> None:
+    vdb = FakeVDB()
+    operator = VdbBuildIndexOperator(vdb=vdb)
+
+    operator.process(_graph_rows())
+
+    assert vdb.build_index_calls == 1

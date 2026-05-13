@@ -236,3 +236,31 @@ class VDB(ABC):
         - implementation-specific result
         """
         pass
+
+    def append(self, records, *, overwrite: bool) -> None:
+        """Stream-friendly write entry point used by ``IngestVdbOperator``.
+
+        Implementations should write ``records`` to the underlying table without
+        building search indexes; ``build_index`` is invoked separately once all
+        writes are complete. When ``overwrite`` is ``True`` the implementation
+        must drop any existing table before writing the first batch; subsequent
+        calls with ``overwrite=False`` must append.
+
+        The default implementation raises ``NotImplementedError`` so backends
+        that have not opted in to streaming surface a clear error rather than
+        silently returning to the global-batch path.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement streaming append(); "
+            "the operator's IngestVdbOperator path requires it."
+        )
+
+    def build_index(self) -> None:
+        """Build vector / FTS indexes on the underlying table.
+
+        Called by ``VdbBuildIndexOperator`` exactly once after the streaming
+        writes from ``IngestVdbOperator`` are finished. Default is a no-op for
+        backends that do not have an explicit "build index after data is in"
+        step.
+        """
+        return None

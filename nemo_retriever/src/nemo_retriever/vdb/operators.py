@@ -84,11 +84,18 @@ def query_vectors_from_embedded_dataframe(df: pd.DataFrame) -> list[list[float]]
 
 
 class IngestVdbOperator(AbstractOperator):
-    """Upload already-embedded graph output through an nv-ingest-client VDB."""
+    """Stream already-embedded graph output into an nv-ingest-client VDB.
 
-    #: Ray batch mode: repartition to one block and one ``map_batches`` call so
-    #: ``VDB.run`` sees the full dataset once (matches historical post-graph upload).
-    REQUIRES_GLOBAL_BATCH: bool = True
+    Each call to :meth:`process` writes a single Ray Data block (in batch mode)
+    or the full DataFrame (inprocess mode) via :meth:`VDB.append`. The first
+    call uses ``overwrite=True`` to drop any pre-existing table; subsequent
+    calls append. Index construction is deferred to :class:`VdbBuildIndexOperator`,
+    which runs once after all writes complete.
+    """
+
+    #: No global-batch repartition: peak memory is bounded by the batch size,
+    #: not the corpus. Requires concurrency=1 (pinned in ``ingestor_runtime``).
+    REQUIRES_GLOBAL_BATCH: bool = False
 
     def __init__(
         self,
@@ -111,13 +118,14 @@ class IngestVdbOperator(AbstractOperator):
                 sidecar["meta_fields"],
             )
         self._vdb = _construct_vdb(vdb=vdb, vdb_op=vdb_op, vdb_kwargs=clean_kwargs)
+        self._wrote_first_batch = False
 
     def preprocess(self, data: Any, **kwargs: Any) -> Any:
         return data
 
     def process(self, data: Any, **kwargs: Any) -> Any:
-        # Compatibility shim: graph_pipeline emits flat embedded rows, while
-        # nv-ingest-client VDB.run still expects nested NV-Ingest records.
+        # graph_pipeline emits flat embedded rows; nv-ingest-client VDBs expect
+        # the nested record shape from ``to_client_vdb_records``.
         records = to_client_vdb_records(data)
         if self._sidecar_spec is not None and self._sidecar_lookup is not None:
             records = apply_sidecar_metadata_to_client_batches(
@@ -127,7 +135,42 @@ class IngestVdbOperator(AbstractOperator):
                 join_key=self._sidecar_spec["meta_join_key"],
             )
         if records and any(batch for batch in records):
-            self._vdb.run(records)
+            self._vdb.append(records, overwrite=not self._wrote_first_batch)
+            self._wrote_first_batch = True
+        return data
+
+    def postprocess(self, data: Any, **kwargs: Any) -> Any:
+        return data
+
+
+class VdbBuildIndexOperator(AbstractOperator):
+    """Build vector / FTS indexes on the VDB once all upstream writes complete.
+
+    Paired with :class:`IngestVdbOperator`. ``REQUIRES_GLOBAL_BATCH=True`` makes
+    Ray Data insert a ``repartition(num_blocks=1)`` barrier ahead of this stage,
+    which both holds back the build until every streaming write has landed and
+    guarantees ``process`` is called exactly once per actor — so no in-instance
+    "already ran" flag is needed.
+    """
+
+    REQUIRES_GLOBAL_BATCH: bool = True
+
+    def __init__(
+        self,
+        *,
+        vdb: VDB | None = None,
+        vdb_op: str | None = None,
+        vdb_kwargs: dict[str, Any] | None = None,
+    ) -> None:
+        clean_kwargs, _sidecar = split_sidecar_from_vdb_kwargs(dict(vdb_kwargs or {}))
+        super().__init__(vdb=vdb, vdb_op=vdb_op, vdb_kwargs=clean_kwargs)
+        self._vdb = _construct_vdb(vdb=vdb, vdb_op=vdb_op, vdb_kwargs=clean_kwargs)
+
+    def preprocess(self, data: Any, **kwargs: Any) -> Any:
+        return data
+
+    def process(self, data: Any, **kwargs: Any) -> Any:
+        self._vdb.build_index()
         return data
 
     def postprocess(self, data: Any, **kwargs: Any) -> Any:

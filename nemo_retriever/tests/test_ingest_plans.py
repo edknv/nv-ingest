@@ -121,7 +121,9 @@ def test_build_graph_inserts_ingest_vdb_before_webhook() -> None:
             break
         node = node.children[0]
 
-    assert names[-2] == "IngestVdbOperator"
+    # Streaming write -> index-build barrier -> webhook.
+    assert names[-3] == "IngestVdbOperator"
+    assert names[-2] == "VdbBuildIndexOperator"
     assert names[-1] == "WebhookNotifyOperator"
 
 

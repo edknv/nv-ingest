@@ -326,14 +326,7 @@ class LanceDB(VDB):
             expected_dim = None
 
         results, counts = _create_lancedb_results(records, expected_dim=expected_dim)
-        schema = pa.schema(
-            [
-                pa.field("vector", pa.list_(pa.float32(), self.vector_dim)),
-                pa.field("text", pa.string()),
-                pa.field("metadata", pa.string()),
-                pa.field("source", pa.string()),
-            ]
-        )
+        schema = self._lancedb_schema()
         create_kwargs: dict[str, Any] = {
             "data": results,
             "schema": schema,
@@ -438,6 +431,94 @@ class LanceDB(VDB):
             fts_language=self.fts_language,
         )
         return records
+
+    def _lancedb_schema(self) -> "pa.Schema":
+        return pa.schema(
+            [
+                pa.field("vector", pa.list_(pa.float32(), self.vector_dim)),
+                pa.field("text", pa.string()),
+                pa.field("metadata", pa.string()),
+                pa.field("source", pa.string()),
+            ]
+        )
+
+    def append(self, records, *, overwrite: bool) -> None:
+        """Streaming write entry point for ``IngestVdbOperator``.
+
+        Writes ``records`` to the LanceDB table without building any search
+        index — ``build_index`` does that once, after all batches are in.
+
+        Semantics:
+        - ``overwrite=True``: drop any existing table and create it from this
+          batch's rows + the LanceDB schema.
+        - ``overwrite=False``: open the existing table and ``table.add`` the
+          rows. (Callers are responsible for ensuring an overwrite call landed
+          first; ``IngestVdbOperator`` does this by pinning concurrency=1 and
+          tracking a first-batch flag.)
+        """
+        if self.validate_vector_length and self.on_bad_vectors != "error":
+            expected_dim: int | None = self.vector_dim
+        else:
+            expected_dim = None
+
+        rows, counts = _create_lancedb_results(records, expected_dim=expected_dim)
+        if not rows:
+            return
+
+        db = lancedb.connect(uri=self.uri)
+        schema = self._lancedb_schema()
+
+        if overwrite:
+            create_kwargs: dict[str, Any] = {
+                "data": rows,
+                "schema": schema,
+                "mode": "overwrite",
+                "on_bad_vectors": self.on_bad_vectors,
+            }
+            if self.on_bad_vectors == "fill":
+                create_kwargs["fill_value"] = self.fill_value
+            t0 = time.perf_counter()
+            db.create_table(self.table_name, **create_kwargs)
+            _record_timing(
+                "lancedb.create_table",
+                time.perf_counter() - t0,
+                {"rows": len(rows), **counts},
+            )
+        else:
+            t0 = time.perf_counter()
+            table = db.open_table(self.table_name)
+            table.add(rows)
+            _record_timing(
+                "lancedb.append",
+                time.perf_counter() - t0,
+                {"rows": len(rows), **counts},
+            )
+
+    def build_index(self) -> None:
+        """Build vector indexes on the populated table.
+
+        Skips silently when the target table is absent (the empty-corpus case).
+        """
+        db = lancedb.connect(uri=self.uri)
+        try:
+            table = db.open_table(self.table_name)
+        except (FileNotFoundError, ValueError):
+            # Empty corpus: no batch produced rows, so no table was ever created.
+            logger.warning(
+                "LanceDB.build_index: table %r does not exist; skipping index build.",
+                self.table_name,
+            )
+            return
+        self.write_to_index(
+            records=None,
+            table=table,
+            index_type=self.index_type,
+            metric=self.metric,
+            num_partitions=self.num_partitions,
+            num_sub_vectors=self.num_sub_vectors,
+            hybrid=self.hybrid,
+            fts_language=self.fts_language,
+        )
 
     def retrieval(self, vectors, **kwargs):
         """Search LanceDB with precomputed query vectors.
