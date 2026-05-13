@@ -166,12 +166,23 @@ def batch_tuning_to_node_overrides(
         caption_invoke_url = _positive(getattr(caption_params, "endpoint_url", None))
         if effective_allow_no_gpu:
             _force_cpu_only(CaptionActor.__name__)
+            _force_cpu_only(VideoFrameCaptionActor.__name__)
         elif not caption_invoke_url:
             _set_gpu(
                 CaptionActor.__name__,
                 caption_gpus_per_actor,
                 plan.caption_gpus_per_actor if plan else None,
             )
+            # Video frame captioning shares the planner's caption GPU budget
+            # so a single-GPU cluster doesn't deadlock against the embed pool.
+            # The executor's vLLM-aware auto-detect would otherwise force 1.0 GPU
+            # here, which can't co-schedule with the embed actor pool.
+            _set_gpu(
+                VideoFrameCaptionActor.__name__,
+                caption_gpus_per_actor,
+                plan.caption_gpus_per_actor if plan else None,
+            )
+            overrides.setdefault(VideoFrameCaptionActor.__name__, {}).setdefault("concurrency", 1)
 
     extract_tuning = _batch_tuning(extract_params)
     ocr_concurrency: int = 0

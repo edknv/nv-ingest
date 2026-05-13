@@ -314,6 +314,55 @@ def test_batch_tuning_to_node_overrides_auto_cpu_only_when_no_gpus(ocr_version: 
     assert overrides["NemotronParseActor"]["concurrency"] == 2
 
 
+def test_batch_tuning_to_node_overrides_caption_keys_video_actor_too() -> None:
+    """Both image and video caption actors must share the planner's caption GPU budget.
+
+    Regression test for the Ray scheduling deadlock when the video pipeline's
+    VLM caption stage holds 1.0 GPU while the embed pool also holds GPU on a
+    single-GPU cluster — there's no room for both, and the streaming executor
+    stalls indefinitely.
+    """
+    cluster = ClusterResources(
+        total_resources=Resources(cpu_count=16, gpu_count=1),
+        available_resources=Resources(cpu_count=16, gpu_count=1),
+    )
+
+    overrides = batch_tuning_to_node_overrides(
+        extract_params=ExtractParams(),
+        embed_params=EmbedParams(model_name="nvidia/llama-nemotron-embed-1b-v2"),
+        caption_params=CaptionParams(),
+        cluster_resources=cluster,
+    )
+
+    # Same GPU budget for both caption variants so the video pipeline's vLLM stage
+    # doesn't fall through to the executor's auto-detect (which forces 1.0 GPU).
+    assert "num_gpus" in overrides["CaptionActor"]
+    assert "num_gpus" in overrides["VideoFrameCaptionActor"]
+    assert overrides["CaptionActor"]["num_gpus"] == overrides["VideoFrameCaptionActor"]["num_gpus"]
+    # On a 1-GPU cluster the planner halves caption to 0.5 so embed can share the GPU.
+    assert overrides["VideoFrameCaptionActor"]["num_gpus"] == 0.5
+    assert overrides["VideoFrameCaptionActor"]["concurrency"] == 1
+
+
+def test_batch_tuning_to_node_overrides_caption_remote_endpoint_skips_gpu_override() -> None:
+    """When captioning routes to a remote NIM, the video frame caption actor
+    is the CPU variant and doesn't need a GPU override."""
+    cluster = ClusterResources(
+        total_resources=Resources(cpu_count=16, gpu_count=1),
+        available_resources=Resources(cpu_count=16, gpu_count=1),
+    )
+
+    overrides = batch_tuning_to_node_overrides(
+        extract_params=ExtractParams(),
+        embed_params=EmbedParams(model_name="nvidia/llama-nemotron-embed-1b-v2"),
+        caption_params=CaptionParams(endpoint_url="https://example/vlm"),
+        cluster_resources=cluster,
+    )
+
+    assert "num_gpus" not in overrides.get("CaptionActor", {})
+    assert "num_gpus" not in overrides.get("VideoFrameCaptionActor", {})
+
+
 def test_batch_tuning_to_node_overrides_adds_default_store_tuning() -> None:
     overrides = batch_tuning_to_node_overrides(
         extract_params=None,
