@@ -13,7 +13,7 @@ from typing import Optional
 
 import typer
 
-from nemo_retriever.harness.artifacts import create_session_dir, get_artifacts_root
+from nemo_retriever.harness.artifacts import create_session_dir
 from nemo_retriever.harness.config import REPO_ROOT
 from nemo_retriever.skill_eval.dataset import load_config, load_dataset
 from nemo_retriever.skill_eval.report import overall_recall, write_summary
@@ -33,9 +33,20 @@ logger = logging.getLogger(__name__)
 @app.command("run")
 def run_command(
     config: Optional[Path] = typer.Option(None, "--config", help="Path to run.yaml; defaults to the packaged config."),
-    dataset: Optional[Path] = typer.Option(None, "--dataset", help="Path to dataset.yaml; defaults to the packaged 5-entry dataset."),
-    conditions: str = typer.Option(",".join(DEFAULT_ORDER), "--conditions", help="Comma-separated conditions in execution order. Each condition's workdir is deleted after it runs, so only one LanceDB is on disk at a time."),
-    artifacts_root: Optional[Path] = typer.Option(None, "--artifacts-root", help="Override the artifact root; defaults to <repo>/nemo_retriever/artifacts/"),
+    dataset: Optional[Path] = typer.Option(
+        None, "--dataset", help="Path to dataset.yaml; defaults to the packaged 5-entry dataset."
+    ),
+    conditions: str = typer.Option(
+        ",".join(DEFAULT_ORDER),
+        "--conditions",
+        help=(
+            "Comma-separated conditions in execution order. Each condition's workdir is deleted after it runs, "
+            "so only one LanceDB is on disk at a time."
+        ),
+    ),
+    artifacts_root: Optional[Path] = typer.Option(
+        None, "--artifacts-root", help="Override the artifact root; defaults to <repo>/nemo_retriever/artifacts/"
+    ),
 ) -> None:
     """Run the v1 benchmark: 5 entries × selected conditions, sequential."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")

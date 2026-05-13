@@ -29,8 +29,7 @@ CONDITIONS = ("c1_base", "c2_retriever", "c3_retriever_skill")
 
 @functools.lru_cache(maxsize=8)
 def _load_prompt_template(name: str) -> str:
-    return Path(str(pkg_files("nemo_retriever.skill_eval").joinpath(f"prompts/{name}")))\
-        .read_text(encoding="utf-8")
+    return Path(str(pkg_files("nemo_retriever.skill_eval").joinpath(f"prompts/{name}"))).read_text(encoding="utf-8")
 
 
 @dataclass
@@ -65,8 +64,9 @@ class TrialResult:
 def _render_prompt(entry: DatasetEntry, condition: str) -> str:
     tpl_name = "trial_user_slash.j2" if condition == "c3_retriever_skill" else "trial_user_nl.j2"
     text = _load_prompt_template(tpl_name)
-    return text.replace("{{ paraphrased_prompt }}", entry.paraphrased_prompt) \
-               .replace("{{ original_query }}", entry.original_query)
+    return text.replace("{{ paraphrased_prompt }}", entry.paraphrased_prompt).replace(
+        "{{ original_query }}", entry.original_query
+    )
 
 
 def _render_setup_prompt(condition: str) -> str:
@@ -87,9 +87,7 @@ def _write_shim(shim_dir: Path, name: str) -> None:
     shim_dir.mkdir(parents=True, exist_ok=True)
     shim = shim_dir / name
     shim.write_text(
-        "#!/usr/bin/env bash\n"
-        f"echo 'skill_eval shim: {name} not available in this trial' >&2\n"
-        "exit 127\n",
+        "#!/usr/bin/env bash\n" f"echo 'skill_eval shim: {name} not available in this trial' >&2\n" "exit 127\n",
         encoding="utf-8",
     )
     shim.chmod(shim.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
@@ -170,12 +168,18 @@ def _build_command(
     cmd = [
         "claude",
         "--print",
-        "--output-format", "json",
-        "--model", model,
-        "--add-dir", str(workdir),
-        "--permission-mode", "bypassPermissions",
-        "--max-budget-usd", str(budget_usd),
-        "--setting-sources", "project",
+        "--output-format",
+        "json",
+        "--model",
+        model,
+        "--add-dir",
+        str(workdir),
+        "--permission-mode",
+        "bypassPermissions",
+        "--max-budget-usd",
+        str(budget_usd),
+        "--setting-sources",
+        "project",
         "--allow-dangerously-skip-permissions",
     ]
     if resume:
@@ -291,18 +295,29 @@ def _run_one_turn(
     t0 = time.monotonic()
     try:
         proc = subprocess.run(
-            cmd, input=prompt,
-            capture_output=True, text=True,
-            timeout=timeout_s, cwd=str(workdir), env=env, check=False,
+            cmd,
+            input=prompt,
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            cwd=str(workdir),
+            env=env,
+            check=False,
         )
     except subprocess.TimeoutExpired:
         return TrialResult(
-            trial_id=trial_id, condition=condition,
-            entry_id=entry_id, query_id=query_id,
-            status="timeout", extraction_method="none",
+            trial_id=trial_id,
+            condition=condition,
+            entry_id=entry_id,
+            query_id=query_id,
+            status="timeout",
+            extraction_method="none",
             duration_ms=int((time.monotonic() - t0) * 1000),
-            duration_api_ms=0, num_turns=turn_idx + 1,
-            total_cost_usd=0.0, model_id=model, session_id=session_uuid,
+            duration_api_ms=0,
+            num_turns=turn_idx + 1,
+            total_cost_usd=0.0,
+            model_id=model,
+            session_id=session_uuid,
             errors=[f"turn exceeded {timeout_s}s wall timeout"],
             is_setup=is_setup,
         )
@@ -310,8 +325,10 @@ def _run_one_turn(
     envelope = _parse_envelope(proc.stdout)
     stderr = proc.stderr.strip()
     result = TrialResult(
-        trial_id=trial_id, condition=condition,
-        entry_id=entry_id, query_id=query_id,
+        trial_id=trial_id,
+        condition=condition,
+        entry_id=entry_id,
+        query_id=query_id,
         status="ok" if proc.returncode == 0 and not envelope.get("is_error", False) else "error",
         extraction_method="n/a" if is_setup else "output_json",
         duration_ms=int(envelope.get("duration_ms") or (time.monotonic() - t0) * 1000),
@@ -380,11 +397,19 @@ def run_condition(
 
     setup_cmd = _build_command(condition, model, budget_usd, session_uuid, workdir, resume=False)
     setup_result = _run_one_turn(
-        condition=condition, prompt=_render_setup_prompt(condition),
+        condition=condition,
+        prompt=_render_setup_prompt(condition),
         trial_id=f"{condition}_setup_t1",
-        entry_id=0, query_id=0, is_setup=True, turn_idx=0,
-        workdir=workdir, session_uuid=session_uuid,
-        cmd=setup_cmd, env=env, timeout_s=timeout_s, model=model,
+        entry_id=0,
+        query_id=0,
+        is_setup=True,
+        turn_idx=0,
+        workdir=workdir,
+        session_uuid=session_uuid,
+        cmd=setup_cmd,
+        env=env,
+        timeout_s=timeout_s,
+        model=model,
     )
     results.append(setup_result)
 
@@ -392,12 +417,19 @@ def run_condition(
     for i, entry in enumerate(entries):
         turn_idx = i + 1
         result = _run_one_turn(
-            condition=condition, prompt=_render_prompt(entry, condition),
+            condition=condition,
+            prompt=_render_prompt(entry, condition),
             trial_id=f"{condition}_e{entry.entry_id}_t{turn_idx + 1}",
-            entry_id=entry.entry_id, query_id=entry.query_id, is_setup=False,
+            entry_id=entry.entry_id,
+            query_id=entry.query_id,
+            is_setup=False,
             turn_idx=turn_idx,
-            workdir=workdir, session_uuid=session_uuid,
-            cmd=resume_cmd, env=env, timeout_s=timeout_s, model=model,
+            workdir=workdir,
+            session_uuid=session_uuid,
+            cmd=resume_cmd,
+            env=env,
+            timeout_s=timeout_s,
+            model=model,
         )
         results.append(result)
     return workdir, results

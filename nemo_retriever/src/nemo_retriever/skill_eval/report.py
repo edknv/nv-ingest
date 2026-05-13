@@ -120,13 +120,19 @@ def write_summary_md(session_dir: Path, condition_rows: list[dict[str, Any]], co
         "",
         "## Recall (mean over 5 query turns) and per-query token means",
         "",
-        "| condition | success_rate | recall@1 | recall@5 | recall@10 | q_input | q_output | q_cache_read | q_cache_create | q_cost |",
+        (
+            "| condition | success_rate | recall@1 | recall@5 | recall@10 | q_input | q_output "
+            "| q_cache_read | q_cache_create | q_cost |"
+        ),
         "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for row in condition_rows:
         m = row.get("metrics", {})
         lines.append(
-            "| {cond} | {sr:.2f} | {r1:.3f} | {r5:.3f} | {r10:.3f} | {ipt:.0f} | {opt:.0f} | {cr:.0f} | {cc:.0f} | ${cost:.3f} |".format(
+            (
+                "| {cond} | {sr:.2f} | {r1:.3f} | {r5:.3f} | {r10:.3f} | {ipt:.0f} | {opt:.0f} "
+                "| {cr:.0f} | {cc:.0f} | ${cost:.3f} |"
+            ).format(
                 cond=row.get("run_name", "?"),
                 sr=m.get("success_rate", 0.0),
                 r1=m.get("recall_1", 0.0),
@@ -160,7 +166,9 @@ def write_summary_md(session_dir: Path, condition_rows: list[dict[str, Any]], co
     lines.append("")
     lines.append("## Session totals (setup + all 5 queries)")
     lines.append("")
-    lines.append("| condition | turns | total_input | total_output | total_cache_read | total_cache_create | total_cost |")
+    lines.append(
+        "| condition | turns | total_input | total_output | total_cache_read | total_cache_create | total_cost |"
+    )
     lines.append("|---|---|---|---|---|---|---|")
     for row in condition_rows:
         m = row.get("metrics", {})
