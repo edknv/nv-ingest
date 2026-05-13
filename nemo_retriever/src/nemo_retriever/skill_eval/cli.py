@@ -96,11 +96,15 @@ def _resolve_domain_label(entries: list[DatasetEntry], cfg: dict, domain: str) -
 
 @app.command("run")
 def run_command(
-    config: Optional[Path] = typer.Option(None, "--config", help="Path to run.yaml; defaults to the packaged config."),
+    config: Optional[Path] = typer.Option(
+        None,
+        "--config",
+        help="Path to a skill_eval.yaml; defaults to the packaged config (copy and edit it).",
+    ),
     eval_manifest: Optional[Path] = typer.Option(
         None,
         "--eval-manifest",
-        help="Path to a retriever-sdg eval_manifest.json. Overrides config.eval_manifest_path.",
+        help="Path to an agent-eval manifest (JSON list). Overrides config.eval_manifest_path.",
     ),
     conditions: str = typer.Option(
         ",".join(DEFAULT_ORDER),
@@ -165,6 +169,11 @@ def run_command(
     model = str(cfg.get("agent_model", "claude-opus-4-7"))
     budget = float(cfg.get("per_trial_budget_usd", 5.0))
     timeout = int(cfg.get("per_trial_timeout_s", 600))
+    testdata_prefixes_raw = cfg.get("testdata_prefixes") or []
+    if not isinstance(testdata_prefixes_raw, list):
+        typer.echo("Error: config 'testdata_prefixes' must be a list of strings.", err=True)
+        raise typer.Exit(code=2)
+    testdata_prefixes = tuple(str(p) for p in testdata_prefixes_raw)
 
     judge = _build_judge(cfg)
 
@@ -197,6 +206,7 @@ def run_command(
                 domain=domain,
                 domain_label=domain_label,
                 judge=judge,
+                testdata_prefixes=testdata_prefixes,
             )
             for r in results:
                 save_trial(r, session_dir)

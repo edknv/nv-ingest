@@ -65,32 +65,28 @@ class TrialResult:
     judge_error: str = ""
 
 
-_TESTDATA_PREFIXES = (
-    "test-data/vidorev3-fda/pdfs",
-    "test-data/vidorev3-finance/pdfs",
-    "test-data/vidorev3-hr/pdfs",
-)
+def _remap_pdf_paths(text: str, prefixes: tuple[str, ...]) -> str:
+    """Rewrite caller-supplied path prefixes in *text* to ``./pdfs/``.
 
+    Some agent-eval manifests' paraphrased prompts hard-code paths from the
+    dataset source tree. Each trial workdir symlinks the domain's PDFs to
+    ``./pdfs/``, so the agent only needs the basename — rewriting the prefix
+    lets the natural-language reference resolve to a real file.
 
-def _remap_pdf_paths(text: str) -> str:
-    """Rewrite the dataset's ``test-data/.../pdfs/`` references to ``./pdfs/``.
-
-    The BEIR dataset's paraphrased prompts hard-code paths from the dataset
-    source repo. Each trial workdir symlinks the domain's PDFs to ``./pdfs/`` so
-    the agent only needs the basename — rewriting the prefix lets the natural-
-    language reference resolve to a real file.
+    Prefixes are configured per-run via the ``testdata_prefixes`` config key
+    (no dataset paths are hardcoded in this module).
     """
-    for prefix in _TESTDATA_PREFIXES:
+    for prefix in prefixes:
         text = text.replace(prefix, "./pdfs")
     return text
 
 
-def _render_prompt(entry: DatasetEntry, condition: str) -> str:
+def _render_prompt(entry: DatasetEntry, condition: str, testdata_prefixes: tuple[str, ...] = ()) -> str:
     tpl_name = "trial_user_slash.j2" if condition == "c3_retriever_skill" else "trial_user_nl.j2"
     text = _load_prompt_template(tpl_name)
-    return text.replace("{{ paraphrased_prompt }}", _remap_pdf_paths(entry.paraphrased_prompt)).replace(
-        "{{ original_query }}", entry.original_query
-    )
+    return text.replace(
+        "{{ paraphrased_prompt }}", _remap_pdf_paths(entry.paraphrased_prompt, testdata_prefixes)
+    ).replace("{{ original_query }}", entry.original_query)
 
 
 def _render_setup_prompt(condition: str, domain_label: str = "PDFs") -> str:
@@ -487,6 +483,7 @@ def run_condition(
     domain: str = "",
     domain_label: str = "PDFs",
     judge: Any = None,
+    testdata_prefixes: tuple[str, ...] = (),
 ) -> tuple[Path, list[TrialResult]]:
     """Run one Claude Code session covering setup + all `entries` for `condition`.
 
@@ -535,7 +532,7 @@ def run_condition(
         turn_idx = i + 1
         result = _run_one_turn(
             condition=condition,
-            prompt=_render_prompt(entry, condition),
+            prompt=_render_prompt(entry, condition, testdata_prefixes),
             trial_id=f"{condition}_{domain or 'default'}_e{entry.entry_id}_t{turn_idx + 1}",
             entry_id=entry.entry_id,
             query_id=entry.query_id,

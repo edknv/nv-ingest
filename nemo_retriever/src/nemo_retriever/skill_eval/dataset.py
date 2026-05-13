@@ -4,11 +4,12 @@
 
 """Dataset entry / run-config loaders for skill_eval.
 
-Reads a retriever-sdg ``eval_manifest.json`` (the agent-eval batch produced by
-``retriever-sdg-v3``). Each manifest entry carries the original query, the
-paraphrased prompt (under ``sdg_prompt_candidates``), the ground-truth pages
-(with ``doc_id`` + ``page_number_in_doc``), the ground-truth answer, and a
-per-domain prompt taxonomy. See :func:`load_eval_manifest`.
+Reads an agent-eval manifest (JSON list). Each manifest entry carries the
+original query, the paraphrased prompt (under ``sdg_prompt_candidates``),
+the ground-truth pages (with ``doc_id`` + ``page_number_in_doc``), the
+ground-truth answer, and a per-domain prompt taxonomy. The manifest format
+is upstream of this module; this loader is dataset-agnostic. See
+:func:`load_eval_manifest`.
 """
 
 from __future__ import annotations
@@ -56,10 +57,9 @@ def load_eval_manifest(path: Path) -> list[DatasetEntry]:
     """Load ``eval_manifest.json`` into ``DatasetEntry`` records.
 
     ``entry_id`` is the 1-indexed position in the manifest; ``query_id`` is the
-    manifest's ``primary_eval_id`` (e.g. ``vidore_v3_pharmaceuticals:1:v1``).
-    The selected paraphrased prompt comes from
-    ``sdg_prompt_candidates.candidates`` (matching
-    ``sdg_prompt_validation.selected_variant_id`` when present).
+    manifest's ``primary_eval_id`` (e.g. ``<domain>:<n>:<variant>``). The
+    selected paraphrased prompt comes from ``sdg_prompt_candidates.candidates``
+    (matching ``sdg_prompt_validation.selected_variant_id`` when present).
     """
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(data, list):
@@ -107,5 +107,5 @@ def load_eval_manifest(path: Path) -> list[DatasetEntry]:
 
 def load_config(path: Path | None = None) -> dict[str, Any]:
     if path is None:
-        path = Path(str(pkg_files("nemo_retriever.skill_eval").joinpath("configs/run.yaml")))
+        path = Path(str(pkg_files("nemo_retriever.skill_eval").joinpath("configs/skill_eval.yaml")))
     return _read_yaml_mapping(Path(path))
