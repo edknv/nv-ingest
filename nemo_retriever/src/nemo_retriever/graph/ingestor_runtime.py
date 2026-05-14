@@ -370,6 +370,11 @@ def batch_tuning_to_node_overrides(
     # single-instance via REQUIRES_GLOBAL_BATCH; pinning is just defense in depth.)
     overrides.setdefault(IngestVdbOperator.__name__, {})["concurrency"] = 1
     overrides.setdefault(VdbBuildIndexOperator.__name__, {})["concurrency"] = 1
+    # Coalesce many small post-embed blocks into larger writes — every
+    # ``table.add(rows)`` produces a new Lance version manifest, and per-commit
+    # cost scales with manifest count. Bumping to ~1000 rows per batch cuts
+    # commits ~30x for a typical corpus.
+    overrides.setdefault(IngestVdbOperator.__name__, {})["batch_size"] = 1000
 
     return overrides
 

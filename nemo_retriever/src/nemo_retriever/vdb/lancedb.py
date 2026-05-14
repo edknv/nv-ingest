@@ -302,6 +302,11 @@ class LanceDB(VDB):
         self.on_bad_vectors = _normalize_on_bad_vectors(on_bad_vectors)
         self.fill_value = float(fill_value)
         self.validate_vector_length = bool(validate_vector_length)
+        # Cached lance connection + table handle reused across streaming
+        # ``append`` calls. The IngestVdbOperator is pinned to concurrency=1
+        # in ingestor_runtime so there is exactly one writer per actor.
+        self._cached_db: Any = None
+        self._cached_table: Any = None
         super().__init__(**kwargs)
 
     def create_index(self, records=None, table_name: str = "nv-ingest", **kwargs):
@@ -455,6 +460,11 @@ class LanceDB(VDB):
           rows. (Callers are responsible for ensuring an overwrite call landed
           first; ``IngestVdbOperator`` does this by pinning concurrency=1 and
           tracking a first-batch flag.)
+
+        The lance connection and table handle are cached on ``self`` so the
+        per-batch path is just ``table.add(rows)`` plus the underlying lance
+        version commit — no repeated ``lancedb.connect()`` or ``open_table()``
+        (which becomes expensive once the table accumulates many versions).
         """
         if self.validate_vector_length and self.on_bad_vectors != "error":
             expected_dim: int | None = self.vector_dim
@@ -465,29 +475,30 @@ class LanceDB(VDB):
         if not rows:
             return
 
-        db = lancedb.connect(uri=self.uri)
-        schema = self._lancedb_schema()
+        if self._cached_db is None:
+            self._cached_db = lancedb.connect(uri=self.uri)
 
         if overwrite:
             create_kwargs: dict[str, Any] = {
                 "data": rows,
-                "schema": schema,
+                "schema": self._lancedb_schema(),
                 "mode": "overwrite",
                 "on_bad_vectors": self.on_bad_vectors,
             }
             if self.on_bad_vectors == "fill":
                 create_kwargs["fill_value"] = self.fill_value
             t0 = time.perf_counter()
-            db.create_table(self.table_name, **create_kwargs)
+            self._cached_table = self._cached_db.create_table(self.table_name, **create_kwargs)
             _record_timing(
                 "lancedb.create_table",
                 time.perf_counter() - t0,
                 {"rows": len(rows), **counts},
             )
         else:
+            if self._cached_table is None:
+                self._cached_table = self._cached_db.open_table(self.table_name)
             t0 = time.perf_counter()
-            table = db.open_table(self.table_name)
-            table.add(rows)
+            self._cached_table.add(rows)
             _record_timing(
                 "lancedb.append",
                 time.perf_counter() - t0,
