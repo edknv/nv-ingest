@@ -380,4 +380,10 @@ class RayDataExecutor(AbstractExecutor):
                 **overrides,
             )
 
-        return ds.to_pandas()
+        # Returning ``materialize()`` (cheap on the driver — block refs only)
+        # instead of ``to_pandas()`` lets callers stream the result via
+        # ``Dataset.iter_rows`` / ``write_parquet`` / ``count`` rather than
+        # forcing the entire embedded corpus through the driver as a single
+        # pandas DataFrame. Callers that genuinely need a DataFrame can still
+        # call ``.to_pandas()`` themselves.
+        return ds.materialize()
