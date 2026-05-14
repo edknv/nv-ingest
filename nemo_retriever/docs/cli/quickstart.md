@@ -30,6 +30,40 @@ retriever pipeline run ./data/multimodal_test.pdf \
   --save-intermediate ./processed_docs
 ```
 
+For a lightweight PDF-only SDK smoke workflow, the root commands provide a
+smaller surface:
+
+```bash
+retriever ingest ./data/multimodal_test.pdf
+retriever query "What is in this document?"
+```
+
+Route individual stages to self-hosted or hosted NIM endpoints by passing only
+the URLs you want to override; omitted URLs keep the library defaults:
+
+```bash
+export NVIDIA_API_KEY=nvapi-...
+
+retriever ingest ./data/multimodal_test.pdf \
+  --page-elements-invoke-url https://ai.api.nvidia.com/v1/cv/nvidia/nemotron-page-elements-v3 \
+  --ocr-invoke-url https://ai.api.nvidia.com/v1/cv/nvidia/nemotron-ocr-v1 \
+  --ocr-version v1 \
+  --graphic-elements-invoke-url https://ai.api.nvidia.com/v1/cv/nvidia/nemotron-graphic-elements-v1 \
+  --table-structure-invoke-url https://ai.api.nvidia.com/v1/cv/nvidia/nemotron-table-structure-v1 \
+  --embed-invoke-url https://integrate.api.nvidia.com/v1/embeddings \
+  --embed-model-name nvidia/llama-nemotron-embed-1b-v2
+
+retriever query "What is in this document?" \
+  --embed-invoke-url https://integrate.api.nvidia.com/v1/embeddings \
+  --embed-model-name nvidia/llama-nemotron-embed-1b-v2 \
+  --reranker-invoke-url https://ai.api.nvidia.com/v1/retrieval/nvidia/llama-nemotron-rerank-vl-1b-v2/reranking
+```
+
+`NVIDIA_API_KEY` is required only when those URLs point at hosted
+build.nvidia.com endpoints; the root commands intentionally do not expose an
+`--api-key` flag. `NGC_API_KEY` is still used separately when pulling or
+running self-hosted NIM containers.
+
 ### What you get
 
 - Extracted text, table markdown, and chart descriptions as rows in the
