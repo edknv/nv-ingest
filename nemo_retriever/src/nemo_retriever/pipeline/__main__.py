@@ -235,6 +235,7 @@ def _build_extract_params(
     page_elements_invoke_url: Optional[str],
     ocr_invoke_url: Optional[str],
     ocr_version: str,
+    ocr_lang: Optional[str],
     graphic_elements_invoke_url: Optional[str],
     table_structure_invoke_url: Optional[str],
     pdf_split_batch_size: int,
@@ -301,6 +302,7 @@ def _build_extract_params(
                 "page_elements_invoke_url": page_elements_invoke_url,
                 "ocr_invoke_url": ocr_invoke_url,
                 "ocr_version": ocr_version,
+                "ocr_lang": ocr_lang,
                 "graphic_elements_invoke_url": graphic_elements_invoke_url,
                 "table_structure_invoke_url": table_structure_invoke_url,
                 "use_graphic_elements": use_graphic_elements,
@@ -817,6 +819,12 @@ def run(
         help="OCR engine: 'v2' (default, multilingual, higher throughput) or 'v1' (legacy, English-only).",
         rich_help_panel=_PANEL_REMOTE,
     ),
+    ocr_lang: Optional[str] = typer.Option(
+        None,
+        "--ocr-lang",
+        help="OCR language selector for v2: 'multi' (default) or 'english'. Not valid with --ocr-version v1.",
+        rich_help_panel=_PANEL_REMOTE,
+    ),
     graphic_elements_invoke_url: Optional[str] = typer.Option(
         None, "--graphic-elements-invoke-url", rich_help_panel=_PANEL_REMOTE
     ),
@@ -1044,6 +1052,15 @@ def run(
         ),
         rich_help_panel=_PANEL_VDB,
     ),
+    vdb_overwrite: Optional[bool] = typer.Option(
+        None,
+        "--vdb-overwrite/--vdb-append",
+        help=(
+            "Overwrite the target VDB table by default. Use --vdb-append to add rows to an existing "
+            "table without duplicate checks; rerunning the same inputs in append mode creates duplicates."
+        ),
+        rich_help_panel=_PANEL_VDB,
+    ),
     no_vdb: bool = typer.Option(
         False,
         "--no-vdb",
@@ -1214,6 +1231,10 @@ def run(
 
         resolved_vdb_op = str(vdb_op or DEFAULT_VDB_OP)
         resolved_vdb_kwargs = _parse_vdb_kwargs_json(vdb_kwargs_json)
+        if vdb_overwrite is None:
+            resolved_vdb_kwargs.setdefault("overwrite", True)
+        else:
+            resolved_vdb_kwargs["overwrite"] = bool(vdb_overwrite)
 
         _sidecar_n = sum(1 for x in (meta_dataframe, meta_source_field, meta_fields) if x is not None)
         if _sidecar_n not in (0, 3):
@@ -1290,6 +1311,7 @@ def run(
             page_elements_invoke_url=page_elements_invoke_url,
             ocr_invoke_url=ocr_invoke_url,
             ocr_version=ocr_version,
+            ocr_lang=ocr_lang,
             graphic_elements_invoke_url=graphic_elements_invoke_url,
             table_structure_invoke_url=table_structure_invoke_url,
             pdf_split_batch_size=pdf_split_batch_size,
