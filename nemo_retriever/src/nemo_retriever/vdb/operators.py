@@ -14,13 +14,36 @@ from nemo_retriever.vdb.adt_vdb import VDB
 from nemo_retriever.vdb.factory import get_vdb_op_cls
 
 from nemo_retriever.graph.abstract_operator import AbstractOperator
-from nemo_retriever.vdb.records import normalize_retrieval_results, to_client_vdb_records
+from nemo_retriever.vdb.records import (
+    _client_record_from_graph_row,
+    normalize_retrieval_results,
+    to_client_vdb_records,
+)
 from nemo_retriever.vdb.sidecar_metadata import (
     apply_sidecar_metadata_to_client_batches,
     build_sidecar_lookup,
     materialize_sidecar_dataframe,
     split_sidecar_from_vdb_kwargs,
 )
+
+
+#: Columns whose payload is large per-row (embedding floats, nested metadata,
+#: full chunk text). We drop these from the IngestVdbOperator output so the
+#: rows that travel through the downstream global-batch barrier (and end up
+#: materialized on the driver) carry only a tiny accounting payload instead
+#: of the full embedded corpus.
+_HEAVY_COLUMN_PREFIXES = ("text_embeddings_",)
+_HEAVY_COLUMN_NAMES = frozenset({"metadata", "text", "content"})
+
+
+def _project_to_accounting_columns(df: "pd.DataFrame") -> "pd.DataFrame":
+    keep = [
+        col
+        for col in df.columns
+        if col not in _HEAVY_COLUMN_NAMES
+        and not any(col.startswith(prefix) for prefix in _HEAVY_COLUMN_PREFIXES)
+    ]
+    return df[keep] if len(keep) != len(df.columns) else df
 
 
 def _construct_vdb(
@@ -126,7 +149,25 @@ class IngestVdbOperator(AbstractOperator):
     def process(self, data: Any, **kwargs: Any) -> Any:
         # graph_pipeline emits flat embedded rows; nv-ingest-client VDBs expect
         # the nested record shape from ``to_client_vdb_records``.
-        records = to_client_vdb_records(data)
+        if isinstance(data, pd.DataFrame):
+            # Compute per-row validity in lock-step with record conversion so
+            # we can emit a small ``_vdb_uploadable`` flag column. Without
+            # this, the downstream global-batch barrier accumulates the full
+            # embedded payload in plasma and starves the upstream pipeline.
+            valid_records: list[dict[str, Any]] = []
+            uploadable_mask: list[bool] = []
+            for row in data.to_dict("records"):
+                rec = _client_record_from_graph_row(row)
+                if rec is None:
+                    uploadable_mask.append(False)
+                else:
+                    valid_records.append(rec)
+                    uploadable_mask.append(True)
+            records: list[list[dict[str, Any]]] = [valid_records] if valid_records else []
+        else:
+            records = to_client_vdb_records(data)
+            uploadable_mask = []
+
         if self._sidecar_spec is not None and self._sidecar_lookup is not None:
             records = apply_sidecar_metadata_to_client_batches(
                 records,
@@ -137,6 +178,11 @@ class IngestVdbOperator(AbstractOperator):
         if records and any(batch for batch in records):
             self._vdb.append(records, overwrite=not self._wrote_first_batch)
             self._wrote_first_batch = True
+
+        if isinstance(data, pd.DataFrame):
+            projected = _project_to_accounting_columns(data).copy()
+            projected["_vdb_uploadable"] = uploadable_mask
+            return projected
         return data
 
     def postprocess(self, data: Any, **kwargs: Any) -> Any:
