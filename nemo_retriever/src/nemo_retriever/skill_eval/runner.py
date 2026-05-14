@@ -463,6 +463,7 @@ def _apply_judge(judge: Any, entry: DatasetEntry, result: TrialResult) -> None:
         )
     except Exception as exc:  # defensive — LLMJudge already catches, but be safe.
         result.judge_error = f"judge_invocation_error: {exc}"
+        logger.warning("LLMJudge raised for entry_id=%s: %s", result.entry_id, exc, exc_info=True)
         return
     result.judge_score = verdict.score
     result.judge_reasoning = verdict.reasoning or ""
