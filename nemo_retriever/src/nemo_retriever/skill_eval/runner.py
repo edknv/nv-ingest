@@ -135,7 +135,7 @@ _C1_BASH_DENY_PATTERNS: tuple[str, ...] = (
     "Bash(*nemo-retriever*)",
     "Bash(python*-m*nemo_retriever*)",
     "Bash(uv*run*retriever*)",
-    "Bash(/home/edwardk/git/skills/retriever/bin/*)",
+    "Bash(*/bin/retriever*)",
     # Hide the HuggingFace model cache so the agent can't enumerate the
     # NVIDIA stack that c2/c3 populated. HF env vars (HF_HOME etc.) are
     # redirected in _env_for; these deny patterns close the `ls`/`find`
