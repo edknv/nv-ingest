@@ -325,15 +325,9 @@ class LanceDB(VDB):
         on_bad_vectors: str = "drop",
         fill_value: float = 0.0,
         validate_vector_length: bool = True,
-        build_index: bool | None = None,
+        create_index: bool = True,
         **kwargs,
     ):
-        create_index = kwargs.pop("create_index", None)
-        if build_index is None:
-            build_index = True if create_index is None else bool(create_index)
-        elif create_index is not None and bool(create_index) != bool(build_index):
-            raise ValueError("Pass only one index toggle: build_index or create_index.")
-
         if int(vector_dim) <= 0:
             raise ValueError(f"vector_dim must be positive; got {vector_dim}")
         self.uri = uri or "lancedb"
@@ -341,7 +335,7 @@ class LanceDB(VDB):
         self.table_name = table_name
         # Stored under a private name so it doesn't shadow the ``build_index()``
         # streaming-finalize method on this class / the VDB base.
-        self._build_index_on_run = bool(build_index)
+        self._build_index_on_run = bool(create_index)
         self.index_type = index_type
         self.metric = metric
         self.num_partitions = num_partitions
@@ -533,7 +527,7 @@ class LanceDB(VDB):
                 fts_language=self.fts_language,
             )
         else:
-            logger.info("Skipping LanceDB index creation for table %r because build_index=False.", self.table_name)
+            logger.info("Skipping LanceDB index creation for table %r because create_index=False.", self.table_name)
         return records
 
     def _lancedb_schema(self) -> "pa.Schema":
@@ -622,7 +616,7 @@ class LanceDB(VDB):
         """Build vector indexes on the populated table."""
         if not self._build_index_on_run:
             logger.info(
-                "Skipping LanceDB index build for table %r because build_index=False.",
+                "Skipping LanceDB index build for table %r because create_index=False.",
                 self.table_name,
             )
             return
