@@ -186,10 +186,10 @@ def write_summary_md(
             f"## Domain: {domain}",
             "",
             (
-                "| condition | success_rate | recall@1 | recall@5 | recall@10 | q_input | q_output "
+                "| condition | success_rate | recall@1 | recall@5 | recall@10 | judge | q_input | q_output "
                 "| q_cache_read | q_cache_create | q_cost |"
             ),
-            "|---|---|---|---|---|---|---|---|---|---|",
+            "|---|---|---|---|---|---|---|---|---|---|---|",
         ]
         for row in rows:
             lines.append(_md_row(row))
