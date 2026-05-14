@@ -183,7 +183,13 @@ class IngestVdbOperator(AbstractOperator):
                 join_key=self._sidecar_spec["meta_join_key"],
             )
         if records and any(batch for batch in records):
-            self._vdb.append(records, overwrite=not self._wrote_first_batch)
+            # ``--append`` mode (``vdb.overwrite=False``) must preserve any table
+            # left behind by an earlier run. Only the first batch of an
+            # ``overwrite=True`` run is allowed to drop the existing table; every
+            # other batch — and every batch in append mode — uses ``table.add``.
+            vdb_overwrite = bool(getattr(self._vdb, "overwrite", True))
+            overwrite_this_batch = vdb_overwrite and not self._wrote_first_batch
+            self._vdb.append(records, overwrite=overwrite_this_batch)
             self._wrote_first_batch = True
 
         if isinstance(data, pd.DataFrame):

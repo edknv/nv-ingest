@@ -596,6 +596,20 @@ class LanceDB(VDB):
         else:
             if self._cached_table is None:
                 self._cached_table = self._cached_db.open_table(self.table_name)
+                # Mirror create_index()'s append-path warning so streaming and
+                # legacy paths give the same heads-up about non-deduplicating
+                # re-runs. Emit once per operator instance, the first time we
+                # open a pre-existing table for append.
+                existing_rows = int(self._cached_table.count_rows())
+                if existing_rows:
+                    logger.warning(
+                        "Appending to existing LanceDB table %r at %s "
+                        "(existing_rows=%d). Append mode does not deduplicate; "
+                        "rerunning the same inputs will duplicate rows.",
+                        self.table_name,
+                        self.uri,
+                        existing_rows,
+                    )
             t0 = time.perf_counter()
             self._cached_table.add(rows)
             _record_timing(
@@ -606,6 +620,12 @@ class LanceDB(VDB):
 
     def build_index(self) -> None:
         """Build vector indexes on the populated table."""
+        if not self._build_index_on_run:
+            logger.info(
+                "Skipping LanceDB index build for table %r because build_index=False.",
+                self.table_name,
+            )
+            return
         db = lancedb.connect(uri=self.uri)
         try:
             table = db.open_table(self.table_name)
