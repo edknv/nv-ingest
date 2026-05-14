@@ -190,6 +190,13 @@ def run_command(
         for domain in domain_order:
             domain_entries = by_domain[domain]
             pdf_source = _resolve_pdf_source(cfg, domain)
+            if not pdf_source.is_dir():
+                typer.echo(
+                    f"Error: PDF directory '{pdf_source}' for domain '{domain}' does not exist or is not a directory. "
+                    f"Check the 'pdf_dirs' (or 'pdf_dir') setting in your config.",
+                    err=True,
+                )
+                raise typer.Exit(code=2)
             domain_label = _resolve_domain_label(domain_entries, cfg, domain)
             typer.echo(
                 f"Starting session for {cond}/{domain} — setup + {len(domain_entries)} query turns "
