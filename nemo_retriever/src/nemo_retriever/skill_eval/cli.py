@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import typer
+import yaml
 
 from nemo_retriever.harness.artifacts import create_session_dir
 from nemo_retriever.harness.config import REPO_ROOT
@@ -181,7 +182,7 @@ def run_command(
     session_dir = create_session_dir("skilleval", base_dir=base_dir)
     typer.echo(f"Session dir: {session_dir}")
 
-    (session_dir / "config.yaml").write_text("\n".join(f"{k}: {v}" for k, v in cfg.items()) + "\n", encoding="utf-8")
+    (session_dir / "config.yaml").write_text(yaml.safe_dump(cfg, default_flow_style=False), encoding="utf-8")
 
     # Results are keyed (condition, domain) so the report can break out per-domain numbers.
     results_by_key: dict[tuple[str, str], list] = {}
