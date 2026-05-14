@@ -27,22 +27,25 @@ from nemo_retriever.vdb.sidecar_metadata import (
 )
 
 
-#: Columns whose payload is large per-row (embedding floats, nested metadata,
-#: full chunk text). We drop these from the IngestVdbOperator output so the
-#: rows that travel through the downstream global-batch barrier (and end up
-#: materialized on the driver) carry only a tiny accounting payload instead
-#: of the full embedded corpus.
-_HEAVY_COLUMN_PREFIXES = ("text_embeddings_",)
-_HEAVY_COLUMN_NAMES = frozenset({"metadata", "text", "content"})
+#: Whitelist of accounting columns kept in the IngestVdbOperator output.
+#: Every other column (embedding floats, nested metadata, full chunk text,
+#: raw PDF bytes, page images, …) is dropped before the row travels through
+#: the downstream global-batch barrier — a whitelist beats a blacklist here
+#: because any future schema addition is heavy-by-default and would otherwise
+#: silently re-fill plasma + driver memory at the end of the run.
+#:
+#: - ``source_id`` / ``source_path`` / ``path``: driver-side ``unique_source_count``
+#:   and detection-summary key.
+#: - ``page_number``: detection-summary key.
+#: - ``_vdb_uploadable``: per-row "did this row produce a client VDB record"
+#:   flag emitted by ``IngestVdbOperator`` (see :meth:`IngestVdbOperator.process`).
+_ACCOUNTING_COLUMNS = frozenset(
+    {"source_id", "source_path", "path", "page_number", "_vdb_uploadable"}
+)
 
 
 def _project_to_accounting_columns(df: "pd.DataFrame") -> "pd.DataFrame":
-    keep = [
-        col
-        for col in df.columns
-        if col not in _HEAVY_COLUMN_NAMES
-        and not any(col.startswith(prefix) for prefix in _HEAVY_COLUMN_PREFIXES)
-    ]
+    keep = [col for col in df.columns if col in _ACCOUNTING_COLUMNS]
     return df[keep] if len(keep) != len(df.columns) else df
 
 
