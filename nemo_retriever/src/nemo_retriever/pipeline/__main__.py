@@ -227,6 +227,7 @@ def _build_extract_params(
     extract_charts: bool,
     extract_infographics: bool,
     extract_page_as_image: bool,
+    use_page_elements: bool,
     use_graphic_elements: bool,
     use_table_structure: bool,
     table_output_format: Optional[str],
@@ -297,6 +298,7 @@ def _build_extract_params(
                 "extract_charts": extract_charts,
                 "extract_infographics": extract_infographics,
                 "extract_page_as_image": extract_page_as_image,
+                "use_page_elements": use_page_elements,
                 "api_key": extract_remote_api_key,
                 "page_elements_invoke_url": page_elements_invoke_url,
                 "ocr_invoke_url": ocr_invoke_url,
@@ -803,6 +805,16 @@ def run(
         "--extract-page-as-image/--no-extract-page-as-image",
         rich_help_panel=_PANEL_EXTRACT,
     ),
+    use_page_elements: bool = typer.Option(
+        True,
+        "--use-page-elements/--no-use-page-elements",
+        rich_help_panel=_PANEL_EXTRACT,
+        help=(
+            "Run PageElementDetection (layout/yolox). Auto-skipped when no downstream stage "
+            "(TableStructure, GraphicElements, OCR) consumes its output. Pass --no-use-page-elements "
+            "to force-skip for a faster text-only ingest."
+        ),
+    ),
     use_graphic_elements: bool = typer.Option(False, "--use-graphic-elements", rich_help_panel=_PANEL_EXTRACT),
     use_table_structure: bool = typer.Option(False, "--use-table-structure", rich_help_panel=_PANEL_EXTRACT),
     table_output_format: Optional[str] = typer.Option(None, "--table-output-format", rich_help_panel=_PANEL_EXTRACT),
@@ -1308,6 +1320,7 @@ def run(
             extract_charts=extract_charts,
             extract_infographics=extract_infographics,
             extract_page_as_image=extract_page_as_image,
+            use_page_elements=use_page_elements,
             use_graphic_elements=use_graphic_elements,
             use_table_structure=use_table_structure,
             table_output_format=table_output_format,
