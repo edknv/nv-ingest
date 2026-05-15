@@ -49,8 +49,9 @@ class FakeVDB(VDB):
         self.run_calls.append(records)
         return {"records": records}
 
-    def append(self, records: Any, *, overwrite: bool) -> None:
+    def append(self, records: Any, *, overwrite: bool) -> bool:
         self.append_calls.append((records, overwrite))
+        return True
 
     def build_index(self) -> None:
         self.build_index_calls += 1
