@@ -24,6 +24,8 @@ Three constructors map cleanly to the three ingest run modes:
 
 from __future__ import annotations
 
+import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Optional
@@ -31,6 +33,8 @@ from typing import Any, Iterable, Iterator, Optional
 import pandas as pd
 
 from nemo_retriever.vdb.operators import VDB_UPLOADABLE_COLUMN
+
+logger = logging.getLogger(__name__)
 
 
 _VDB_RECORD_SCAN_BATCH = 1024
@@ -168,10 +172,13 @@ class IngestResult:
                 meta = row.get("metadata")
                 if isinstance(meta, str):
                     try:
-                        import json
-
                         meta = json.loads(meta)
-                    except Exception:
+                    except json.JSONDecodeError as exc:
+                        logger.debug(
+                            "Could not parse metadata JSON for row %r: %s; treating as empty.",
+                            path,
+                            exc,
+                        )
                         meta = {}
                 if not isinstance(meta, dict):
                     meta = {}

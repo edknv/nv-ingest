@@ -540,7 +540,7 @@ class LanceDB(VDB):
             ]
         )
 
-    def append(self, records, *, overwrite: bool) -> None:
+    def append(self, records: list[list[dict[str, Any]]], *, overwrite: bool) -> None:
         """Streaming write entry point for ``IngestVdbOperator``.
 
         Writes ``records`` to the LanceDB table without building any search

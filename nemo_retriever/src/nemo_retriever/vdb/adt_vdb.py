@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
+from typing import Any
 
 
 """Abstract Vector Database (VDB) operator API.
@@ -237,7 +240,7 @@ class VDB(ABC):
         """
         pass
 
-    def append(self, records, *, overwrite: bool) -> None:
+    def append(self, records: list[list[dict[str, Any]]], *, overwrite: bool) -> None:
         """Stream-friendly write entry point used by ``IngestVdbOperator``.
 
         Implementations should write ``records`` to the underlying table without
