@@ -540,7 +540,7 @@ class LanceDB(VDB):
             ]
         )
 
-    def append(self, records: list[list[dict[str, Any]]], *, overwrite: bool) -> None:
+    def append(self, records: list[list[dict[str, Any]]], *, overwrite: bool) -> bool:
         """Streaming write entry point for ``IngestVdbOperator``.
 
         Writes ``records`` to the LanceDB table without building any search
@@ -554,6 +554,11 @@ class LanceDB(VDB):
           first; ``IngestVdbOperator`` does this by pinning concurrency=1 and
           tracking a first-batch flag.)
 
+        Returns ``True`` when rows were committed to the table, ``False`` when
+        every record was filtered out by ``_create_lancedb_results`` (so no
+        table was created or modified). The operator uses this to keep
+        ``overwrite=True`` until a write actually lands.
+
         The lance connection and table handle are cached on ``self`` so the
         per-batch path is just ``table.add(rows)`` plus the underlying lance
         version commit — no repeated ``lancedb.connect()`` or ``open_table()``
@@ -566,7 +571,7 @@ class LanceDB(VDB):
 
         rows, counts = _create_lancedb_results(records, expected_dim=expected_dim)
         if not rows:
-            return
+            return False
 
         if self._cached_db is None:
             self._cached_db = lancedb.connect(uri=self.uri)
@@ -611,6 +616,8 @@ class LanceDB(VDB):
                 time.perf_counter() - t0,
                 {"rows": len(rows), **counts},
             )
+
+        return True
 
     def build_index(self) -> None:
         """Build vector indexes on the populated table."""

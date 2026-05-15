@@ -240,7 +240,7 @@ class VDB(ABC):
         """
         pass
 
-    def append(self, records: list[list[dict[str, Any]]], *, overwrite: bool) -> None:
+    def append(self, records: list[list[dict[str, Any]]], *, overwrite: bool) -> bool:
         """Stream-friendly write entry point used by ``IngestVdbOperator``.
 
         Implementations should write ``records`` to the underlying table without
@@ -248,6 +248,13 @@ class VDB(ABC):
         writes are complete. When ``overwrite`` is ``True`` the implementation
         must drop any existing table before writing the first batch; subsequent
         calls with ``overwrite=False`` must append.
+
+        Returns ``True`` if any rows were committed to the backing store; returns
+        ``False`` if the implementation early-returned (e.g. all records failed
+        per-row validation and there were no rows to write). The streaming
+        operator uses this signal to keep ``overwrite=True`` until a write
+        actually lands — otherwise an "empty" first batch would silently flip
+        the handshake to ``overwrite=False`` against a non-existent table.
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not implement streaming append(); "

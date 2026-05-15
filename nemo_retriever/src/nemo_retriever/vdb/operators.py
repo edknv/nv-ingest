@@ -189,8 +189,12 @@ class IngestVdbOperator(AbstractOperator):
             # other batch — and every batch in append mode — uses ``table.add``.
             vdb_overwrite = bool(getattr(self._vdb, "overwrite", True))
             overwrite_this_batch = vdb_overwrite and not self._wrote_first_batch
-            self._vdb.append(records, overwrite=overwrite_this_batch)
-            self._wrote_first_batch = True
+            # ``append`` returns False when the VDB filtered every record out
+            # (e.g. wrong embedding length) and didn't actually write. In that
+            # case the next batch must keep ``overwrite=True`` — otherwise we'd
+            # call ``table.add`` on a table that was never created.
+            if self._vdb.append(records, overwrite=overwrite_this_batch):
+                self._wrote_first_batch = True
 
         if isinstance(data, pd.DataFrame):
             # ``.assign`` returns a shallow-copied frame, so the operator's
