@@ -10,6 +10,7 @@ import functools
 import json
 import logging
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -331,12 +332,127 @@ def _extract_model_id(envelope: dict[str, Any], fallback: str) -> str:
     return str(envelope.get("model") or fallback)
 
 
-def _scan_transcript_for_signals(envelope: dict[str, Any]) -> tuple[int | None, bool]:
-    """Inspect the envelope's `result` text for `retriever` CLI usage."""
+_PIPELINE_SEP = re.compile(r"(?:;|&&|\|\||\||\n|\$\(|`)")
+_ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_WRAPPER_CMDS = {"sudo", "time", "nice", "nohup", "exec", "env", "command", "builtin"}
+
+
+def _retriever_in_command(cmd: str) -> bool:
+    """Does this shell command line invoke the retriever CLI as a command?
+
+    Matches when the **executable** in any pipeline segment is the retriever
+    CLI — ``retriever``, ``./retriever``, ``/abs/path/retriever``, ``uv run
+    retriever``, or ``python -m nemo_retriever``. Deliberately does *not*
+    match cases where ``retriever`` appears only as a path argument (e.g.
+    ``cat .bin/retriever``, ``ls /path/retriever/``, ``echo "use retriever"``).
+    """
+    if not cmd:
+        return False
+
+    for segment in _PIPELINE_SEP.split(cmd):
+        seg = segment.strip()
+        # Strip leading env-var assignments and command wrappers (sudo, time, ...).
+        while seg:
+            first = seg.split(None, 1)
+            if not first:
+                break
+            head = first[0]
+            rest = first[1] if len(first) > 1 else ""
+            if _ENV_ASSIGN.match(head):
+                seg = rest
+                continue
+            if head in _WRAPPER_CMDS:
+                seg = rest
+                continue
+            break
+        if not seg:
+            continue
+        head = seg.split(None, 1)[0]
+        if head == "retriever" or head == "./retriever":
+            return True
+        if head.endswith("/retriever") and "/" in head[:-len("/retriever") + 1]:
+            # An absolute or relative path whose final component is `retriever`,
+            # e.g. /home/.../venv/bin/retriever. Reject pure ``/retriever`` which
+            # is implausible as a real binary path. Also reject ``.bin/retriever``
+            # paths: c1_base's workdir setup installs a deny-shim with that exact
+            # name (see ``_write_shim``); invoking the shim is the *opposite* of
+            # using the real retriever CLI.
+            if "/.bin/retriever" in head:
+                continue
+            return True
+        # ``uv run retriever ...`` and ``python -m nemo_retriever ...`` —
+        # check the first two tokens of the segment.
+        tokens = seg.split()
+        if len(tokens) >= 3 and tokens[0] == "uv" and tokens[1] == "run" and tokens[2] == "retriever":
+            return True
+        if len(tokens) >= 3 and tokens[0].startswith("python") and tokens[1] == "-m" and tokens[2].startswith("nemo_retriever"):
+            return True
+    return False
+
+
+def _claude_session_log_path(workdir: Path, session_uuid: str) -> Path:
+    """Claude Code persists per-session transcripts at
+    ``~/.claude/projects/<slug>/<session_id>.jsonl`` where ``<slug>`` is the
+    project dir with ``/`` and ``_`` both replaced by ``-`` (and a leading ``-``
+    preserved for the filesystem root).
+    """
+    slug = str(workdir).replace("/", "-").replace("_", "-")
+    if not slug.startswith("-"):
+        slug = "-" + slug
+    return Path.home() / ".claude" / "projects" / slug / f"{session_uuid}.jsonl"
+
+
+def _scan_transcript_for_signals(
+    envelope: dict[str, Any],
+    workdir: Path | None = None,
+    session_uuid: str | None = None,
+) -> tuple[int | None, bool]:
+    """Detect whether the agent invoked the ``retriever`` CLI.
+
+    Primary signal: scan the Claude Code session jsonl for tool-use entries that
+    spawn a shell command containing ``retriever``. This catches every actual
+    invocation, regardless of whether the agent quoted it in its final reply.
+
+    Fallback signal: if the session log isn't accessible (older runs, missing
+    file), look for ``retriever`` in the envelope's ``result`` text — the legacy
+    proxy. This undercounts but never overcounts.
+    """
+    # Primary: tool-call trace.
+    if workdir is not None and session_uuid:
+        log_path = _claude_session_log_path(workdir, session_uuid)
+        if log_path.exists():
+            try:
+                with log_path.open(encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            ev = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        msg = ev.get("message") or {}
+                        content = msg.get("content")
+                        if not isinstance(content, list):
+                            continue
+                        for item in content:
+                            if not isinstance(item, dict):
+                                continue
+                            if item.get("type") != "tool_use":
+                                continue
+                            if item.get("name") != "Bash":
+                                continue
+                            cmd = (item.get("input") or {}).get("command") or ""
+                            if _retriever_in_command(cmd):
+                                return 1, True
+                return None, False
+            except OSError:
+                pass  # fall through to fallback
+
+    # Fallback: scan the assistant's final text.
     text = str(envelope.get("result") or "")
     used = "retriever " in text or "\nretriever\n" in text
-    first_use = 1 if used else None
-    return first_use, used
+    return (1 if used else None), used
 
 
 def _run_one_turn(
@@ -436,7 +552,7 @@ def _run_one_turn(
         if out_path.exists():
             out_path.rename(workdir / f"output_e{entry_id}.json")
 
-    first_use, used = _scan_transcript_for_signals(envelope)
+    first_use, used = _scan_transcript_for_signals(envelope, workdir=workdir, session_uuid=session_uuid)
     result.retriever_first_use_turn = first_use
     result.retriever_used_ever = used
     # c1 has the skill unavailable; leave skill_fired=None to distinguish from "loaded but didn't fire".

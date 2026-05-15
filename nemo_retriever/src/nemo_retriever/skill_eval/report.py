@@ -133,11 +133,12 @@ def _md_row(row: dict[str, Any]) -> str:
     m = row.get("metrics", {})
     judge_cell = f"{m['judge_score_mean']:.2f} (n={m.get('judge_score_n', 0)})" if "judge_score_mean" in m else "—"
     return (
-        "| {cond} | {sr:.2f} | {r1:.3f} | {r5:.3f} | {r10:.3f} | {judge} "
+        "| {cond} | {sr:.2f} | {retr:.2f} | {r1:.3f} | {r5:.3f} | {r10:.3f} | {judge} "
         "| {ipt:.0f} | {opt:.0f} | {cr:.0f} | {cc:.0f} | ${cost:.3f} |"
     ).format(
         cond=row.get("run_name", "?"),
         sr=m.get("success_rate", 0.0),
+        retr=m.get("retriever_used_rate", 0.0),
         r1=m.get("recall_1", 0.0),
         r5=m.get("recall_5", 0.0),
         r10=m.get("recall_10", 0.0),
@@ -148,6 +149,13 @@ def _md_row(row: dict[str, Any]) -> str:
         cc=m.get("cache_creation_input_tokens", 0.0),
         cost=m.get("total_cost_usd", 0.0),
     )
+
+
+_MAIN_TABLE_HEADER = (
+    "| condition | success_rate | retr_used | recall@1 | recall@5 | recall@10 | judge | q_input | q_output "
+    "| q_cache_read | q_cache_create | q_cost |"
+)
+_MAIN_TABLE_DIVIDER = "|---|---|---|---|---|---|---|---|---|---|---|---|"
 
 
 def write_summary_md(
@@ -168,11 +176,8 @@ def write_summary_md(
         "",
         "## Overall (averaged across all queries in this run)",
         "",
-        (
-            "| condition | success_rate | recall@1 | recall@5 | recall@10 | judge | q_input | q_output "
-            "| q_cache_read | q_cache_create | q_cost |"
-        ),
-        "|---|---|---|---|---|---|---|---|---|---|---|",
+        _MAIN_TABLE_HEADER,
+        _MAIN_TABLE_DIVIDER,
     ]
     for row in overall_rows:
         lines.append(_md_row(row))
@@ -185,11 +190,8 @@ def write_summary_md(
             "",
             f"## Domain: {domain}",
             "",
-            (
-                "| condition | success_rate | recall@1 | recall@5 | recall@10 | judge | q_input | q_output "
-                "| q_cache_read | q_cache_create | q_cost |"
-            ),
-            "|---|---|---|---|---|---|---|---|---|---|---|",
+            _MAIN_TABLE_HEADER,
+            _MAIN_TABLE_DIVIDER,
         ]
         for row in rows:
             lines.append(_md_row(row))
@@ -236,14 +238,15 @@ def write_summary_md(
             )
         )
 
-    lines.append("")
-    lines.append("## Diagnostics")
+    diag_lines = []
     for row in overall_rows:
         m = row.get("metrics", {})
-        extras = [f"retriever_used_rate={m.get('retriever_used_rate', 0.0):.2f}"]
         if "skill_fired_rate" in m:
-            extras.append(f"skill_fired_rate={m['skill_fired_rate']:.2f}")
-        lines.append(f"- **{row['run_name']}**: " + ", ".join(extras))
+            diag_lines.append(f"- **{row['run_name']}**: skill_fired_rate={m['skill_fired_rate']:.2f}")
+    if diag_lines:
+        lines.append("")
+        lines.append("## Diagnostics")
+        lines.extend(diag_lines)
 
     out = session_dir / "session_summary.md"
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
