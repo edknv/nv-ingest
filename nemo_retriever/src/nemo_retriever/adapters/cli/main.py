@@ -40,7 +40,6 @@ _LAZY_SUBAPPS: list[tuple[str, str, str]] = [
     ("eval", "nemo_retriever.evaluation.cli", "app"),
     ("benchmark", "nemo_retriever.utils.benchmark", "app"),
     ("harness", "nemo_retriever.harness", "app"),
-    ("vector-store", "nemo_retriever.vector_store", "app"),
     ("recall", "nemo_retriever.recall", "app"),
     ("skill-eval", "nemo_retriever.skill_eval", "app"),
     ("txt", "nemo_retriever.txt.__main__", "app"),
@@ -83,6 +82,20 @@ def ingest_command(
         "--run-mode",
         help="Execution mode for the SDK ingestor.",
     ),
+    overwrite: bool = typer.Option(
+        True,
+        "--overwrite/--append",
+        help=(
+            "Overwrite the target LanceDB table by default. Use --append to add rows to an existing "
+            "table without duplicate checks; rerunning the same inputs in append mode creates duplicates."
+        ),
+    ),
+    ray_address: str | None = typer.Option(None, "--ray-address", help="Ray address for batch run mode."),
+    ray_log_to_driver: bool | None = typer.Option(
+        None,
+        "--ray-log-to-driver/--no-ray-log-to-driver",
+        help="Forward Ray worker logs to the driver in batch run mode.",
+    ),
     page_elements_invoke_url: str | None = typer.Option(
         None,
         "--page-elements-invoke-url",
@@ -110,13 +123,88 @@ def ingest_command(
         "--embed-model-name",
         help="Optional embedding model name override.",
     ),
+    pdf_extract_workers: int | None = typer.Option(
+        None,
+        "--pdf-extract-workers",
+        min=1,
+        help="Maximum Ray tasks for PDF extraction in batch mode.",
+    ),
+    pdf_extract_batch_size: int | None = typer.Option(
+        None,
+        "--pdf-extract-batch-size",
+        min=1,
+        help="PDF extraction batch size per Ray task in batch mode.",
+    ),
+    pdf_extract_cpus_per_task: float | None = typer.Option(
+        None,
+        "--pdf-extract-cpus-per-task",
+        min=0.0,
+        help="CPUs reserved per PDF extraction Ray task in batch mode.",
+    ),
+    page_elements_workers: int | None = typer.Option(
+        None,
+        "--page-elements-workers",
+        min=1,
+        help="Number of Ray actors for page-element detection in batch mode.",
+    ),
+    page_elements_batch_size: int | None = typer.Option(
+        None,
+        "--page-elements-batch-size",
+        min=1,
+        help="Page-element detection batch size per actor in batch mode.",
+    ),
+    page_elements_cpus_per_actor: float | None = typer.Option(
+        None,
+        "--page-elements-cpus-per-actor",
+        min=0.0,
+        help="CPUs reserved per page-element detection actor in batch mode.",
+    ),
+    ocr_workers: int | None = typer.Option(
+        None,
+        "--ocr-workers",
+        min=1,
+        help="Number of Ray actors for OCR inference in batch mode.",
+    ),
+    ocr_batch_size: int | None = typer.Option(
+        None,
+        "--ocr-batch-size",
+        min=1,
+        help="OCR inference batch size per actor in batch mode.",
+    ),
+    ocr_cpus_per_actor: float | None = typer.Option(
+        None,
+        "--ocr-cpus-per-actor",
+        min=0.0,
+        help="CPUs reserved per OCR actor in batch mode.",
+    ),
+    embed_workers: int | None = typer.Option(
+        None,
+        "--embed-workers",
+        min=1,
+        help="Number of Ray actors for embedding in batch mode.",
+    ),
+    embed_batch_size: int | None = typer.Option(
+        None,
+        "--embed-batch-size",
+        min=1,
+        help="Embedding batch size per actor in batch mode.",
+    ),
+    embed_cpus_per_actor: float | None = typer.Option(
+        None,
+        "--embed-cpus-per-actor",
+        min=0.0,
+        help="CPUs reserved per embedding actor in batch mode.",
+    ),
 ) -> None:
     try:
         summary = ingest_documents(
             documents,
             run_mode=run_mode,
+            ray_address=ray_address,
+            ray_log_to_driver=ray_log_to_driver,
             lancedb_uri=lancedb_uri,
             table_name=table_name,
+            overwrite=overwrite,
             page_elements_invoke_url=page_elements_invoke_url,
             ocr_invoke_url=ocr_invoke_url,
             ocr_version=ocr_version,
@@ -124,6 +212,18 @@ def ingest_command(
             table_structure_invoke_url=table_structure_invoke_url,
             embed_invoke_url=embed_invoke_url,
             embed_model_name=embed_model_name,
+            pdf_extract_workers=pdf_extract_workers,
+            pdf_extract_batch_size=pdf_extract_batch_size,
+            pdf_extract_cpus_per_task=pdf_extract_cpus_per_task,
+            page_elements_workers=page_elements_workers,
+            page_elements_batch_size=page_elements_batch_size,
+            page_elements_cpus_per_actor=page_elements_cpus_per_actor,
+            ocr_workers=ocr_workers,
+            ocr_batch_size=ocr_batch_size,
+            ocr_cpus_per_actor=ocr_cpus_per_actor,
+            embed_workers=embed_workers,
+            embed_batch_size=embed_batch_size,
+            embed_cpus_per_actor=embed_cpus_per_actor,
         )
     except _ROOT_CLI_ERRORS as exc:
         typer.echo(f"Error: {exc}", err=True)

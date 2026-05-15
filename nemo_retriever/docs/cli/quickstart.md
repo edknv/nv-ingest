@@ -110,9 +110,10 @@ hits = retriever.query(
 
 ## Notes on running larger datasets
 
-- Pass a directory for batch ingestion:
-  `retriever pipeline run ./data/pdf_corpus --input-type pdf …`.
-- For faster throughput on a multi-GPU node, keep `--run-mode batch` (default,
-  Ray-based) and tune `--pdf-split-batch-size`, `--embed-actors`,
-  `--embed-batch-size`, `--ocr-actors`, and `--page-elements-actors`.
+- Pass a directory for root batch ingestion:
+  `retriever ingest ./data/pdf_corpus --run-mode batch`.
+- For larger PDF batches, tune root ingest with `--pdf-extract-workers`,
+  `--pdf-extract-batch-size`, `--page-elements-workers`,
+  `--page-elements-batch-size`, `--ocr-workers`, `--ocr-batch-size`,
+  `--embed-workers`, and `--embed-batch-size`.
 - For debugging or CI, use `--run-mode inprocess` to avoid starting Ray.
