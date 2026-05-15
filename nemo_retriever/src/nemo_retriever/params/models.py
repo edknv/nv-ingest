@@ -352,9 +352,7 @@ class ExtractParams(_ParamsModel):
             ]
             enabled = [name for name, on in consumers if on]
             if enabled:
-                raise ValueError(
-                    f"use_page_elements=False is incompatible with: {', '.join(enabled)}"
-                )
+                raise ValueError(f"use_page_elements=False is incompatible with: {', '.join(enabled)}")
         return self
 
 

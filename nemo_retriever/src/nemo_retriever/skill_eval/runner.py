@@ -370,7 +370,7 @@ def _retriever_in_command(cmd: str) -> bool:
         head = seg.split(None, 1)[0]
         if head == "retriever" or head == "./retriever":
             return True
-        if head.endswith("/retriever") and "/" in head[:-len("/retriever") + 1]:
+        if head.endswith("/retriever") and "/" in head[: -len("/retriever") + 1]:
             # An absolute or relative path whose final component is `retriever`,
             # e.g. /home/.../venv/bin/retriever. Reject pure ``/retriever`` which
             # is implausible as a real binary path. Also reject ``.bin/retriever``
