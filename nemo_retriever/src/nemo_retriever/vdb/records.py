@@ -13,15 +13,11 @@ from typing import Any, TypedDict
 
 
 class RetrievalHit(TypedDict, total=False):
-    """Shape of a single hit returned by ``Retriever.query`` / ``Retriever.queries``.
+    """A hit from ``Retriever.query`` / ``Retriever.queries``.
 
-    ``metadata`` is a native ``dict`` at this boundary — never a JSON string. The
-    LanceDB storage layer JSON-encodes on write and decodes on read; do not let
-    a re-encoded string leak back out here. See ``_normalize_hit`` for the
-    contract enforcement point.
-
-    ``total=False`` because optional fields (``stored_image_uri``,
-    ``content_type``, ``bbox_xyxy_norm``, scores) are only set when present.
+    ``metadata`` is a native ``dict`` here, never a JSON string — LanceDB
+    encodes at rest, ``_normalize_hit`` decodes. Re-encoding leaks the string
+    back to downstream consumers (CLI, jq recipes) that expect a dict.
     """
 
     text: str
@@ -177,10 +173,6 @@ def _normalize_hit(hit: dict[str, Any]) -> RetrievalHit:
     pdf_basename = path.stem if path is not None else ""
     normalized: RetrievalHit = {
         "text": _first_str(entity.get("text"), entity.get("content"), hit.get("text")),
-        # `content_metadata` is already a dict here (parsed by `_mapping` above
-        # from the JSON string LanceDB stores at rest). Do not re-encode — the
-        # API boundary returns native dicts, and downstream consumers (CLI,
-        # SKILL.md jq recipes) rely on that.
         "metadata": content_metadata,
         "source": source_id,
         "source_id": source_id,
