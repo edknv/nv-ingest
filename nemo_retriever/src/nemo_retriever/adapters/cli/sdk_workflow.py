@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Literal, Sequence, cast
 
 from nemo_retriever.ingestor import create_ingestor
+from nemo_retriever.ocr.config import OCRLang, OCRVersion
 from nemo_retriever.params import BatchTuningParams, EmbedParams, ExtractParams, VdbUploadParams
 from nemo_retriever.params.utils import normalize_embed_kwargs
 from nemo_retriever.retriever import Retriever
@@ -17,7 +18,8 @@ from nemo_retriever.vdb.records import RetrievalHit
 
 
 IngestRunModeValue = Literal["inprocess", "batch"]
-OcrVersionValue = Literal["v1", "v2"]
+OcrLangValue = OCRLang
+OcrVersionValue = OCRVersion
 _SUPPORTED_RUN_MODES: tuple[IngestRunModeValue, ...] = ("inprocess", "batch")
 
 
@@ -153,6 +155,7 @@ def ingest_documents(
     page_elements_invoke_url: str | None = None,
     ocr_invoke_url: str | None = None,
     ocr_version: OcrVersionValue | None = None,
+    ocr_lang: OcrLangValue | None = None,
     graphic_elements_invoke_url: str | None = None,
     table_structure_invoke_url: str | None = None,
     embed_invoke_url: str | None = None,
@@ -186,6 +189,7 @@ def ingest_documents(
             "page_elements_invoke_url": page_elements_invoke_url,
             "ocr_invoke_url": ocr_invoke_url,
             "ocr_version": ocr_version,
+            "ocr_lang": ocr_lang,
             "graphic_elements_invoke_url": graphic_elements_invoke_url,
             "table_structure_invoke_url": table_structure_invoke_url,
         }.items()

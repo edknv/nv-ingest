@@ -10,6 +10,7 @@ from typing import Any
 from unittest.mock import create_autospec
 
 import pytest
+from pydantic import ValidationError
 from typer.testing import CliRunner
 
 import nemo_retriever.adapters.cli.sdk_workflow as sdk_workflow
@@ -170,6 +171,41 @@ def test_root_ingest_passes_nim_url_options(monkeypatch, tmp_path) -> None:
     assert embed_params.embed_model_name == "nvidia/llama-nemotron-embed-1b-v2"
 
 
+def test_root_ingest_passes_ocr_lang_option(monkeypatch, tmp_path) -> None:
+    fake_ingestor = _make_fake_ingestor()
+    document = tmp_path / "english-ocr.pdf"
+    document.write_bytes(b"%PDF-1.4\n")
+
+    monkeypatch.setattr(sdk_workflow, "create_ingestor", lambda **_kwargs: fake_ingestor)
+
+    result = RUNNER.invoke(cli_main.app, ["ingest", str(document), "--ocr-lang", "english"])
+
+    assert result.exit_code == 0
+    extract_params = fake_ingestor.extract.call_args.args[0]
+    assert isinstance(extract_params, ExtractParams)
+    assert extract_params.ocr_version == "v2"
+    assert extract_params.ocr_lang == "english"
+
+
+def test_root_ingest_rejects_ocr_lang_with_legacy_ocr_version(monkeypatch, tmp_path) -> None:
+    fake_ingestor = _make_fake_ingestor()
+    document = tmp_path / "legacy-ocr.pdf"
+    document.write_bytes(b"%PDF-1.4\n")
+
+    monkeypatch.setattr(sdk_workflow, "create_ingestor", lambda **_kwargs: fake_ingestor)
+
+    result = RUNNER.invoke(
+        cli_main.app,
+        ["ingest", str(document), "--ocr-version", "v1", "--ocr-lang", "english"],
+    )
+
+    assert result.exit_code == 1
+    assert result.output.startswith("Error: ")
+    assert "ocr_lang is only supported when ocr_version='v2'" in result.output
+    assert "Traceback" not in result.output
+    fake_ingestor.extract.assert_not_called()
+
+
 def test_root_ingest_passes_batch_tuning_options(monkeypatch, tmp_path) -> None:
     fake_ingestor = _make_fake_ingestor()
     create_calls: list[dict[str, Any]] = []
@@ -275,6 +311,10 @@ def test_root_ingest_reports_os_errors(monkeypatch) -> None:
 
     assert result.exit_code == 1
     assert "Error: permission denied" in result.output
+
+
+def test_root_cli_error_handler_includes_pydantic_validation_error() -> None:
+    assert ValidationError in cli_main._ROOT_CLI_ERRORS
 
 
 def test_ingest_documents_validates_run_mode_before_creating_ingestor(monkeypatch) -> None:
