@@ -151,16 +151,25 @@ def _normalize_page_elements_config(raw: Dict[str, Any]) -> Dict[str, Any]:
     return {k: v for k, v in out.items() if v is not None}
 
 
-def _atomic_write_json(path: Path, obj: Any) -> None:
+def _atomic_write_json(path: Path, obj: Any, *, compact: bool = False) -> None:
     """
     Atomically write JSON to disk (write temp file then replace).
+
+    Default emits indented JSON for inspection / diffability. ``compact=True``
+    drops whitespace (`separators=(",", ":")`) — useful when the sidecar is
+    consumed programmatically and bytes matter.
 
     Kept local to the PDF stage to avoid importing heavier stage utilities.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_name(path.name + ".tmp")
+    dump_kwargs: dict[str, Any] = {"ensure_ascii": False}
+    if compact:
+        dump_kwargs["separators"] = (",", ":")
+    else:
+        dump_kwargs["indent"] = 2
     with tmp_path.open("w", encoding="utf-8") as f:
-        json.dump(obj, f, ensure_ascii=False, separators=(",", ":"))
+        json.dump(obj, f, **dump_kwargs)
         f.flush()
         try:
             import os
@@ -272,6 +281,7 @@ def _write_pdf_extraction_json_outputs(
     task_config: Dict[str, Any],
     elapsed_seconds: float,
     output_dir: Optional[str | Path] = None,
+    compact: bool = False,
 ) -> List[Path]:
     """
     Write one JSON per input PDF (sidecar) summarizing extracted primitives.
@@ -345,7 +355,7 @@ def _write_pdf_extraction_json_outputs(
             "extracted_df_records": records,
             "timing": {"seconds": float(elapsed_seconds)},
         }
-        _atomic_write_json(out_path, payload)
+        _atomic_write_json(out_path, payload, compact=compact)
         out_paths.append(out_path)
 
     return out_paths
@@ -395,6 +405,7 @@ def extract_pdf_primitives_from_ledger_df(
     extractor_config: PDFExtractorSchema,
     write_json_outputs: bool = True,
     json_output_dir: Optional[str | Path] = None,
+    compact_json: bool = False,
     trace_info: Optional[Dict[str, Any]] = None,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """Pure-Python PDF extraction (no Ray required).
@@ -433,6 +444,7 @@ def extract_pdf_primitives_from_ledger_df(
                 task_config=task_config,
                 elapsed_seconds=float(elapsed),
                 output_dir=json_output_dir,
+                compact=compact_json,
             )
             info["json_outputs"] = [str(p) for p in written]
         except Exception:
@@ -541,6 +553,15 @@ def render_page_elements(
         file_okay=False,
         dir_okay=True,
         help="Optional directory to write JSON outputs into (instead of next to PDFs).",
+    ),
+    compact_json: bool = typer.Option(
+        False,
+        "--compact-json/--no-compact-json",
+        help=(
+            "Emit compact (whitespace-free) JSON sidecars instead of the default indented form. "
+            "Default is indented for inspection / diffability; opt in when bytes matter (e.g. when "
+            "the sidecar is consumed programmatically as agent input)."
+        ),
     ),
     limit: Optional[int] = typer.Option(None, "--limit", help="Optionally limit number of PDFs processed."),
 ) -> None:
@@ -680,6 +701,7 @@ def render_page_elements(
                 extractor_config=extractor_schema,
                 write_json_outputs=bool(write_json_outputs),
                 json_output_dir=json_output_dir,
+                compact_json=bool(compact_json),
             )
             info_last = dict(info_one or {})
 
