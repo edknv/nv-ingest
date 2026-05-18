@@ -160,7 +160,7 @@ def _atomic_write_json(path: Path, obj: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_name(path.name + ".tmp")
     with tmp_path.open("w", encoding="utf-8") as f:
-        json.dump(obj, f, ensure_ascii=False, indent=2)
+        json.dump(obj, f, ensure_ascii=False, separators=(",", ":"))
         f.flush()
         try:
             import os
@@ -342,9 +342,6 @@ def _write_pdf_extraction_json_outputs(
             "model": method,
             "pdf": {"path": str(pdf_path), "source_id": source_id, "source_name": source_name},
             "task": {"method": method, "params": _to_jsonable(params)},
-            # Back-compat: keep the old key.
-            "primitives": records,
-            # New: explicitly labeled as the raw extracted_df rows.
             "extracted_df_records": records,
             "timing": {"seconds": float(elapsed_seconds)},
         }
@@ -448,6 +445,16 @@ def extract_pdf_primitives_from_ledger_df(
 
 @app.command("page-elements")
 def render_page_elements(
+    input_path: Optional[Path] = typer.Argument(
+        None,
+        exists=True,
+        file_okay=True,
+        dir_okay=True,
+        help=(
+            "Path to extract. Accepts a directory (scanned recursively for *.pdf) or a single .pdf file. "
+            "If omitted, falls back to `input_dir` from --config YAML."
+        ),
+    ),
     config: Optional[Path] = typer.Option(
         None,
         "--config",
@@ -458,14 +465,6 @@ def render_page_elements(
             "Optional ingest YAML config file. If omitted, we auto-discover ./ingest-config.yaml then "
             "$HOME/.ingest-config.yaml. Explicitly passed CLI flags override YAML."
         ),
-    ),
-    input_dir: Optional[Path] = typer.Option(
-        None,
-        "--input-dir",
-        exists=True,
-        file_okay=False,
-        dir_okay=True,
-        help="Directory to scan recursively for *.pdf (can be provided via --config).",
     ),
     method: str = typer.Option(
         "pdfium",
@@ -546,18 +545,19 @@ def render_page_elements(
     limit: Optional[int] = typer.Option(None, "--limit", help="Optionally limit number of PDFs processed."),
 ) -> None:
     """
-    Scan `input_dir` for PDFs and run `nemo_retriever.api` PDF extraction, writing primitives JSON sidecars.
+    Run `nemo_retriever.api` PDF extraction, writing primitives JSON sidecars.
 
-    This command is intentionally "directory-first" so you can point it at a folder of PDFs
-    and get per-PDF outputs without having to build a ledger by hand.
+    INPUT_PATH accepts either a directory (scanned recursively for *.pdf) or a single .pdf file.
+    Useful for the bulk path (point at a folder, get per-PDF outputs) and for targeted single-PDF
+    extraction (e.g. the SKILL.md fallback that reads only the rank-1 PDF for a query).
     """
     # Load consolidated ingest config (section: pdf).
     cfg_raw = _normalize_page_elements_config(load_ingest_config_section(config, section="pdf"))
 
-    # Merge: YAML provides defaults; explicit CLI flags override YAML.
-    if not _argv_has_any(["--input-dir"]):
-        if "input_dir" in cfg_raw:
-            input_dir = Path(str(cfg_raw["input_dir"]))
+    # Positional INPUT_PATH wins; otherwise fall back to YAML `input_dir`.
+    input_dir = input_path
+    if input_dir is None and "input_dir" in cfg_raw:
+        input_dir = Path(str(cfg_raw["input_dir"]))
 
     if not _argv_has_any(["--method"]):
         method = str(cfg_raw.get("method", method))
@@ -605,12 +605,17 @@ def render_page_elements(
         limit = cfg_raw.get("limit", limit)
 
     if input_dir is None:
-        raise typer.BadParameter("Missing --input-dir (or set input_dir in --config YAML).")
+        raise typer.BadParameter("Missing INPUT_PATH argument (or set `input_dir` in --config YAML).")
 
-    pdfs = sorted(str(p) for p in input_dir.rglob("*.pdf"))
-    if not pdfs:
-        console.print(f"[red]No PDFs found[/red] under: {input_dir}")
-        raise typer.Exit(code=2)
+    if input_dir.is_file():
+        if input_dir.suffix.lower() != ".pdf":
+            raise typer.BadParameter(f"INPUT_PATH file must be a .pdf, got: {input_dir}")
+        pdfs = [str(input_dir)]
+    else:
+        pdfs = sorted(str(p) for p in input_dir.rglob("*.pdf"))
+        if not pdfs:
+            console.print(f"[red]No PDFs found[/red] under: {input_dir}")
+            raise typer.Exit(code=2)
 
     if limit is not None:
         pdfs = pdfs[: int(limit)]
