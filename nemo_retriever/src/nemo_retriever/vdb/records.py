@@ -177,13 +177,10 @@ def _normalize_hit(hit: dict[str, Any]) -> RetrievalHit:
     pdf_basename = path.stem if path is not None else ""
     normalized: RetrievalHit = {
         "text": _first_str(entity.get("text"), entity.get("content"), hit.get("text")),
-        # Keep `metadata` as a native dict on the API boundary. The LanceDB
-        # storage layer JSON-encodes it on write (see `_json_str` in
-        # `vdb/lancedb.py`); we already parse it back on read in
-        # `LanceDB.retrieval`. Re-encoding it here forced every downstream
-        # consumer (`Retriever.query()` callers, the CLI, the SKILL.md jq
-        # recipe) to do its own `fromjson`/`json.loads` — and most didn't,
-        # producing silent `metadata.type == "?"` lookups.
+        # `content_metadata` is already a dict here (parsed by `_mapping` above
+        # from the JSON string LanceDB stores at rest). Do not re-encode — the
+        # API boundary returns native dicts, and downstream consumers (CLI,
+        # SKILL.md jq recipes) rely on that.
         "metadata": content_metadata,
         "source": source_id,
         "source_id": source_id,
