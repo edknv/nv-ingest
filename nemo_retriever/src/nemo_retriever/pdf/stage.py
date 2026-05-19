@@ -151,6 +151,47 @@ def _normalize_page_elements_config(raw: Dict[str, Any]) -> Dict[str, Any]:
     return {k: v for k, v in out.items() if v is not None}
 
 
+_EMPTY_LEAF_VALUES: tuple[Any, ...] = (None, "", [], {}, -1)
+
+
+def _is_empty_leaf(v: Any) -> bool:
+    """Return True for values that are semantically 'no value' in pdf primitives.
+
+    Includes the literal placeholder ``-1`` used across ``content_metadata``,
+    ``text_metadata``, ``source_metadata`` (start_time/end_time, partition_id,
+    access_level, text_location coords, etc.) for "field not applicable".
+    """
+    if v is None or v == "" or v == [] or v == {}:
+        return True
+    if isinstance(v, int) and v == -1 and not isinstance(v, bool):
+        return True
+    return False
+
+
+def _strip_null_empty(obj: Any) -> Any:
+    """Recursively drop empty fields (``None`` / ``""`` / ``[]`` / ``{}`` / ``-1``)
+    from a JSON-shaped object.
+
+    Lists are filtered: empty elements drop out (including lists like
+    ``text_location=[-1, -1, -1, -1]`` that collapse to ``[]``). Dicts that
+    become empty after pruning are themselves dropped from their parent.
+    Used when emitting ``--lean-json`` page-elements sidecars: ~80% of
+    per-record fields are placeholders that inflate bytes for downstream
+    programmatic consumers (e.g. an LLM agent's ``jq`` queries).
+    """
+    if isinstance(obj, dict):
+        pruned: dict[str, Any] = {}
+        for k, v in obj.items():
+            pv = _strip_null_empty(v)
+            if not _is_empty_leaf(pv):
+                pruned[k] = pv
+        return pruned
+    if isinstance(obj, list):
+        pruned_list = [_strip_null_empty(v) for v in obj]
+        return [v for v in pruned_list if not _is_empty_leaf(v)]
+    return obj
+
+
 def _atomic_write_json(path: Path, obj: Any, *, compact: bool = False) -> None:
     """
     Atomically write JSON to disk (write temp file then replace).
@@ -355,6 +396,8 @@ def _write_pdf_extraction_json_outputs(
             "extracted_df_records": records,
             "timing": {"seconds": float(elapsed_seconds)},
         }
+        if compact:
+            payload = _strip_null_empty(payload)
         _atomic_write_json(out_path, payload, compact=compact)
         out_paths.append(out_path)
 
@@ -558,9 +601,13 @@ def render_page_elements(
         False,
         "--compact-json/--no-compact-json",
         help=(
-            "Emit compact (whitespace-free) JSON sidecars instead of the default indented form. "
-            "Default is indented for inspection / diffability; opt in when bytes matter (e.g. when "
-            "the sidecar is consumed programmatically as agent input)."
+            "Emit JSON sidecars optimized for programmatic consumption: whitespace-free encoding "
+            'AND null/empty/placeholder fields (``None``/``""``/``[]``/``{}``/``-1``) recursively '
+            "stripped from each record. ~80%% of per-record fields (image/table/chart/error/debug "
+            "metadata blocks, embedding placeholders, ``text_location=[-1,-1,-1,-1]``) are empty "
+            "for text-only PDF extractions and inflate bytes that downstream consumers (e.g. an "
+            "LLM agent's ``jq`` queries) carry through context. Default off preserves the full "
+            "indented schema for stage-2 consumers and human inspection."
         ),
     ),
     limit: Optional[int] = typer.Option(None, "--limit", help="Optionally limit number of PDFs processed."),

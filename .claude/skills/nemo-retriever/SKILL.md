@@ -15,9 +15,9 @@ The `retriever` CLI indexes a folder of PDFs into LanceDB (`retriever ingest`) a
 TOTAL_PAGES=$(python -c "import pypdfium2, glob; print(sum(len(pypdfium2.PdfDocument(p)) for p in glob.glob('./pdfs/*.pdf')))" 2>/dev/null || echo 0)
 echo "total_pages=$TOTAL_PAGES"
 if [ "$TOTAL_PAGES" -le 800 ]; then
-  retriever ingest ./pdfs/
+  retriever ingest ./pdfs/ --embed-model-name nvidia/llama-nemotron-embed-1b-v2
 else
-  retriever pipeline run ./pdfs/ --run-mode inprocess --method pdfium --no-extract-tables --no-extract-charts --no-extract-page-as-image --evaluation-mode none
+  retriever pipeline run ./pdfs/ --run-mode inprocess --method pdfium --no-extract-tables --no-extract-charts --no-extract-page-as-image --evaluation-mode none --embed-model-name nvidia/llama-nemotron-embed-1b-v2
 fi
 ```
 
@@ -28,12 +28,12 @@ Don't pre-OCR, don't pre-chunk, don't write Python wrappers — the CLI handles 
 ## Query turn — the WHOLE workflow
 
 ```bash
-retriever query "<the user's question>" --top-k 10 2>/dev/null \
+retriever query "<the user's question>" --top-k 10 --embed-model-name nvidia/llama-nemotron-embed-1b-v2 --rerank \
   | tee /tmp/hits.json \
   | jq -r '.[] | "rank=\(.rank // 0) page=\(.page_number) pdf=\(.pdf_basename) type=\(.metadata.type // "?") text=\(.text[:200])"'
 ```
 
-Run that **exactly** as a single pipeline — do not split it into `HITS=$(...)` + `echo "$HITS" | jq ...` (the assignment swallows stdout, the pipe sees nothing, you waste 3 bash calls recovering). `2>/dev/null` drops vLLM/transformers init noise that otherwise bloats the conversation cache. The full JSON sits at `/tmp/hits.json` if you need to re-parse it (`jq '.[6]' /tmp/hits.json`), but in the common case the jq summary above is all you need.
+Run that **exactly** as a single pipeline — do not split it into `HITS=$(...)` + `echo "$HITS" | jq ...` (the assignment swallows stdout, the pipe sees nothing, you waste 3 bash calls recovering). Stdout is clean JSON (model-init logs are silenced at the CLI layer); leave stderr unredirected so real errors surface on the first call. The full JSON sits at `/tmp/hits.json` if you need to re-parse it (`jq '.[6]' /tmp/hits.json`), but in the common case the jq summary above is all you need.
 
 That's your FIRST tool call on every query turn. Do not Read, Glob, Grep, or list PDFs before this — those duplicate what `retriever query` already did.
 
