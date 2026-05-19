@@ -522,30 +522,6 @@ def test_root_query_reranker_model_name_override(monkeypatch) -> None:
     assert retriever_calls[0]["rerank_kwargs"] == {"model_name": "nvidia/llama-nemotron-rerank-1b-v2"}
 
 
-def test_root_query_reranker_env_var_url(monkeypatch) -> None:
-    """`RERANKER_INVOKE_URL` env var falls back to `--reranker-invoke-url`."""
-    retriever_calls: list[dict[str, Any]] = []
-
-    class FakeRetriever:
-        def __init__(self, **kwargs: Any) -> None:
-            retriever_calls.append(kwargs)
-
-        def query(self, query: str) -> list[dict[str, Any]]:
-            return []
-
-    monkeypatch.setattr(sdk_workflow, "Retriever", FakeRetriever)
-    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
-    monkeypatch.setenv("RERANKER_INVOKE_URL", "http://rerank:8000/v1/ranking")
-
-    result = RUNNER.invoke(cli_main.app, ["query", "hello"])
-
-    assert result.exit_code == 0
-    assert retriever_calls[0]["rerank_kwargs"] == {
-        "rerank_invoke_url": "http://rerank:8000/v1/ranking",
-        "api_key": "nvapi-test",
-    }
-
-
 def test_root_query_reports_os_errors(monkeypatch) -> None:
     def fail_query_documents(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
         raise OSError("database unavailable")

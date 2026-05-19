@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import importlib
+import io
 import json
 import logging
 import os
@@ -305,12 +306,14 @@ def query_command(
     # context.
     # Eliminates the ~3-5 KB of vLLM init noise (CUDA-graph capture,
     # safetensors shard progress, etc.) per ``retriever query`` call.
-    stdout_fd, stderr_fd = sys.stdout.fileno(), sys.stderr.fileno()
-    saved_stdout, saved_stderr = os.dup(stdout_fd), os.dup(stderr_fd)
-    buf = tempfile.TemporaryFile(mode="w+b")
+    # When stdout/stderr aren't real OS-level streams (e.g. under pytest's
+    # sys-capture, where they're StringIO), skip the fd dance and run plainly.
     try:
-        os.dup2(buf.fileno(), stdout_fd)
-        os.dup2(buf.fileno(), stderr_fd)
+        stdout_fd, stderr_fd = sys.stdout.fileno(), sys.stderr.fileno()
+    except (AttributeError, OSError, ValueError, io.UnsupportedOperation):
+        stdout_fd = stderr_fd = None
+
+    if stdout_fd is None:
         try:
             hits = query_documents(
                 query,
@@ -324,21 +327,43 @@ def query_command(
                 reranker_backend=reranker_backend,
                 rerank=rerank,
             )
-        finally:
-            sys.stdout.flush()
+        except _ROOT_CLI_ERRORS as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(1) from exc
+    else:
+        saved_stdout, saved_stderr = os.dup(stdout_fd), os.dup(stderr_fd)
+        buf = tempfile.TemporaryFile(mode="w+b")
+        try:
+            os.dup2(buf.fileno(), stdout_fd)
+            os.dup2(buf.fileno(), stderr_fd)
+            try:
+                hits = query_documents(
+                    query,
+                    top_k=top_k,
+                    lancedb_uri=lancedb_uri,
+                    table_name=table_name,
+                    embed_invoke_url=embed_invoke_url,
+                    embed_model_name=embed_model_name,
+                    reranker_invoke_url=reranker_invoke_url,
+                    reranker_model_name=reranker_model_name,
+                    reranker_backend=reranker_backend,
+                    rerank=rerank,
+                )
+            finally:
+                sys.stdout.flush()
+                sys.stderr.flush()
+                os.dup2(saved_stdout, stdout_fd)
+                os.dup2(saved_stderr, stderr_fd)
+                os.close(saved_stdout)
+                os.close(saved_stderr)
+        except _ROOT_CLI_ERRORS as exc:
+            buf.seek(0)
+            sys.stderr.buffer.write(buf.read())
             sys.stderr.flush()
-            os.dup2(saved_stdout, stdout_fd)
-            os.dup2(saved_stderr, stderr_fd)
-            os.close(saved_stdout)
-            os.close(saved_stderr)
-    except _ROOT_CLI_ERRORS as exc:
-        buf.seek(0)
-        sys.stderr.buffer.write(buf.read())
-        sys.stderr.flush()
+            buf.close()
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(1) from exc
         buf.close()
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(1) from exc
-    buf.close()
 
     typer.echo(json.dumps(list(hits), indent=2, sort_keys=True, default=str))
 
