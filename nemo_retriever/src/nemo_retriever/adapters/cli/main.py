@@ -100,23 +100,25 @@ def _run_quiet(work: Callable[[], _T]) -> _T:
     saved_stdout, saved_stderr = os.dup(stdout_fd), os.dup(stderr_fd)
     buf = tempfile.TemporaryFile(mode="w+b")
     try:
-        os.dup2(buf.fileno(), stdout_fd)
-        os.dup2(buf.fileno(), stderr_fd)
         try:
+            os.dup2(buf.fileno(), stdout_fd)
+            os.dup2(buf.fileno(), stderr_fd)
             return work()
         finally:
+            # Always restore; if a dup2 above failed, dup2-ing saved_* back
+            # over the still-original fd is a harmless no-op.
             sys.stdout.flush()
             sys.stderr.flush()
             os.dup2(saved_stdout, stdout_fd)
             os.dup2(saved_stderr, stderr_fd)
-            os.close(saved_stdout)
-            os.close(saved_stderr)
     except BaseException:
         buf.seek(0)
         sys.stderr.buffer.write(buf.read())
         sys.stderr.flush()
         raise
     finally:
+        os.close(saved_stdout)
+        os.close(saved_stderr)
         buf.close()
 
 
