@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -7,6 +8,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 REUSABLE_PRE_COMMIT = "./.github/workflows/reusable-pre-commit.yml"
 REUSABLE_DOCKER_BUILD_AND_TEST = "./.github/workflows/reusable-docker-build-and-test.yml"
+
+pytestmark = pytest.mark.skipif(
+    not WORKFLOWS.exists(),
+    reason="Workflow files are not present in the Docker image test environment.",
+)
 
 
 def _load_workflow(name):
