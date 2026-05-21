@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib
 import io
 import json
@@ -11,7 +12,6 @@ import logging
 import os
 import sys
 import tempfile
-from typing import Callable, TypeVar
 
 from pydantic import ValidationError
 import typer
@@ -66,8 +66,6 @@ for _name, _module, _attr in _LAZY_SUBAPPS:
 
 _ROOT_CLI_ERRORS = (OSError, RuntimeError, ValueError, ValidationError)
 
-_T = TypeVar("_T")
-
 
 def _silence_noisy_libraries() -> None:
     # vLLM/transformers/HuggingFace otherwise emit dozens of INFO-level lines
@@ -82,44 +80,53 @@ def _silence_noisy_libraries() -> None:
     logging.getLogger("transformers").setLevel(logging.ERROR)
 
 
-def _run_quiet(work: Callable[[], _T]) -> _T:
-    """Run ``work`` while capturing stdout AND stderr at the OS fd level
-    (so output from C libraries and child processes is captured too, not
-    just Python prints). On success the captured buffer is discarded. On
-    any exception the buffer is flushed to the real stderr before the
-    exception propagates, so an agent or human can debug the failure.
+@contextlib.contextmanager
+def _quiet_capture():
+    """Capture stdout AND stderr at the OS fd level inside the ``with``
+    block (so output from C libraries and child processes is captured too,
+    not just Python prints). On normal exit the captured buffer is
+    discarded. On any exception the buffer is flushed to the real stderr
+    before the exception propagates, so an agent or human can debug the
+    failure.
 
     When stdout/stderr aren't real OS-level streams (e.g. under pytest's
-    sys-capture, where they're StringIO), skip the fd dance and run
+    sys-capture, where they're StringIO), skip the fd dance and yield
     plainly."""
     try:
         stdout_fd, stderr_fd = sys.stdout.fileno(), sys.stderr.fileno()
     except (AttributeError, OSError, ValueError, io.UnsupportedOperation):
-        return work()
+        yield
+        return
 
-    saved_stdout, saved_stderr = os.dup(stdout_fd), os.dup(stderr_fd)
-    buf = tempfile.TemporaryFile(mode="w+b")
+    saved_stdout = saved_stderr = buf = None
     try:
+        saved_stdout = os.dup(stdout_fd)
+        saved_stderr = os.dup(stderr_fd)
+        buf = tempfile.TemporaryFile(mode="w+b")
         try:
-            os.dup2(buf.fileno(), stdout_fd)
-            os.dup2(buf.fileno(), stderr_fd)
-            return work()
-        finally:
-            # Always restore; if a dup2 above failed, dup2-ing saved_* back
-            # over the still-original fd is a harmless no-op.
-            sys.stdout.flush()
+            try:
+                os.dup2(buf.fileno(), stdout_fd)
+                os.dup2(buf.fileno(), stderr_fd)
+                yield
+            finally:
+                # Always restore; if a dup2 above failed, dup2-ing saved_* back
+                # over the still-original fd is a harmless no-op.
+                sys.stdout.flush()
+                sys.stderr.flush()
+                os.dup2(saved_stdout, stdout_fd)
+                os.dup2(saved_stderr, stderr_fd)
+        except BaseException:
+            buf.seek(0)
+            sys.stderr.buffer.write(buf.read())
             sys.stderr.flush()
-            os.dup2(saved_stdout, stdout_fd)
-            os.dup2(saved_stderr, stderr_fd)
-    except BaseException:
-        buf.seek(0)
-        sys.stderr.buffer.write(buf.read())
-        sys.stderr.flush()
-        raise
+            raise
     finally:
-        os.close(saved_stdout)
-        os.close(saved_stderr)
-        buf.close()
+        if buf is not None:
+            buf.close()
+        if saved_stderr is not None:
+            os.close(saved_stderr)
+        if saved_stdout is not None:
+            os.close(saved_stdout)
 
 
 def _version_callback(value: bool) -> None:
@@ -333,53 +340,50 @@ def ingest_command(
         ),
     ),
 ) -> None:
-    def _run_ingest() -> dict[str, object]:
-        return ingest_documents(
-            documents,
-            input_type=input_type,
-            run_mode=run_mode,
-            ray_address=ray_address,
-            ray_log_to_driver=ray_log_to_driver,
-            lancedb_uri=lancedb_uri,
-            table_name=table_name,
-            overwrite=overwrite,
-            page_elements_invoke_url=page_elements_invoke_url,
-            ocr_invoke_url=ocr_invoke_url,
-            ocr_version=ocr_version,
-            ocr_lang=ocr_lang,
-            graphic_elements_invoke_url=graphic_elements_invoke_url,
-            table_structure_invoke_url=table_structure_invoke_url,
-            table_output_format=table_output_format,
-            embed_invoke_url=embed_invoke_url,
-            embed_model_name=embed_model_name,
-            local_ingest_embed_backend=local_ingest_embed_backend,
-            pdf_extract_workers=pdf_extract_workers,
-            pdf_extract_batch_size=pdf_extract_batch_size,
-            pdf_extract_cpus_per_task=pdf_extract_cpus_per_task,
-            page_elements_workers=page_elements_workers,
-            page_elements_batch_size=page_elements_batch_size,
-            page_elements_cpus_per_actor=page_elements_cpus_per_actor,
-            page_elements_gpus_per_actor=page_elements_gpus_per_actor,
-            ocr_workers=ocr_workers,
-            ocr_batch_size=ocr_batch_size,
-            ocr_cpus_per_actor=ocr_cpus_per_actor,
-            ocr_gpus_per_actor=ocr_gpus_per_actor,
-            table_structure_workers=table_structure_workers,
-            table_structure_batch_size=table_structure_batch_size,
-            table_structure_cpus_per_actor=table_structure_cpus_per_actor,
-            table_structure_gpus_per_actor=table_structure_gpus_per_actor,
-            embed_workers=embed_workers,
-            embed_batch_size=embed_batch_size,
-            embed_cpus_per_actor=embed_cpus_per_actor,
-            embed_gpus_per_actor=embed_gpus_per_actor,
-        )
-
+    if quiet:
+        _silence_noisy_libraries()
+    capture = _quiet_capture() if quiet else contextlib.nullcontext()
     try:
-        if quiet:
-            _silence_noisy_libraries()
-            summary = _run_quiet(_run_ingest)
-        else:
-            summary = _run_ingest()
+        with capture:
+            summary = ingest_documents(
+                documents,
+                input_type=input_type,
+                run_mode=run_mode,
+                ray_address=ray_address,
+                ray_log_to_driver=ray_log_to_driver,
+                lancedb_uri=lancedb_uri,
+                table_name=table_name,
+                overwrite=overwrite,
+                page_elements_invoke_url=page_elements_invoke_url,
+                ocr_invoke_url=ocr_invoke_url,
+                ocr_version=ocr_version,
+                ocr_lang=ocr_lang,
+                graphic_elements_invoke_url=graphic_elements_invoke_url,
+                table_structure_invoke_url=table_structure_invoke_url,
+                table_output_format=table_output_format,
+                embed_invoke_url=embed_invoke_url,
+                embed_model_name=embed_model_name,
+                local_ingest_embed_backend=local_ingest_embed_backend,
+                pdf_extract_workers=pdf_extract_workers,
+                pdf_extract_batch_size=pdf_extract_batch_size,
+                pdf_extract_cpus_per_task=pdf_extract_cpus_per_task,
+                page_elements_workers=page_elements_workers,
+                page_elements_batch_size=page_elements_batch_size,
+                page_elements_cpus_per_actor=page_elements_cpus_per_actor,
+                page_elements_gpus_per_actor=page_elements_gpus_per_actor,
+                ocr_workers=ocr_workers,
+                ocr_batch_size=ocr_batch_size,
+                ocr_cpus_per_actor=ocr_cpus_per_actor,
+                ocr_gpus_per_actor=ocr_gpus_per_actor,
+                table_structure_workers=table_structure_workers,
+                table_structure_batch_size=table_structure_batch_size,
+                table_structure_cpus_per_actor=table_structure_cpus_per_actor,
+                table_structure_gpus_per_actor=table_structure_gpus_per_actor,
+                embed_workers=embed_workers,
+                embed_batch_size=embed_batch_size,
+                embed_cpus_per_actor=embed_cpus_per_actor,
+                embed_gpus_per_actor=embed_gpus_per_actor,
+            )
     except _ROOT_CLI_ERRORS as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
@@ -433,8 +437,8 @@ def query_command(
     rerank = rerank or bool(reranker_invoke_url) or bool(reranker_model_name) or bool(reranker_backend)
     _silence_noisy_libraries()
     try:
-        hits = _run_quiet(
-            lambda: query_documents(
+        with _quiet_capture():
+            hits = query_documents(
                 query,
                 top_k=top_k,
                 lancedb_uri=lancedb_uri,
@@ -446,7 +450,6 @@ def query_command(
                 reranker_backend=reranker_backend,
                 rerank=rerank,
             )
-        )
     except _ROOT_CLI_ERRORS as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc

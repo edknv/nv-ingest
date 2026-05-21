@@ -385,6 +385,7 @@ def _build_ingestor(
     *,
     run_mode: str,
     ray_address: Optional[str],
+    ray_log_to_driver: bool = True,
     file_patterns: list[str],
     input_type: str,
     extract_params: ExtractParams,
@@ -453,6 +454,7 @@ def _build_ingestor(
     ingestor = GraphIngestor(
         run_mode=run_mode,
         ray_address=ray_address,
+        ray_log_to_driver=ray_log_to_driver,
         node_overrides=node_overrides or None,
     )
     ingestor = ingestor.files(file_patterns)
@@ -789,6 +791,17 @@ def run(
     ),
     log_file: Optional[Path] = typer.Option(
         None, "--log-file", path_type=Path, dir_okay=False, rich_help_panel=_PANEL_IO
+    ),
+    quiet: bool = typer.Option(
+        False,
+        "--quiet",
+        help=(
+            "Suppress verbose output on success: progress bars, HuggingFace "
+            "downloads, vLLM init logs, Ray worker stdout, and INFO-level "
+            "pipeline status lines. On error, the fd-captured output is "
+            "flushed to stderr for debugging. Implies --no-ray-log-to-driver."
+        ),
+        rich_help_panel=_PANEL_IO,
     ),
     # --- PDF / document extraction ---------------------------------------
     method: str = typer.Option(
@@ -1225,7 +1238,16 @@ def run(
     """Run the end-to-end graph ingestion pipeline against ``INPUT_PATH``."""
 
     _ = ctx
+    if quiet:
+        # Imported lazily to avoid a cycle (main.py lazy-imports this module).
+        from nemo_retriever.adapters.cli.main import _silence_noisy_libraries
+
+        _silence_noisy_libraries()
     log_handle, original_stdout, original_stderr = _configure_logging(log_file, debug=bool(debug))
+    if quiet:
+        # Hide INFO-level "Building graph pipeline...", "Starting ingestion...",
+        # etc. Errors still propagate.
+        logging.getLogger("nemo_retriever").setLevel(logging.WARNING)
     try:
         if run_mode not in {"batch", "inprocess", "service"}:
             raise ValueError(f"Unsupported --run-mode: {run_mode!r}")
@@ -1245,6 +1267,13 @@ def run(
             )
 
         if run_mode == "batch":
+            # --quiet implies --no-ray-log-to-driver: Ray flushes worker stdout
+            # (HF download lines, etc.) to the driver asynchronously, often
+            # after ingestor.ingest() returns and the fd capture has exited.
+            # The env var is cached at ray import time so we also override the
+            # variable that ultimately reaches ray.init(log_to_driver=...).
+            if quiet:
+                ray_log_to_driver = False
             os.environ["RAY_LOG_TO_DRIVER"] = "1" if ray_log_to_driver else "0"
 
         resolved_vdb_op = str(vdb_op or DEFAULT_VDB_OP)
@@ -1384,6 +1413,7 @@ def run(
         ingestor = _build_ingestor(
             run_mode=run_mode,
             ray_address=ray_address,
+            ray_log_to_driver=ray_log_to_driver,
             file_patterns=file_patterns,
             input_type=input_type,
             extract_params=extract_params,
@@ -1424,7 +1454,13 @@ def run(
         # --- Execute ---------------------------------------------------
         logger.info("Starting ingestion of %s ...", input_path)
         ingest_start = time.perf_counter()
-        raw_result = ingestor.ingest()
+        if quiet:
+            from nemo_retriever.adapters.cli.main import _quiet_capture
+
+            with _quiet_capture():
+                raw_result = ingestor.ingest()
+        else:
+            raw_result = ingestor.ingest()
         ingestion_only_total_time = time.perf_counter() - ingest_start
         ingest_local_results, result_df, ray_download_time, num_rows = _collect_results(run_mode, raw_result)
 
