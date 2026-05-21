@@ -188,6 +188,15 @@ def _count_input_units(result_df) -> int:
     return int(len(result_df.index))
 
 
+def _format_vdb_target(vdb_op: str, vdb_kwargs: Optional[dict[str, Any]]) -> str:
+    """``<uri>/<table>`` for a vdb destination, mirroring the lancedb-specific
+    fallbacks used downstream when those keys are absent from ``vdb_kwargs``."""
+    kw = vdb_kwargs or {}
+    uri = kw.get("uri") or kw.get("lancedb_uri") or ("lancedb" if vdb_op == "lancedb" else "?")
+    table = kw.get("table_name") or kw.get("lancedb_table") or ("nv-ingest" if vdb_op == "lancedb" else "?")
+    return f"{uri}/{table}"
+
+
 def _resolve_file_patterns(input_path: Path, input_type: str) -> list[str]:
     """Resolve input paths to glob patterns, recursing into subdirectories.
 
@@ -1518,6 +1527,7 @@ def run(
                 import ray
 
                 ray.shutdown()
+            typer.echo(f"Pipeline complete: 0 uploadable records from {input_path}.")
             return
 
         if evaluation_mode == "qa":
@@ -1580,6 +1590,10 @@ def run(
                 evaluation_label="QA",
                 evaluation_count=None,
             )
+            typer.echo(
+                f"Pipeline complete (QA): {num_rows} page(s) → {resolved_vdb_op} "
+                f"{_format_vdb_target(resolved_vdb_op, resolved_vdb_kwargs)} ({total_time:.1f}s)."
+            )
             if qa_code != 0:
                 raise typer.Exit(code=qa_code)
             return
@@ -1615,6 +1629,7 @@ def run(
         )
 
         if not ran:
+            no_eval_total_time = time.perf_counter() - ingest_start
             _write_runtime_summary(
                 runtime_metrics_dir,
                 runtime_metrics_prefix,
@@ -1628,7 +1643,7 @@ def run(
                     "ray_download_secs": float(ray_download_time),
                     "vdb_upload_secs": float(vdb_upload_time),
                     "evaluation_secs": 0.0,
-                    "total_secs": float(time.perf_counter() - ingest_start),
+                    "total_secs": float(no_eval_total_time),
                     "evaluation_mode": evaluation_mode,
                     "evaluation_metrics": {},
                     "recall_details": bool(recall_details),
@@ -1639,6 +1654,10 @@ def run(
                 import ray
 
                 ray.shutdown()
+            typer.echo(
+                f"Pipeline complete: {num_rows} page(s) → {resolved_vdb_op} "
+                f"{_format_vdb_target(resolved_vdb_op, resolved_vdb_kwargs)} ({no_eval_total_time:.1f}s)."
+            )
             return
 
         total_time = time.perf_counter() - ingest_start
@@ -1685,6 +1704,14 @@ def run(
             evaluation_metrics=evaluation_metrics,
             evaluation_label=evaluation_label,
             evaluation_count=evaluation_query_count,
+        )
+
+        # Final one-line success report (mirrors `retriever ingest`). Important
+        # for --quiet where print_run_summary's output may otherwise be the
+        # only signal of completion.
+        typer.echo(
+            f"Pipeline complete: {num_rows} page(s) → {resolved_vdb_op} "
+            f"{_format_vdb_target(resolved_vdb_op, resolved_vdb_kwargs)} ({total_time:.1f}s)."
         )
     finally:
         os.sys.stdout = original_stdout
