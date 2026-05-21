@@ -11,6 +11,7 @@ import logging
 import os
 import sys
 import tempfile
+from typing import Callable, TypeVar
 
 from pydantic import ValidationError
 import typer
@@ -64,6 +65,59 @@ for _name, _module, _attr in _LAZY_SUBAPPS:
         logger.debug("Skipping '%s' sub-command (import failed)", _name)
 
 _ROOT_CLI_ERRORS = (OSError, RuntimeError, ValueError, ValidationError)
+
+_T = TypeVar("_T")
+
+
+def _silence_noisy_libraries() -> None:
+    # vLLM/transformers/HuggingFace otherwise emit dozens of INFO-level lines
+    # + tqdm progress bars (CUDA kernel compile, weight download, "Loading
+    # safetensors checkpoint shards", "Capturing CUDA graphs (PIECEWISE)").
+    os.environ.setdefault("VLLM_LOGGING_LEVEL", "ERROR")
+    os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+    os.environ.setdefault("HF_HUB_VERBOSITY", "error")
+    os.environ.setdefault("TQDM_DISABLE", "1")
+    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+    logging.getLogger("vllm").setLevel(logging.ERROR)
+    logging.getLogger("transformers").setLevel(logging.ERROR)
+
+
+def _run_quiet(work: Callable[[], _T]) -> _T:
+    """Run ``work`` while capturing stdout AND stderr at the OS fd level
+    (so output from C libraries and child processes is captured too, not
+    just Python prints). On success the captured buffer is discarded. On
+    any exception the buffer is flushed to the real stderr before the
+    exception propagates, so an agent or human can debug the failure.
+
+    When stdout/stderr aren't real OS-level streams (e.g. under pytest's
+    sys-capture, where they're StringIO), skip the fd dance and run
+    plainly."""
+    try:
+        stdout_fd, stderr_fd = sys.stdout.fileno(), sys.stderr.fileno()
+    except (AttributeError, OSError, ValueError, io.UnsupportedOperation):
+        return work()
+
+    saved_stdout, saved_stderr = os.dup(stdout_fd), os.dup(stderr_fd)
+    buf = tempfile.TemporaryFile(mode="w+b")
+    try:
+        os.dup2(buf.fileno(), stdout_fd)
+        os.dup2(buf.fileno(), stderr_fd)
+        try:
+            return work()
+        finally:
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os.dup2(saved_stdout, stdout_fd)
+            os.dup2(saved_stderr, stderr_fd)
+            os.close(saved_stdout)
+            os.close(saved_stderr)
+    except BaseException:
+        buf.seek(0)
+        sys.stderr.buffer.write(buf.read())
+        sys.stderr.flush()
+        raise
+    finally:
+        buf.close()
 
 
 def _version_callback(value: bool) -> None:
@@ -266,9 +320,19 @@ def ingest_command(
         min=0.0,
         help="GPUs reserved per local embedding actor in batch mode.",
     ),
+    quiet: bool = typer.Option(
+        False,
+        "--quiet",
+        help=(
+            "Suppress verbose progress output (progress bars, HuggingFace "
+            "downloads, vLLM init logs). On success, prints only the final "
+            "summary line. On error, flushes all captured output to stderr "
+            "for debugging."
+        ),
+    ),
 ) -> None:
-    try:
-        summary = ingest_documents(
+    def _run_ingest() -> dict[str, object]:
+        return ingest_documents(
             documents,
             input_type=input_type,
             run_mode=run_mode,
@@ -307,6 +371,13 @@ def ingest_command(
             embed_cpus_per_actor=embed_cpus_per_actor,
             embed_gpus_per_actor=embed_gpus_per_actor,
         )
+
+    try:
+        if quiet:
+            _silence_noisy_libraries()
+            summary = _run_quiet(_run_ingest)
+        else:
+            summary = _run_ingest()
     except _ROOT_CLI_ERRORS as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
@@ -358,34 +429,10 @@ def query_command(
     if embed_invoke_url is None:
         embed_invoke_url = os.environ.get("EMBED_INVOKE_URL") or None
     rerank = rerank or bool(reranker_invoke_url) or bool(reranker_model_name) or bool(reranker_backend)
-    # Quiet noisy library logs during model load. vLLM/transformers/HuggingFace
-    # otherwise emit dozens of INFO-level lines + tqdm progress bars (CUDA kernel
-    # compile, weight download, "Loading safetensors checkpoint shards",
-    # "Capturing CUDA graphs (PIECEWISE)") that swamp the actually-actionable
-    # stderr at ~2-3 KB extra per ``retriever query`` call.
-    os.environ.setdefault("VLLM_LOGGING_LEVEL", "ERROR")
-    os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
-    os.environ.setdefault("HF_HUB_VERBOSITY", "error")
-    os.environ.setdefault("TQDM_DISABLE", "1")
-    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
-    logging.getLogger("vllm").setLevel(logging.ERROR)
-    logging.getLogger("transformers").setLevel(logging.ERROR)
-    # Capture stdout AND stderr at the OS fd level.
-    # On success we discard the buffer and emit just the JSON. On failure we
-    # flush the buffer to stderr so the agent sees actionable diagnostic
-    # context.
-    # Eliminates the ~3-5 KB of vLLM init noise (CUDA-graph capture,
-    # safetensors shard progress, etc.) per ``retriever query`` call.
-    # When stdout/stderr aren't real OS-level streams (e.g. under pytest's
-    # sys-capture, where they're StringIO), skip the fd dance and run plainly.
+    _silence_noisy_libraries()
     try:
-        stdout_fd, stderr_fd = sys.stdout.fileno(), sys.stderr.fileno()
-    except (AttributeError, OSError, ValueError, io.UnsupportedOperation):
-        stdout_fd = stderr_fd = None
-
-    if stdout_fd is None:
-        try:
-            hits = query_documents(
+        hits = _run_quiet(
+            lambda: query_documents(
                 query,
                 top_k=top_k,
                 lancedb_uri=lancedb_uri,
@@ -397,43 +444,10 @@ def query_command(
                 reranker_backend=reranker_backend,
                 rerank=rerank,
             )
-        except _ROOT_CLI_ERRORS as exc:
-            typer.echo(f"Error: {exc}", err=True)
-            raise typer.Exit(1) from exc
-    else:
-        saved_stdout, saved_stderr = os.dup(stdout_fd), os.dup(stderr_fd)
-        buf = tempfile.TemporaryFile(mode="w+b")
-        try:
-            os.dup2(buf.fileno(), stdout_fd)
-            os.dup2(buf.fileno(), stderr_fd)
-            try:
-                hits = query_documents(
-                    query,
-                    top_k=top_k,
-                    lancedb_uri=lancedb_uri,
-                    table_name=table_name,
-                    embed_invoke_url=embed_invoke_url,
-                    embed_model_name=embed_model_name,
-                    reranker_invoke_url=reranker_invoke_url,
-                    reranker_model_name=reranker_model_name,
-                    reranker_backend=reranker_backend,
-                    rerank=rerank,
-                )
-            finally:
-                sys.stdout.flush()
-                sys.stderr.flush()
-                os.dup2(saved_stdout, stdout_fd)
-                os.dup2(saved_stderr, stderr_fd)
-                os.close(saved_stdout)
-                os.close(saved_stderr)
-        except _ROOT_CLI_ERRORS as exc:
-            buf.seek(0)
-            sys.stderr.buffer.write(buf.read())
-            sys.stderr.flush()
-            buf.close()
-            typer.echo(f"Error: {exc}", err=True)
-            raise typer.Exit(1) from exc
-        buf.close()
+        )
+    except _ROOT_CLI_ERRORS as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
 
     typer.echo(json.dumps(list(hits), indent=2, sort_keys=True, default=str))
 
