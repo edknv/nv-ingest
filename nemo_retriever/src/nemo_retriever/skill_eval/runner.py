@@ -427,6 +427,7 @@ def _populate_codex_tokens(
     ``output_tokens`` here folds in ``reasoning_output_tokens`` so the column
     reflects everything the model emitted, matching Claude's accounting.
     """
+
     def d(key: str) -> int:
         return max(0, current_totals.get(key, 0) - prior_totals.get(key, 0))
 

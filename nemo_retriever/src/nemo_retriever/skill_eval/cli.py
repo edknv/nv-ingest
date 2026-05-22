@@ -517,8 +517,7 @@ def rescore_command(
         else:
             still_failed += 1
             typer.echo(
-                f"  {path.name}: entry_id={result.entry_id} still failed "
-                f"(error={result.judge_error or 'unknown'})"
+                f"  {path.name}: entry_id={result.entry_id} still failed " f"(error={result.judge_error or 'unknown'})"
             )
 
     typer.echo(f"\nRescored {rescored}; unscorable {unscorable}; still failed {still_failed}.")
