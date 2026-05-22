@@ -396,7 +396,7 @@ def _needs_rescore(trial: dict[str, Any]) -> bool:
     if judge_error in UNSCORABLE_JUDGE_ERRORS:
         return False
     score = trial.get("judge_score")
-    if score is None or score == 0:
+    if score is None:
         return True
     if judge_error:
         return True
