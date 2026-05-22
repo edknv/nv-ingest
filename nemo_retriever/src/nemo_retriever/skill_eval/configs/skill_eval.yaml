@@ -54,9 +54,16 @@ pdf_dirs: {}
 testdata_prefixes: []
 
 # ---------------------------------------------------------------------------
-# Agent model and per-trial limits
+# Agent selection, model, and per-trial limits
 # ---------------------------------------------------------------------------
-agent_model: claude-opus-4-7
+# `agent` must be `claude` or `codex`. Override per run with --agent.
+agent: claude
+agent_models:
+  claude: claude-opus-4-7
+  codex: gpt-5.5
+# Back-compat fallback: if set, this overrides agent_models.<agent> unless
+# --model is passed. Leave unset for per-agent defaults.
+# agent_model: claude-opus-4-7
 per_trial_budget_usd: 5.0
 per_trial_timeout_s: 600
 per_trial_workdir_root: /tmp/skill_eval
@@ -92,3 +99,15 @@ judge:
   api_key_env: NVIDIA_API_KEY
   temperature: 0.1
   max_tokens: 4096
+
+# ---------------------------------------------------------------------------
+# Tool-use summarizer
+# ---------------------------------------------------------------------------
+# After each agent/domain/condition session, the harness reads the agent session
+# JSONL and asks Claude to narrate what tools were called and what strategy was
+# used. The result is stamped onto the setup-turn TrialResult and rendered in
+# session_summary.md. Shells out to `claude --print`, so it reuses Claude Code
+# auth and does not require a separate API key. Set enabled: false to skip it.
+summarizer:
+  enabled: true
+  model: claude-opus-4-7
