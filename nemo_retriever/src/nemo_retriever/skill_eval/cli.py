@@ -403,12 +403,21 @@ def _needs_rescore(trial: dict[str, Any]) -> bool:
     return False
 
 
-def _load_trial(path: Path) -> tuple[dict[str, Any], TrialResult]:
-    """Load a trial JSON and reconstruct a ``TrialResult``."""
-    data = json.loads(path.read_text(encoding="utf-8"))
-    known = {f.name for f in fields(TrialResult)}
-    ctor_kwargs = {k: v for k, v in data.items() if k in known}
-    return data, TrialResult(**ctor_kwargs)
+def _load_trial(path: Path) -> tuple[dict[str, Any], TrialResult] | None:
+    """Load a trial JSON and reconstruct a ``TrialResult``.
+
+    Returns ``None`` (and logs a warning) if the file is missing, truncated,
+    or otherwise unparseable, so callers can skip individual corrupt trials
+    without aborting the whole run.
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        known = {f.name for f in fields(TrialResult)}
+        ctor_kwargs = {k: v for k, v in data.items() if k in known}
+        return data, TrialResult(**ctor_kwargs)
+    except (OSError, ValueError, TypeError) as exc:
+        typer.echo(f"  {path.name}: skip (corrupt trial: {exc})", err=True)
+        return None
 
 
 def _iter_trial_files(session_dir: Path) -> list[Path]:
@@ -478,7 +487,10 @@ def rescore_command(
     trial_files = _iter_trial_files(session_dir)
     candidates = []
     for path in trial_files:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        loaded = _load_trial(path)
+        if loaded is None:
+            continue
+        data, _ = loaded
         if data.get("is_setup"):
             continue
         if force or _needs_rescore(data):
@@ -493,7 +505,10 @@ def rescore_command(
     unscorable = 0
     still_failed = 0
     for path in candidates:
-        raw, result = _load_trial(path)
+        loaded = _load_trial(path)
+        if loaded is None:
+            continue
+        raw, result = loaded
         entry = entries_by_id.get(result.entry_id)
         if entry is None:
             typer.echo(f"  {path.name}: skip (entry_id={result.entry_id} not in manifest)")
@@ -524,7 +539,10 @@ def rescore_command(
 
     results_by_key: dict[tuple[str, str, str], list[TrialResult]] = defaultdict(list)
     for path in trial_files:
-        _, result = _load_trial(path)
+        loaded = _load_trial(path)
+        if loaded is None:
+            continue
+        _, result = loaded
         results_by_key[(result.agent, result.condition, result.domain)].append(result)
 
     agent = str(cfg.get("agent") or next((r.agent for rows in results_by_key.values() for r in rows), "claude"))
