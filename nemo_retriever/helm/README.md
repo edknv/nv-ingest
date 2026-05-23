@@ -277,10 +277,10 @@ pair gated on three conditions ALL holding:
 > retriever-service won't call them unless you wire your pipeline to use them.
 > For 26.05, prefer the [minimal install](#recommended-minimal-install-2605) overrides.
 
-**Charts and captioning.** Charts and infographics use **page_elements**
+**Charts and captioning (26.05).** Charts and infographics use **page_elements**
 and **ocr** (no `graphic_elements` operator NIM in this chart). For image
 captioning, set `nimOperator.nemotron_3_nano_omni_30b_a3b_reasoning.enabled=true` — see
-[Image captioning](https://docs.nvidia.com/nemo/retriever/latest/extraction/prerequisites-support-matrix/#image-captioning).
+[Image captioning (26.05)](https://docs.nvidia.com/nemo/retriever/latest/extraction/prerequisites-support-matrix/#image-captioning-2605).
 
 ### Persistence
 
@@ -634,10 +634,10 @@ sanity check before opening Grafana.
 
 See [Deployment options — Air-gapped and disconnected deployment](https://docs.nvidia.com/nemo/retriever/latest/extraction/deployment-options/#air-gapped-deployment) for overview and workflow. Chart-specific reference for mirroring:
 
-### Container images to mirror (chart defaults)
+### Container images to mirror (26.05 chart defaults)
 
-Verify tags on the Git branch or tag you ship (for example `main` or a
-release tag). Defaults below match
+Verify tags on the Git branch or tag you ship (for example `26.05` or
+`26.05-RC1`). Defaults below match
 [`values.yaml`](./values.yaml) on the current chart.
 
 | Role | `nimOperator` key | Default image (`repository:tag`) |
@@ -696,7 +696,7 @@ nimOperator:
 - For **offline captioning**, enable
   `nimOperator.nemotron_3_nano_omni_30b_a3b_reasoning` and point the pipeline
   caption endpoint at the in-cluster NIM URL (see
-  [Image captioning](https://docs.nvidia.com/nemo/retriever/latest/extraction/prerequisites-support-matrix/#image-captioning)).
+  [Image captioning (26.05)](https://docs.nvidia.com/nemo/retriever/latest/extraction/prerequisites-support-matrix/#image-captioning-2605)).
 
 ### Mirroring pattern
 

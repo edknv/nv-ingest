@@ -11,6 +11,7 @@ Minimal copy of ffmpeg/ffprobe and MediaInterface semantics from
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import math
@@ -435,3 +436,37 @@ class MediaInterface(_LoaderInterface):
 def is_media_available() -> bool:
     """True if the full audio/video media pipeline can run."""
     return is_ffmpeg_available() and is_ffprobe_cli_available()
+
+
+@contextlib.contextmanager
+def ensure_media_on_disk(path: str, data: bytes | None):
+    """Yield a filesystem path that ffmpeg can read.
+
+    When *path* already exists on disk, yields it unchanged.  Otherwise
+    spills *data* to a temporary file (preserving the original extension
+    so ffmpeg probes the right container format) and yields that temp path.
+    The temp file is cleaned up on exit.
+    """
+    if Path(path).is_file():
+        yield path
+        return
+
+    if data is None:
+        raise FileNotFoundError(f"Media file not found on disk and no in-memory bytes provided: {path}")
+
+    suffix = Path(path).suffix or ""
+    tmp = tempfile.NamedTemporaryFile(
+        suffix=suffix,
+        prefix="retriever_media_",
+        delete=False,
+    )
+    try:
+        tmp.write(data)
+        tmp.flush()
+        tmp.close()
+        yield tmp.name
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
