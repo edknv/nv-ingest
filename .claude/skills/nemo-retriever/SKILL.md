@@ -9,24 +9,7 @@ The `retriever` CLI indexes a folder of PDFs into LanceDB (`retriever ingest`) a
 
 ## Install (if `retriever` is missing)
 
-If `command -v retriever` returns nothing, install the NeMo Retriever Library with uv before running anything else. This skill's default workflow embeds locally on GPU via the bundled `nvidia/llama-nemotron-embed-1b-v2` model, so use the local-GPU recipe from `nemo_retriever/README.md`:
-
-```bash
-uv python install 3.12
-uv venv retriever --python 3.12
-VENV=$PWD/retriever
-#[ -d NeMo-Retriever ] || git clone https://github.com/NVIDIA/NeMo-Retriever.git
-#cd NeMo-Retriever/nemo_retriever
-export SOURCE_DATE_EPOCH=$(date +%s)
-uv pip install --python "$VENV/bin/python" "torch~=2.11.0" "torchvision>=0.26.0,<0.27" -i https://download.pytorch.org/whl/cu130
-uv pip install --python "$VENV/bin/python" ".[local]"
-echo "RETRIEVER_VENV=$VENV"   # record this absolute path — substitute it for <RETRIEVER_VENV> in every later example
-```
-
-Notes:
-- Only add further extras (`[nemotron-parse]`, `[multimedia]`, `[llm]`) when a later step actually demands one — append them inside the brackets, e.g. `".[local,multimedia]"`.
-
-In the examples below, substitute `<RETRIEVER_VENV>` with the absolute path printed by the install block's final `echo` (e.g. `/workspace/retriever`).
+If `command -v retriever` returns nothing, follow `references/install.md` to install the NeMo Retriever Library before proceeding. It prints `RETRIEVER_VENV=<path>`; substitute that path for `<RETRIEVER_VENV>` in every example below.
 
 ## Setup turn (when `./lancedb/nv-ingest.lance` doesn't exist)
 
@@ -45,7 +28,7 @@ Don't pre-OCR, don't pre-chunk, don't write Python wrappers — the CLI handles 
 ```bash
 <RETRIEVER_VENV>/bin/retriever query "<the user's question>" --top-k 10 --embed-model-name nvidia/llama-nemotron-embed-1b-v2 --rerank \
   | tee /tmp/hits.json \
-  | <RETRIEVER_VENV>/bin/python -c "import json,sys; [print(f'rank={h.get(\"rank\",0)} page={h[\"page_number\"]} pdf={h[\"pdf_basename\"]} type={h.get(\"metadata\",{}).get(\"type\",\"?\")} text={h[\"text\"][:200]}') for h in json.load(sys.stdin)]"
+  | <RETRIEVER_VENV>/bin/python -c "import json,sys; [print(f'rank={h.get(\"rank\",0)} page={h[\"page_number\"]} pdf={h[\"pdf_basename\"]} type={h.get(\"metadata\",{}).get(\"type\",\"?\")} text={h[\"text\"]}') for h in json.load(sys.stdin)]"
 ```
 
 Run that **exactly** as a single pipeline — do not split it into `HITS=$(...)` + `echo "$HITS" | <RETRIEVER_VENV>/bin/python -c ...` (the assignment swallows stdout, the pipe sees nothing, you waste 3 bash calls recovering). Stdout is clean JSON (model-init logs are silenced at the CLI layer); leave stderr unredirected so real errors surface on the first call. The full JSON sits at `/tmp/hits.json` if you need to re-parse it (`<RETRIEVER_VENV>/bin/python -c "import json; print(json.load(open('/tmp/hits.json'))[6])"` for the rank-7 hit), but in the common case the summary above is all you need.
