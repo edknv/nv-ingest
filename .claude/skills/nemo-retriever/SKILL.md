@@ -33,6 +33,32 @@ Don't pre-OCR, don't pre-chunk, don't write Python wrappers — the CLI handles 
 
 ## Query turn — the WHOLE workflow
 
+### Filename fast path (try BEFORE `retriever query`)
+
+When the query literally names a PDF in `./pdfs/`, skip `retriever query`. Direct pdfium extraction on the named file is faster and avoids semantic-search misses: the right doc is given, and pages can be ranked by query-token overlap against the file's text.
+
+**Trigger:** some PDF basename in `./pdfs/` (stem ≥6 chars, with or without the `.pdf` extension) appears verbatim, case-insensitive, as a substring of the query. It fires when the user pastes or quotes the filename — including paths, basenames-with-extension, or bare stems that match a real file. It does NOT fire when the user describes a document semantically without quoting a filename (paraphrased titles, entity names, document types, or even the same words separated differently from how the file is named). Those flow through the standard `retriever query` workflow below.
+
+Run this single Bash call to detect, extract, rank, and report — atomically. It always runs FIRST on a query turn:
+
+```bash
+<RETRIEVER_VENV>/bin/python <skill_dir>/scripts/filename_fast_path.py "<the user's question>"
+```
+
+`<skill_dir>` is the "Base directory for this skill" printed when the skill loads (e.g. `/path/to/.claude/skills/nemo-retriever`). Quote the question. The script reads `./pdfs/` from the current workdir and writes per-PDF extraction sidecars under `/tmp/pdf_text/`. Source: `scripts/filename_fast_path.py` next to this file.
+
+Read stdout. **Three outcomes:**
+
+- `NO_MATCH` — no literal basename in the query. Fall through to the standard `retriever query` workflow below as if this section didn't exist.
+- `NO_TEXT` — matched file is image-only / pdfium got no text. Also fall through.
+- A JSON object with `"ranking"` followed by `---TOP_PAGE_TEXT---` and the top page's raw text. That's the fast-path hit — write `./output.json` directly:
+  - `ranked_retrieved`: copy the `"ranking"` entries verbatim (`{doc_id, page_number, rank}`, 1-indexed pages). Apply the 0-/1-indexed page adjustment from the task description as usual (`page_number - 1` if the task says 0-indexed).
+  - `final_answer`: synthesize from the printed `TOP_PAGE_TEXT` following the existing rules (exact number/name/date; one paragraph; honest "not in the retrieved pages" if the fact genuinely isn't there). No chart/image hedging — pdfium extracts text only.
+
+  Then **Write `./output.json` and STOP.** Fast-path total: 2 tool calls (this Bash + Write). Do NOT also call `retriever query` — it's mutually exclusive.
+
+### Standard path: `retriever query`
+
 ```bash
 <RETRIEVER_VENV>/bin/retriever query "<the user's question>" --top-k 10 --embed-model-name nvidia/llama-nemotron-embed-1b-v2 --rerank \
   | tee /tmp/hits.json \
@@ -41,7 +67,7 @@ Don't pre-OCR, don't pre-chunk, don't write Python wrappers — the CLI handles 
 
 Run that **exactly** as a single pipeline — do not split it into `HITS=$(...)` + `echo "$HITS" | <RETRIEVER_VENV>/bin/python -c ...` (the assignment swallows stdout, the pipe sees nothing, you waste 3 bash calls recovering). Stdout is clean JSON (model-init logs are silenced at the CLI layer); leave stderr unredirected so real errors surface on the first call. The full JSON sits at `/tmp/hits.json` if you need to re-parse it (`<RETRIEVER_VENV>/bin/python -c "import json; print(json.load(open('/tmp/hits.json'))[6])"` for the rank-7 hit), but in the common case the summary above is all you need.
 
-That's your FIRST tool call on every query turn. Do not Read, Glob, Grep, or list PDFs before this — those duplicate what `retriever query` already did.
+This is your tool call when the fast path above printed `NO_MATCH` or `NO_TEXT`. Do not Read, Glob, Grep, or `ls` separately — the fast path's Bash call already listed `./pdfs/`, and `retriever query` indexes the content.
 
 **No narration between tool calls.** Do not write "Let me search…", "I'll now analyze…", "The retriever returned…", or any other commentary. Every assistant token you emit between the `retriever query` Bash call and the `Write` of `./output.json` becomes input tokens (and cached input tokens) for every subsequent turn in this session — quadratic cost. Go straight from reading the summary to writing the JSON file. The only assistant text in a query turn should be the tool calls themselves.
 
@@ -71,7 +97,7 @@ After writing the file, STOP. No print, no summary, no further tool calls.
 
 ### Hard limits (cost discipline)
 
-- ONE `retriever query` per turn. ONE optional targeted text-extract on the rank-1 PDF if the chunks miss the asked-for fact. That's the budget — it is a hard cap, not a soft preference.
+- ONE call from {filename fast path, `retriever query`} per turn — they are mutually exclusive. The fast path's all-in-one Bash call counts as that one call; if it hits, write `output.json` and stop (2 tool calls total). If it printed `NO_MATCH`/`NO_TEXT`, run `retriever query` once and then take ONE optional targeted `retriever pdf stage page-elements` text-extract on the rank-1 PDF if the chunks miss the asked-for fact. That's the budget — it is a hard cap, not a soft preference.
 - After your 2nd tool call, write `final_answer` with what you have and STOP. If both calls left the asked-for fact unresolved, write `final_answer` that **explicitly states the retrieved pages don't contain the requested fact** (naming the closest related content if any) — **do not run more tool calls hunting for it, and do not extrapolate a plausible value.** Long-running query turns (5+ tool calls, 1M+ cache-read tokens) cost ~5× a disciplined turn and usually still produce the wrong answer.
 - Don't read whole PDFs.
 - Don't make speculative Read/Glob/Grep calls "to confirm". The retriever already found the relevant pages — trust the ranking.
