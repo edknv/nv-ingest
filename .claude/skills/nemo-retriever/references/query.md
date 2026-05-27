@@ -51,10 +51,10 @@ Top-3, custom table:
   - `metadata` — JSON string with `type` (`text` / `table` / `chart` / `image`)
     and, where applicable, a normalised `bbox_xyxy_norm`.
 
-Pipe to `jq` for filtering, e.g. only chart hits:
+Pipe through Python for filtering, e.g. only chart hits:
 
 ```bash
-<RETRIEVER_VENV>/bin/retriever query "gadget costs" | jq '[.[] | select(.metadata | fromjson.type == "chart")]'
+<RETRIEVER_VENV>/bin/retriever query "gadget costs" | <RETRIEVER_VENV>/bin/python -c 'import json,sys; hits=json.load(sys.stdin); print(json.dumps([h for h in hits if json.loads(h["metadata"]).get("type")=="chart"], indent=2))'
 ```
 
 ## Key flags
