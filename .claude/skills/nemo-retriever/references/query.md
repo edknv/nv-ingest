@@ -23,13 +23,13 @@ If flags below look stale, re-check `retriever query --help`.
 Top-10 search against the default table:
 
 ```bash
-retriever query "what is in chart 1?"
+<RETRIEVER_VENV>/bin/retriever query "what is in chart 1?"
 ```
 
 Top-3, custom table:
 
 ```bash
-retriever query "average frequency ranges for tweeters" \
+<RETRIEVER_VENV>/bin/retriever query "average frequency ranges for tweeters" \
   --top-k 3 \
   --lancedb-uri ./my-lancedb \
   --table-name my-corpus
@@ -54,7 +54,7 @@ retriever query "average frequency ranges for tweeters" \
 Pipe to `jq` for filtering, e.g. only chart hits:
 
 ```bash
-retriever query "gadget costs" | jq '[.[] | select(.metadata | fromjson.type == "chart")]'
+<RETRIEVER_VENV>/bin/retriever query "gadget costs" | jq '[.[] | select(.metadata | fromjson.type == "chart")]'
 ```
 
 ## Key flags
