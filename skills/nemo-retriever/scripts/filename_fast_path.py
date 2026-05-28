@@ -1,8 +1,8 @@
 """Query-turn filename fast path for the nemo-retriever skill.
 
 Reads `./pdfs/` from the current working directory. If the query string
-literally contains any PDF basename (with or without the `.pdf` extension,
-stem ≥6 chars, case-insensitive), runs `retriever pdf stage page-elements`
+literally contains any PDF basename **including the `.pdf` extension**
+(stem ≥6 chars, case-insensitive), runs `retriever pdf stage page-elements`
 on each matched file via pdfium, ranks pages by query-token frequency,
 and emits a top-10 ranking + the top page's raw text.
 
@@ -47,14 +47,16 @@ STOPWORDS = frozenset(
 
 
 def find_matches(query_lower: str, basenames: list[str]) -> list[str]:
-    """Return PDF basenames whose name (with or without .pdf) appears verbatim
-    in the lowercased query. Skip stems shorter than MIN_STEM_LEN."""
+    """Return PDF basenames whose full name (including the `.pdf` extension)
+    appears verbatim in the lowercased query. Skip stems shorter than MIN_STEM_LEN.
+    Requiring the extension avoids false positives on common English words that
+    happen to appear as PDF stems (e.g. `report.pdf`, `market.pdf`)."""
     matches = []
     for name in basenames:
         stem, ext = os.path.splitext(name)
         if ext.lower() != ".pdf" or len(stem) < MIN_STEM_LEN:
             continue
-        if name.lower() in query_lower or stem.lower() in query_lower:
+        if name.lower() in query_lower:
             matches.append(name)
     return matches
 
@@ -83,7 +85,7 @@ def sidecar_path(pdf_name: str) -> str | None:
     stem = os.path.splitext(pdf_name)[0]
     candidates = (
         f"{EXTRACT_OUT}/{pdf_name}.pdf_extraction.json",
-        f"{EXTRACT_OUT}/{stem}.pdf.pdf_extraction.json",
+        f"{EXTRACT_OUT}/{stem}.pdf_extraction.json",
     )
     for c in candidates:
         if os.path.exists(c):
@@ -92,7 +94,8 @@ def sidecar_path(pdf_name: str) -> str | None:
 
 
 def page_records(sidecar: str) -> list[dict]:
-    data = json.load(open(sidecar))
+    with open(sidecar) as fh:
+        data = json.load(fh)
     if isinstance(data, list):
         return data
     if isinstance(data, dict):
@@ -138,7 +141,11 @@ def main() -> int:
     ql = query.lower()
     retriever_bin = os.path.join(os.path.dirname(sys.executable), "retriever")
 
-    basenames = sorted(p for p in os.listdir(PDF_DIR) if p.lower().endswith(".pdf"))
+    try:
+        basenames = sorted(p for p in os.listdir(PDF_DIR) if p.lower().endswith(".pdf"))
+    except (FileNotFoundError, PermissionError) as exc:
+        print(f"ERROR: cannot list {PDF_DIR}: {exc}", file=sys.stderr)
+        return 1
     matches = find_matches(ql, basenames)
     if not matches:
         print("NO_MATCH")
