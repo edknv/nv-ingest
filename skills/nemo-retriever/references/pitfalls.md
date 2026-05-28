@@ -15,18 +15,6 @@ Do NOT keep doing text-extract calls across many PDFs to hunt — that exhausts 
 
 For an unlisted subcommand: `<RETRIEVER_VENV>/bin/retriever <subcommand> --help`.
 
-## Keyword/regex search across the corpus
-
-If you need exact text matches that semantic `retriever query` may have skipped — e.g. "find every mention of 'mRNA-1273' across all PDFs" — use:
-
-```bash
-<RETRIEVER_VENV>/bin/python <skill_dir>/scripts/grep_corpus.py "<regex>" [--max-hits 50]
-```
-
-It scans the LanceDB table the retriever already built — no PDF re-extraction. Output is `<pdf>:p<page>:<type>:  ...<snippet>...` per hit; `NO_MATCH` if nothing. Counts against the same "one optional follow-up call" budget as the targeted text-extract (mutually exclusive — pick one).
-
-Don't reach for `pdftotext`, `pdftohtml`, or `pdfgrep` — they're system tools that aren't guaranteed installed on the user's machine. The retriever venv bundles pdfium and `lancedb`; `grep_corpus.py` and `retriever pdf stage page-elements --method pdfium` cover the same use cases without that dependency.
-
 ## Failure modes (expected, not errors)
 
 - **First `ingest` takes ~60s+** — vLLM warmup. Expected.
