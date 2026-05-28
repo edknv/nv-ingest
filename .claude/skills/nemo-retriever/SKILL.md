@@ -95,6 +95,18 @@ When both a chart hit and a text hit cover the same fact, always prefer the text
 
 After writing the file, STOP. No print, no summary, no further tool calls.
 
+### Keyword search across the corpus
+
+If you need exact text matches the semantic `retriever query` may have missed:
+
+```bash
+<RETRIEVER_VENV>/bin/python <skill_dir>/scripts/grep_corpus.py "<regex>" [--max-hits 50]
+```
+
+It scans the LanceDB table the retriever already built — no PDF re-extraction. Output is `<pdf>:p<page>:<type>:  ...<snippet>...` per hit; `NO_MATCH` if nothing matches. Counts against the same "one optional follow-up call" budget as the targeted text-extract (mutually exclusive — pick one).
+
+Don't reach for `pdftotext`, `pdftohtml`, or `pdfgrep` — they're system tools that aren't guaranteed installed on the user's machine. The retriever venv bundles pdfium and `lancedb`; `grep_corpus.py` and `retriever pdf stage page-elements --method pdfium` cover the same use cases without that dependency.
+
 ### Hard limits (cost discipline)
 
 - ONE call from {filename fast path, `retriever query`} per turn — they are mutually exclusive. The fast path's all-in-one Bash call counts as that one call; if it hits, write `output.json` and stop (2 tool calls total). If it printed `NO_MATCH`/`NO_TEXT`, run `retriever query` once and then take ONE optional targeted `retriever pdf stage page-elements` text-extract on the rank-1 PDF if the chunks miss the asked-for fact. That's the budget — it is a hard cap, not a soft preference.

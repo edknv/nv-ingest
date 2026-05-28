@@ -63,9 +63,18 @@ def extract_pages(retriever_bin: str, matches: list[str]) -> None:
     os.makedirs(EXTRACT_OUT, exist_ok=True)
     for m in matches:
         subprocess.run(
-            [retriever_bin, "pdf", "stage", "page-elements", f"{PDF_DIR}/{m}",
-             "--method", "pdfium", "--json-output-dir", EXTRACT_OUT,
-             "--compact-json"],
+            [
+                retriever_bin,
+                "pdf",
+                "stage",
+                "page-elements",
+                f"{PDF_DIR}/{m}",
+                "--method",
+                "pdfium",
+                "--json-output-dir",
+                EXTRACT_OUT,
+                "--compact-json",
+            ],
             check=True,
         )
 
@@ -94,14 +103,12 @@ def page_records(sidecar: str) -> list[dict]:
 def page_text(rec: dict) -> str:
     txt = rec.get("text") or rec.get("content") or ""
     if not txt and isinstance(rec.get("primitives"), list):
-        txt = " ".join(p.get("text", "") for p in rec["primitives"]
-                       if isinstance(p, dict))
+        txt = " ".join(p.get("text", "") for p in rec["primitives"] if isinstance(p, dict))
     return txt or ""
 
 
 def tokenize(query: str) -> list[str]:
-    return [t for t in re.split(r"[^a-z0-9]+", query.lower())
-            if t and t not in STOPWORDS and len(t) > 2]
+    return [t for t in re.split(r"[^a-z0-9]+", query.lower()) if t and t not in STOPWORDS and len(t) > 2]
 
 
 def rank_pages(matches: list[str], toks: list[str]) -> list[tuple[int, int, str, str]]:
@@ -143,8 +150,7 @@ def main() -> int:
         print("NO_TEXT")
         return 0
 
-    ranking = [{"doc_id": s[2], "page_number": s[1], "rank": i + 1}
-               for i, s in enumerate(scored[:TOP_K])]
+    ranking = [{"doc_id": s[2], "page_number": s[1], "rank": i + 1} for i, s in enumerate(scored[:TOP_K])]
     print(json.dumps({"ranking": ranking}))
     print("---TOP_PAGE_TEXT---")
     print(scored[0][3][:TOP_PAGE_TEXT_CHARS])
