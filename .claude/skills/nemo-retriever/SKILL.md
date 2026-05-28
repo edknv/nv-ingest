@@ -62,10 +62,10 @@ Read stdout. **Three outcomes:**
 ```bash
 <RETRIEVER_VENV>/bin/retriever query "<the user's question>" --top-k 10 --embed-model-name nvidia/llama-nemotron-embed-1b-v2 --rerank \
   | tee /tmp/hits.json \
-  | <RETRIEVER_VENV>/bin/python -c "import json,sys; [print(f'rank={h.get(\"rank\",0)} page={h[\"page_number\"]} pdf={h[\"pdf_basename\"]} type={h.get(\"metadata\",{}).get(\"type\",\"?\")} text={h[\"text\"][:200]}') for h in json.load(sys.stdin)]"
+  | <RETRIEVER_VENV>/bin/python -c "import json,sys; [print(f'rank={h.get(\"rank\",0)} page={h[\"page_number\"]} pdf={h[\"pdf_basename\"]} type={h.get(\"metadata\",{}).get(\"type\",\"?\")}') for h in json.load(sys.stdin)]"
 ```
 
-Run that **exactly** as a single pipeline — do not split it into `HITS=$(...)` + `echo "$HITS" | <RETRIEVER_VENV>/bin/python -c ...` (the assignment swallows stdout, the pipe sees nothing, you waste 3 bash calls recovering). Stdout is clean JSON (model-init logs are silenced at the CLI layer); leave stderr unredirected so real errors surface on the first call. The full JSON sits at `/tmp/hits.json` if you need to re-parse it (`<RETRIEVER_VENV>/bin/python -c "import json; print(json.load(open('/tmp/hits.json'))[6])"` for the rank-7 hit), but in the common case the summary above is all you need.
+Run that **exactly** as a single pipeline — do not split it into `HITS=$(...)` + `echo "$HITS" | <RETRIEVER_VENV>/bin/python -c ...` (the assignment swallows stdout, the pipe sees nothing, you waste 3 bash calls recovering). Stdout is clean JSON (model-init logs are silenced at the CLI layer); leave stderr unredirected so real errors surface on the first call. The summary above lists only rank/page/pdf/type — to read hit text for synthesizing `final_answer`, parse `/tmp/hits.json` directly. The top hit's text is one one-liner away: `<RETRIEVER_VENV>/bin/python -c "import json; print(json.load(open('/tmp/hits.json'))[0]['text'])"` (or `[i]` for the rank-(i+1) hit). Fetch only what you need — pulling all 10 hits' text into context inflates cached prompt size on every subsequent turn.
 
 This is your tool call when the fast path above printed `NO_MATCH` or `NO_TEXT`. Do not Read, Glob, Grep, or `ls` separately — the fast path's Bash call already listed `./pdfs/`, and `retriever query` indexes the content.
 
