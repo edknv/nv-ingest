@@ -62,23 +62,28 @@ def find_matches(query_lower: str, basenames: list[str]) -> list[str]:
 
 
 def extract_pages(retriever_bin: str, matches: list[str]) -> None:
+    """Extract each matched PDF; log per-file failures and continue so a single
+    bad PDF doesn't block remaining matches."""
     os.makedirs(EXTRACT_OUT, exist_ok=True)
     for m in matches:
-        subprocess.run(
-            [
-                retriever_bin,
-                "pdf",
-                "stage",
-                "page-elements",
-                f"{PDF_DIR}/{m}",
-                "--method",
-                "pdfium",
-                "--json-output-dir",
-                EXTRACT_OUT,
-                "--compact-json",
-            ],
-            check=True,
-        )
+        try:
+            subprocess.run(
+                [
+                    retriever_bin,
+                    "pdf",
+                    "stage",
+                    "page-elements",
+                    f"{PDF_DIR}/{m}",
+                    "--method",
+                    "pdfium",
+                    "--json-output-dir",
+                    EXTRACT_OUT,
+                    "--compact-json",
+                ],
+                check=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            print(f"WARN: page-elements failed on {m}: exit {exc.returncode}", file=sys.stderr)
 
 
 def sidecar_path(pdf_name: str) -> str | None:
