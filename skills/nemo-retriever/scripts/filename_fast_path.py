@@ -21,8 +21,10 @@ Stdout protocol (exactly one of):
                                     pages, up to 10), followed by the top-
                                     ranked page's raw text (first 4000 chars).
 
-Exit code is 0 in all three success outcomes; non-zero only on hard errors
-(missing ./pdfs, page-elements subprocess failure, malformed sidecar JSON).
+Exit code is 0 in all three success outcomes; non-zero only when `./pdfs/` is
+missing or unreadable. Per-file errors (extraction subprocess failure, malformed
+sidecar JSON) log a warning to stderr and are skipped — if every match is bad,
+the script falls through to `NO_TEXT`.
 """
 
 from __future__ import annotations
@@ -99,8 +101,12 @@ def sidecar_path(pdf_name: str) -> str | None:
 
 
 def page_records(sidecar: str) -> list[dict]:
-    with open(sidecar) as fh:
-        data = json.load(fh)
+    try:
+        with open(sidecar) as fh:
+            data = json.load(fh)
+    except json.JSONDecodeError as exc:
+        print(f"ERROR: malformed JSON in sidecar {sidecar!r}: {exc}", file=sys.stderr)
+        return []
     if isinstance(data, list):
         return data
     if isinstance(data, dict):
