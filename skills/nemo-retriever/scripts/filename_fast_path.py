@@ -83,6 +83,7 @@ def extract_pages(retriever_bin: str, matches: list[str]) -> None:
                     "--compact-json",
                 ],
                 check=True,
+                stdout=subprocess.DEVNULL,
             )
         except subprocess.CalledProcessError as exc:
             print(f"WARN: page-elements failed on {m}: exit {exc.returncode}", file=sys.stderr)
