@@ -1,5 +1,5 @@
 export const meta = {
-  name: 'multimodal-sweep',
+  name: 'nemo-retriever-workflow',
   description: 'Answer one question over a nemo-retriever corpus by sweeping multiple blind retrieval angles in parallel, then adversarially verifying chart/image-only claims against prose',
   phases: [
     { title: 'Setup', detail: 'resolve retriever venv + ensure LanceDB index exists' },
@@ -24,10 +24,10 @@ const cfg = {
   verify:      A.verify      ?? true,
   writeReport: A.writeReport ?? true,
   grepScript:  A.grepScript  ?? 'skills/nemo-retriever/scripts/grep_corpus.py',
-  reportPath:  A.reportPath  ?? './multimodal-sweep-report.md',
+  reportPath:  A.reportPath  ?? './nemo-retriever-workflow-report.md',
   repoRoot:    A.repoRoot    ?? '/home/edwardk/git/nv-ingest',
 }
-if (!cfg.question) throw new Error('multimodal-sweep: args.question is required (pass {question: "..."} as the workflow args)')
+if (!cfg.question) throw new Error('nemo-retriever-workflow: args.question is required (pass {question: "..."} as the workflow args)')
 
 // ---------- schemas (inter-agent contracts) ----------
 const HIT_SCHEMA = {
@@ -197,7 +197,7 @@ if (totalHits === 0) {
     confidence: 'low',
     byAngle: sweep,
     verified: [],
-    reportMarkdown: `# multimodal-sweep\n\n**Question:** ${cfg.question}\n\nNo hits across any of ${activeAngles.length} retrieval angles.\n`,
+    reportMarkdown: `# nemo-retriever-workflow\n\n**Question:** ${cfg.question}\n\nNo hits across any of ${activeAngles.length} retrieval angles.\n`,
     reportPath: cfg.writeReport ? cfg.reportPath : null,
   }
 }
