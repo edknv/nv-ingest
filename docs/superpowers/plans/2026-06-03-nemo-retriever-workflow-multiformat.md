@@ -112,6 +112,8 @@ git commit --no-gpg-sign -m "feat(workflow): config + schema for multi-format (o
 
 ### Task 2: Format-aware multi-pass Phase 0 ingest
 
+> **SUPERSEDED during implementation (live finding):** the installed `retriever ingest` has **no `--input-type` flag** and auto-ingests a mixed-format folder in a **single pass** (verified: pdf+txt+png+docx+wav → one table). The multi-pass/`--append` approach below was replaced by a **single ingest pass** + `source`-JSON parsing for `distinctDocs` + an ingested-vs-skipped inventory diff. See the spec's Phase 0 section and commit "fix(workflow): single-pass ingest" for the shipped version. The steps below are kept for history.
+
 **Files:**
 - Modify: `workflows/nemo-retriever-workflow.js`
 

@@ -46,22 +46,17 @@ A workflow spawns N **isolated** subagents, each with its own context. So:
 
 ## Phases
 
-### Phase 0 — Setup (1 agent, barrier) — format-aware multi-pass ingest
+### Phase 0 — Setup (1 agent, barrier) — single-pass multi-format ingest
 
-Resolve the `retriever` venv path (`command -v retriever`; if missing, follow the skill's `references/install.md`). If `indexDir` already has the table, **reuse it** (no ingest). Otherwise build it with format-aware multi-pass ingest:
+Resolve the `retriever` venv path (`command -v retriever`; if missing, follow the skill's `references/install.md`). If `indexDir` already has the table, **reuse it** (no ingest). Otherwise build it:
 
-1. Inventory file extensions in `corpusDir` and group into buckets:
+1. Inventory the file extensions present in `corpusDir` (for the ingested-vs-skipped report).
+2. **Ingest in a single pass.** The installed `retriever ingest <corpusDir>` auto-detects and ingests a **mixed-format folder in one pass** — PDF, HTML, TXT, images, `.docx`/`.pptx`, audio, video — there is **no `--input-type` flag** (verified live: it errors). Pass `--ocr-version v2 --ocr-lang <ocrLang>` (global, harmless for non-images) plus `--table-name`/`--lancedb-uri`/`--embed-model-name`. Office needs the libreoffice host pkg; audio/video need the `[multimedia]` extra + ffmpeg. If a present format's dep is missing: install per `references/install.md` when `installExtras` is true, else skip.
+3. Map extensions to buckets (text-doc / image / doc / audio / video). `ingestedTypes` = buckets whose files actually landed in the index; `skippedTypes` = buckets present in `corpusDir` but absent from the index, each with a reason (never silently drop — see the skill's "Unsupported file types" warning).
 
-   | Bucket | Extensions | Ingest flags |
-   |---|---|---|
-   | default | `.pdf .html .txt` | *(none — base install)* |
-   | image | `.jpg .png .tiff .bmp` | `--input-type image --ocr-version v2 --ocr-lang <ocrLang>` |
-   | doc | `.docx .pptx` | `--input-type doc` (needs libreoffice) |
-   | audio | `.mp3 .wav .m4a` | `--input-type audio` (needs `[multimedia]` + ffmpeg) |
-   | video | `.mp4 .mov .mkv` | `--input-type video` (needs `[multimedia]` + ffmpeg) |
+`distinctDocs` is read by parsing the table's `source` column (a JSON `{source_id, source_name}` blob) for `source_name`, falling back to a path basename for plain-string builds.
 
-2. Run one ingest pass per non-empty bucket into the **same table**: the **first pass uses `--overwrite`** (default — creates a fresh table), **every subsequent pass uses `--append`** (adds rows without dup-checks). Explicit `--input-type X` over a mixed folder processes only the matching subset, so passes don't need per-type subdirs.
-3. For a bucket whose host deps are missing: if `installExtras` is true, attempt the install from `references/install.md`; otherwise **skip it and record the reason** (never silently drop — see the skill's "Unsupported file types" warning).
+> **Why single-pass, not per-format:** the skill's `setup.md` documents an `--input-type` flag for images/office/audio/video, but the installed CLI has no such flag and its default ingest already handles all formats in one pass. The workflow targets the installed CLI's real behavior.
 
 Returns structured:
 
@@ -142,15 +137,17 @@ The workflow returns `reportMarkdown` (a full report string: `final_answer`, per
 
 ## Multi-format support
 
+All formats ingest in the **single** `retriever ingest` pass (no per-format flag).
+
 | Format | Auto-ingest (Phase 0) | Query + sweep | visual/tabular | Verify (Phase 3) |
 |---|---|---|---|---|
 | PDF | yes | yes | yes | pdfium prose re-extract |
-| Image (`.jpg .png .tiff .bmp`) | yes (`--input-type image` + OCR) | yes | yes | index re-query |
+| Image (`.jpg .png .tiff .bmp`) | yes (OCR via `--ocr-version v2`) | yes | yes | index re-query |
 | Office (`.docx .pptx`) | yes if libreoffice present | yes | yes if charts/tables extracted | index re-query |
 | HTML / TXT | yes | yes | n/a | index re-query |
 | Audio / Video | yes if `[multimedia]`+ffmpeg present | yes (over transcript) | n/a (returns empty) | index re-query |
 
-Buckets whose host deps are absent (and `installExtras` is false) are skipped and reported in `skippedTypes`, never silently dropped.
+Formats present in `corpusDir` but absent from the index (e.g. dep missing and `installExtras` false) are reported in `skippedTypes`, never silently dropped. *(Verified live: a single pass ingested pdf+txt+png+docx+wav into one table.)*
 
 ## Non-goals (YAGNI)
 
