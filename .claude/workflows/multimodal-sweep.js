@@ -122,7 +122,7 @@ const ANGLE_SPECS = {
   semantic: (venv) => `${baseContext(venv)}
 
 YOUR ANGLE = "semantic": straight semantic search with reranking. Run exactly this single pipeline:
-${venv}/bin/retriever query "${cfg.question}" --top-k ${cfg.topK} --rerank --embed-model-name ${cfg.embedModel} | tee /tmp/sweep_semantic.json | ${venv}/bin/python -c "import json,sys;[print(f'rank={h.get(\"rank\",0)} page={h[\"page_number\"]} pdf={h[\"pdf_basename\"]} type={h.get(\"metadata\",{}).get(\"type\",\"?\")}') for h in json.load(sys.stdin)]"
+${venv}/bin/retriever query "${cfg.question}" --top-k ${cfg.topK} --rerank --embed-model-name ${cfg.embedModel} | tee /tmp/sweep_semantic.json | ${venv}/bin/python -c "import json,sys;[print(f'rank={h.get(\\"rank\\",0)} page={h[\\"page_number\\"]} pdf={h[\\"pdf_basename\\"]} type={h.get(\\"metadata\\",{}).get(\\"type\\",\\"?\\")}') for h in json.load(sys.stdin)]"
 Then read the hit text you need from /tmp/sweep_semantic.json and synthesize.`,
 
   reformulated: (venv) => `${baseContext(venv)}
