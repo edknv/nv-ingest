@@ -28,26 +28,46 @@ A workflow spawns N **isolated** subagents, each with its own context. So:
 
 ```
 {
-  question:    string,   // required — the hard question to answer
-  corpusDir:   string,   // default "./pdfs"  — source docs (ingested only if index missing)
-  indexDir:    string,   // default "./lancedb"
-  tableName:   string,   // default "nv-ingest"
-  topK:        number,   // default 10
-  embedModel:  string,   // default "nvidia/llama-nemotron-embed-1b-v2"
-  angles:      string[], // default all five below
-  verify:      boolean,  // default true  — Phase 3 adversarial verification
-  writeReport: boolean   // default true  — write markdown report to repo
+  question:     string,   // required — the hard question to answer
+  corpusDir:    string,   // default "./pdfs"  — source docs (any supported format; ingested only if index missing)
+  indexDir:     string,   // default "./lancedb"
+  tableName:    string,   // default "nv-ingest"
+  topK:         number,   // default 10
+  embedModel:   string,   // default "nvidia/llama-nemotron-embed-1b-v2"
+  angles:       string[], // default all five below
+  verify:       boolean,  // default true  — Phase 3 adversarial verification
+  writeReport:  boolean,  // default true  — return reportMarkdown for the caller to write
+  ocrLang:      string,   // default "english" — OCR language for image ingest (or "multi")
+  installExtras: boolean  // default false — may Phase 0 attempt to install missing host deps (libreoffice/ffmpeg/[multimedia])?
 }
 ```
 
+`args` may arrive as a JSON-encoded string from the Workflow tool; the script normalizes string-or-object before reading.
+
 ## Phases
 
-### Phase 0 — Setup (1 agent, barrier)
+### Phase 0 — Setup (1 agent, barrier) — format-aware multi-pass ingest
 
-Resolve the `retriever` venv path (`command -v retriever`; if missing, follow the skill's `references/install.md`). If `indexDir` has no index, run `retriever ingest corpusDir`. Returns structured:
+Resolve the `retriever` venv path (`command -v retriever`; if missing, follow the skill's `references/install.md`). If `indexDir` already has the table, **reuse it** (no ingest). Otherwise build it with format-aware multi-pass ingest:
+
+1. Inventory file extensions in `corpusDir` and group into buckets:
+
+   | Bucket | Extensions | Ingest flags |
+   |---|---|---|
+   | default | `.pdf .html .txt` | *(none — base install)* |
+   | image | `.jpg .png .tiff .bmp` | `--input-type image --ocr-version v2 --ocr-lang <ocrLang>` |
+   | doc | `.docx .pptx` | `--input-type doc` (needs libreoffice) |
+   | audio | `.mp3 .wav .m4a` | `--input-type audio` (needs `[multimedia]` + ffmpeg) |
+   | video | `.mp4 .mov .mkv` | `--input-type video` (needs `[multimedia]` + ffmpeg) |
+
+2. Run one ingest pass per non-empty bucket into the **same table**: the **first pass uses `--overwrite`** (default — creates a fresh table), **every subsequent pass uses `--append`** (adds rows without dup-checks). Explicit `--input-type X` over a mixed folder processes only the matching subset, so passes don't need per-type subdirs.
+3. For a bucket whose host deps are missing: if `installExtras` is true, attempt the install from `references/install.md`; otherwise **skip it and record the reason** (never silently drop — see the skill's "Unsupported file types" warning).
+
+Returns structured:
 
 ```
-{ retrieverVenv: string, indexReady: boolean, docCount: number, distinctDocs: string[] }
+{ retrieverVenv: string, indexReady: boolean, docCount: number, distinctDocs: string[],
+  ingestedTypes: string[], skippedTypes: [{ type: string, reason: string }] }
 ```
 
 True barrier — every downstream agent needs `retrieverVenv`. If `indexReady` is false after this phase, abort with a clear message.
@@ -67,11 +87,13 @@ Default angles:
 
 | Angle | Mechanism |
 |-------|-----------|
-| `semantic` | `retriever query "<question>" --top-k <topK> --rerank --embed-model-name <embedModel>` |
+| `semantic` | `retriever query "<question>" --top-k <topK> --rerank --table-name <t> --lancedb-uri <dir> --embed-model-name <m>` |
 | `reformulated` | agent rephrases the question 2–3 ways (incl. a HyDE-style hypothetical-answer phrasing), runs a query per phrasing, unions hits |
-| `keyword` | agent extracts key terms/identifiers, runs `scripts/grep_corpus.py "<regex>"` |
-| `visual` | semantic query, then keep only hits with `metadata.type ∈ {chart, image}` |
-| `tabular` | semantic query, then keep only hits with `metadata.type == table` |
+| `keyword` | agent extracts key terms/identifiers, runs `scripts/grep_corpus.py "<regex>" --lancedb-uri <dir> --table-name <t>` |
+| `visual` | query with `--content-types chart,image` (server-side filter); tag hits chart/image |
+| `tabular` | query with `--content-types table`; tag hits table |
+
+**Schema tolerance:** the installed `retriever query` emits lean hits (`page_number`, `source`, `text`) — no per-hit `type` or `pdf_basename`. So all queries pass `--table-name`/`--lancedb-uri` explicitly (the CLI default table differs), `doc` is derived from `pdf_basename`-or-`basename(source)`, and `type` is inferred from the producing angle (visual→chart/image, tabular→table, others→text) when the CLI omits it. For audio/video corpora `visual`/`tabular` simply return empty (which the merge tolerates).
 
 Barrier is justified (not laziness): the merge needs **all** hits to dedupe, and we early-exit if the total hit count is zero.
 
@@ -86,17 +108,19 @@ Dedupe hits by `(doc, page, type)`. Synthesize a **draft** `final_answer` with `
   confidence: string }
 ```
 
-### Phase 3 — Adversarial verify (parallel, conditional on `verify` and non-empty `claims_to_verify`)
+### Phase 3 — Adversarial verify (parallel, conditional on `verify` and non-empty `claims_to_verify`) — format-aware
 
-One agent per flagged claim runs the targeted prose extract on that page:
+One agent per flagged claim verifies it against an independent modality, branching on the flagged source's extension:
 
-```
-retriever pdf stage page-elements <corpusDir> --method pdfium --json-output-dir /tmp/pdf_text --compact-json
-```
+- **`.pdf`** → targeted prose re-extract (strongest), then read the page JSON:
+  ```
+  retriever pdf stage page-elements <corpusDir> --method pdfium --json-output-dir /tmp/sweep_verify --compact-json
+  ```
+- **non-PDF** (image / office / audio / video) → re-query the index restricted to that `source` with `--content-types text,table` and judge whether genuine (non-caption) text corroborates the claim.
 
-then reads the page's extraction JSON and returns `{ claim, verdict: "confirmed"|"refuted"|"not_found", evidence: string }`.
+Returns `{ claim, verdict: "confirmed"|"refuted"|"not_found"|"unverifiable", evidence: string }` — `unverifiable` when no independent modality exists (e.g. a number that lives only in an image with no transcript).
 
-A short final-synthesis step folds verdicts into the answer: confirmed → assert confidently; refuted/not_found → hedge with the verbatim chart phrase ("chart-derived, not verified against prose"). This turns the skill's #1 documented accuracy failure into a verification gate.
+A short final-synthesis step folds verdicts into the answer: confirmed → assert confidently; refuted/not_found/unverifiable → hedge with the verbatim chart phrase ("chart-derived, not verified against prose"). This turns the skill's #1 documented accuracy failure into a verification gate.
 
 ### Output
 
@@ -114,18 +138,30 @@ The workflow returns `reportMarkdown` (a full report string: `final_answer`, per
 
 ## Indexing note
 
-`retriever` `page_number` is **1-indexed** (first page = 1). Citations and report use 1-indexed pages as-is. (Downstream consumers that expect 0-indexed must subtract 1 — out of scope here.)
+`retriever` `page_number` is **1-indexed** (first page = 1). Citations and report use 1-indexed pages as-is. (Downstream consumers that expect 0-indexed must subtract 1 — out of scope here.) For **audio/video** sources `page_number` is a segment index / timestamp rather than a page; it is cited verbatim as returned.
+
+## Multi-format support
+
+| Format | Auto-ingest (Phase 0) | Query + sweep | visual/tabular | Verify (Phase 3) |
+|---|---|---|---|---|
+| PDF | yes | yes | yes | pdfium prose re-extract |
+| Image (`.jpg .png .tiff .bmp`) | yes (`--input-type image` + OCR) | yes | yes | index re-query |
+| Office (`.docx .pptx`) | yes if libreoffice present | yes | yes if charts/tables extracted | index re-query |
+| HTML / TXT | yes | yes | n/a | index re-query |
+| Audio / Video | yes if `[multimedia]`+ffmpeg present | yes (over transcript) | n/a (returns empty) | index re-query |
+
+Buckets whose host deps are absent (and `installExtras` is false) are skipped and reported in `skippedTypes`, never silently dropped.
 
 ## Non-goals (YAGNI)
 
 - Not a general RAG framework — it wraps the existing `retriever` CLI only.
-- No re-ingest / incremental indexing logic — ingest once if missing, otherwise reuse.
+- No incremental/delta indexing — build once if missing (multi-pass for mixed formats), otherwise reuse the whole table.
 - No 0-indexed page conversion, no eval/scoring (that's Pattern D, a separate artifact).
 - Angle agents do not spawn their own subagents (the skill bans it; the workflow owns fan-out).
 
 ## Components & boundaries
 
-- **Workflow script** (`.claude/workflows/nemo-retriever-workflow.js`) — pure orchestration: phases, fan-out, dedupe glue, conditional verify, return shape. No Bash.
+- **Workflow script** (`workflows/nemo-retriever-workflow.js`, with `.claude/workflows` a symlink to `../workflows` — mirrors the `skills/` layout) — pure orchestration: phases, fan-out, dedupe glue, conditional verify, return shape. No Bash.
 - **Angle-agent prompts** — self-contained: each carries its exact CLI template + structured-output contract. Swapping an angle = editing one prompt + one `angles` entry.
 - **Schemas** — `READER`/`MERGE`/`VERDICT` JSON schemas drive `agent({schema})` so returns are validated, not parsed.
 
