@@ -1,4 +1,4 @@
-# multimodal-sweep — design
+# nemo-retriever-workflow — design
 
 **Date:** 2026-06-03
 **Type:** Reusable Claude Code workflow (named, lives in `.claude/workflows/`)
@@ -125,7 +125,7 @@ If `writeReport`, also write a markdown report (`final_answer`, per-angle hit ta
 
 ## Components & boundaries
 
-- **Workflow script** (`.claude/workflows/multimodal-sweep.js`) — pure orchestration: phases, fan-out, dedupe glue, conditional verify, return shape. No Bash.
+- **Workflow script** (`.claude/workflows/nemo-retriever-workflow.js`) — pure orchestration: phases, fan-out, dedupe glue, conditional verify, return shape. No Bash.
 - **Angle-agent prompts** — self-contained: each carries its exact CLI template + structured-output contract. Swapping an angle = editing one prompt + one `angles` entry.
 - **Schemas** — `READER`/`MERGE`/`VERDICT` JSON schemas drive `agent({schema})` so returns are validated, not parsed.
 

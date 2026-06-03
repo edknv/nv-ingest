@@ -1,8 +1,8 @@
-# multimodal-sweep Workflow Implementation Plan
+# nemo-retriever-workflow Workflow Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a reusable, named Claude Code workflow (`.claude/workflows/multimodal-sweep.js`) that answers one hard question over a `nemo-retriever` corpus by sweeping multiple blind retrieval angles in parallel, merging/deduping the hits, and adversarially verifying any chart/image-only claims against prose.
+**Goal:** Build a reusable, named Claude Code workflow (`.claude/workflows/nemo-retriever-workflow.js`) that answers one hard question over a `nemo-retriever` corpus by sweeping multiple blind retrieval angles in parallel, merging/deduping the hits, and adversarially verifying any chart/image-only claims against prose.
 
 **Architecture:** Pure-orchestration JS workflow script. Phase 0 setup agent resolves the `retriever` venv and ensures the LanceDB index exists. Phase 1 fans out one isolated subagent per retrieval angle (each does a single disciplined `retriever` query → structured output). Phase 2 merges/dedupes into a draft answer and flags chart/image-only claims. Phase 3 verifies flagged claims against pdfium prose extraction, then a finalize agent folds verdicts in and produces a markdown report string. The workflow returns the answer + `reportMarkdown`; the caller writes the report file.
 
@@ -20,8 +20,8 @@
 
 ## File structure
 
-- **Create:** `.claude/workflows/multimodal-sweep.js` — the entire workflow (meta, config, schemas, angle-prompt builders, four phases, return). One file: it is a single orchestration unit and the named-workflow registry expects one script per name.
-- **Modify:** `docs/superpowers/specs/2026-06-03-multimodal-sweep-workflow-design.md` — only to record the "caller writes the report" refinement (Task 6).
+- **Create:** `.claude/workflows/nemo-retriever-workflow.js` — the entire workflow (meta, config, schemas, angle-prompt builders, four phases, return). One file: it is a single orchestration unit and the named-workflow registry expects one script per name.
+- **Modify:** `docs/superpowers/specs/2026-06-03-nemo-retriever-workflow-workflow-design.md` — only to record the "caller writes the report" refinement (Task 6).
 
 The script's internal boundaries: `cfg` (arg parsing), `*_SCHEMA` consts (inter-agent contracts), `ANGLE_SPECS` (per-angle prompt builders — swap an angle by editing one entry), and the four phase blocks (control flow). Each is independently readable.
 
@@ -30,15 +30,15 @@ The script's internal boundaries: `cfg` (arg parsing), `*_SCHEMA` consts (inter-
 ### Task 1: Scaffold the workflow file — meta, config, schemas, angle builders
 
 **Files:**
-- Create: `.claude/workflows/multimodal-sweep.js`
+- Create: `.claude/workflows/nemo-retriever-workflow.js`
 
 - [ ] **Step 1: Create the directory and file with the static declarations**
 
-Create `.claude/workflows/multimodal-sweep.js` with exactly this content:
+Create `.claude/workflows/nemo-retriever-workflow.js` with exactly this content:
 
 ```javascript
 export const meta = {
-  name: 'multimodal-sweep',
+  name: 'nemo-retriever-workflow',
   description: 'Answer one question over a nemo-retriever corpus by sweeping multiple blind retrieval angles in parallel, then adversarially verifying chart/image-only claims against prose',
   phases: [
     { title: 'Setup', detail: 'resolve retriever venv + ensure LanceDB index exists' },
@@ -60,10 +60,10 @@ const cfg = {
   verify:      args?.verify      ?? true,
   writeReport: args?.writeReport ?? true,
   grepScript:  args?.grepScript  ?? 'skills/nemo-retriever/scripts/grep_corpus.py',
-  reportPath:  args?.reportPath  ?? './multimodal-sweep-report.md',
+  reportPath:  args?.reportPath  ?? './nemo-retriever-workflow-report.md',
   repoRoot:    args?.repoRoot    ?? '/home/edwardk/git/nv-ingest',
 }
-if (!cfg.question) throw new Error('multimodal-sweep: args.question is required')
+if (!cfg.question) throw new Error('nemo-retriever-workflow: args.question is required')
 
 // ---------- schemas (inter-agent contracts) ----------
 const HIT_SCHEMA = {
@@ -193,15 +193,15 @@ Filter /tmp/sweep_tabular.json to hits with metadata.type == "table" and report 
 
 Run:
 ```bash
-node -e 'const fs=require("fs");let s=fs.readFileSync(".claude/workflows/multimodal-sweep.js","utf8").replace(/^export\s+const\s+meta/m,"const meta");new Function("agent","parallel","pipeline","phase","log","args","budget","workflow","return (async()=>{"+s+"})()");console.log("PARSE OK")'
+node -e 'const fs=require("fs");let s=fs.readFileSync(".claude/workflows/nemo-retriever-workflow.js","utf8").replace(/^export\s+const\s+meta/m,"const meta");new Function("agent","parallel","pipeline","phase","log","args","budget","workflow","return (async()=>{"+s+"})()");console.log("PARSE OK")'
 ```
 Expected: `PARSE OK` (no `SyntaxError`).
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add .claude/workflows/multimodal-sweep.js
-git commit --no-gpg-sign -m "feat(workflow): scaffold multimodal-sweep meta, config, schemas, angles"
+git add .claude/workflows/nemo-retriever-workflow.js
+git commit --no-gpg-sign -m "feat(workflow): scaffold nemo-retriever-workflow meta, config, schemas, angles"
 ```
 (`--no-gpg-sign` because GPG signing fails in this environment.)
 
@@ -210,7 +210,7 @@ git commit --no-gpg-sign -m "feat(workflow): scaffold multimodal-sweep meta, con
 ### Task 2: Phase 0 — setup agent + barrier guard
 
 **Files:**
-- Modify: `.claude/workflows/multimodal-sweep.js` (append after the `ANGLE_SPECS` block)
+- Modify: `.claude/workflows/nemo-retriever-workflow.js` (append after the `ANGLE_SPECS` block)
 
 - [ ] **Step 1: Append the Phase 0 block**
 
@@ -242,7 +242,7 @@ Run the same command as Task 1 Step 2. Expected: `PARSE OK`.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add .claude/workflows/multimodal-sweep.js
+git add .claude/workflows/nemo-retriever-workflow.js
 git commit --no-gpg-sign -m "feat(workflow): add Phase 0 setup agent + index-ready guard"
 ```
 
@@ -251,7 +251,7 @@ git commit --no-gpg-sign -m "feat(workflow): add Phase 0 setup agent + index-rea
 ### Task 3: Phase 1 — parallel angle sweep + zero-hit early return
 
 **Files:**
-- Modify: `.claude/workflows/multimodal-sweep.js` (append)
+- Modify: `.claude/workflows/nemo-retriever-workflow.js` (append)
 
 - [ ] **Step 1: Append the Phase 1 block**
 
@@ -276,7 +276,7 @@ if (totalHits === 0) {
     confidence: 'low',
     byAngle: sweep,
     verified: [],
-    reportMarkdown: `# multimodal-sweep\n\n**Question:** ${cfg.question}\n\nNo hits across any of ${activeAngles.length} retrieval angles.\n`,
+    reportMarkdown: `# nemo-retriever-workflow\n\n**Question:** ${cfg.question}\n\nNo hits across any of ${activeAngles.length} retrieval angles.\n`,
     reportPath: cfg.writeReport ? cfg.reportPath : null,
   }
 }
@@ -287,7 +287,7 @@ if (totalHits === 0) {
 - [ ] **Step 3: Commit**
 
 ```bash
-git add .claude/workflows/multimodal-sweep.js
+git add .claude/workflows/nemo-retriever-workflow.js
 git commit --no-gpg-sign -m "feat(workflow): add Phase 1 parallel angle sweep + zero-hit early return"
 ```
 
@@ -296,7 +296,7 @@ git commit --no-gpg-sign -m "feat(workflow): add Phase 1 parallel angle sweep + 
 ### Task 4: Phase 2 — merge / dedupe / flag chart-image-only claims
 
 **Files:**
-- Modify: `.claude/workflows/multimodal-sweep.js` (append)
+- Modify: `.claude/workflows/nemo-retriever-workflow.js` (append)
 
 - [ ] **Step 1: Append the Phase 2 block**
 
@@ -328,7 +328,7 @@ log(`merge: ${merge.claims_to_verify?.length ?? 0} chart/image-only claim(s) to 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add .claude/workflows/multimodal-sweep.js
+git add .claude/workflows/nemo-retriever-workflow.js
 git commit --no-gpg-sign -m "feat(workflow): add Phase 2 merge/dedupe + claim flagging"
 ```
 
@@ -337,7 +337,7 @@ git commit --no-gpg-sign -m "feat(workflow): add Phase 2 merge/dedupe + claim fl
 ### Task 5: Phase 3 — adversarial verify + finalize + return
 
 **Files:**
-- Modify: `.claude/workflows/multimodal-sweep.js` (append)
+- Modify: `.claude/workflows/nemo-retriever-workflow.js` (append)
 
 - [ ] **Step 1: Append the Phase 3 + return block**
 
@@ -397,7 +397,7 @@ return {
 - [ ] **Step 3: Commit**
 
 ```bash
-git add .claude/workflows/multimodal-sweep.js
+git add .claude/workflows/nemo-retriever-workflow.js
 git commit --no-gpg-sign -m "feat(workflow): add Phase 3 verify + finalize + return shape"
 ```
 
@@ -408,7 +408,7 @@ git commit --no-gpg-sign -m "feat(workflow): add Phase 3 verify + finalize + ret
 This task validates the assembled workflow against a real (small) corpus and records the caller-writes-report contract. It requires the `retriever` CLI environment; if that environment is unavailable, do Step 1 (parse-check) and Step 4 (spec note) and mark the live run as blocked rather than skipping silently.
 
 **Files:**
-- Modify: `docs/superpowers/specs/2026-06-03-multimodal-sweep-workflow-design.md`
+- Modify: `docs/superpowers/specs/2026-06-03-nemo-retriever-workflow-workflow-design.md`
 
 - [ ] **Step 1: Final parse-check of the whole file**
 
@@ -419,7 +419,7 @@ Run the Task 1 Step 2 command. Expected: `PARSE OK`.
 Identify a small folder of 1–2 PDFs already present in the repo (e.g. under `./data` or `./pdfs`; if none, copy one small PDF into a fresh `./tmp_sweep_pdfs/`). Then invoke the workflow via the **Workflow tool** (not Bash) with args, e.g.:
 
 ```
-Workflow({ name: 'multimodal-sweep', args: {
+Workflow({ name: 'nemo-retriever-workflow', args: {
   question: '<a question whose answer is in the chosen PDF>',
   corpusDir: './tmp_sweep_pdfs',
   indexDir: './tmp_sweep_lancedb'
@@ -432,11 +432,11 @@ Expected: the run progresses Setup → Sweep → Merge → Verify and returns an
 
 Because the workflow cannot touch the filesystem, after the run returns, the caller writes the report when `reportPath` is non-null:
 
-Use the Write tool to write `result.reportMarkdown` to `result.reportPath` (here `./multimodal-sweep-report.md`). Confirm the file exists and renders the answer + per-angle tables.
+Use the Write tool to write `result.reportMarkdown` to `result.reportPath` (here `./nemo-retriever-workflow-report.md`). Confirm the file exists and renders the answer + per-angle tables.
 
 - [ ] **Step 4: Record the caller-writes-report contract in the spec**
 
-In `docs/superpowers/specs/2026-06-03-multimodal-sweep-workflow-design.md`, under the `### Output` section, replace the line:
+In `docs/superpowers/specs/2026-06-03-nemo-retriever-workflow-workflow-design.md`, under the `### Output` section, replace the line:
 
 ```
 If `writeReport`, also write a markdown report (`final_answer`, per-angle hit tables, verification verdicts) to the repo.
@@ -454,8 +454,8 @@ after the run returns.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add docs/superpowers/specs/2026-06-03-multimodal-sweep-workflow-design.md
-git commit --no-gpg-sign -m "docs(workflow): record caller-writes-report contract; smoke-tested multimodal-sweep"
+git add docs/superpowers/specs/2026-06-03-nemo-retriever-workflow-workflow-design.md
+git commit --no-gpg-sign -m "docs(workflow): record caller-writes-report contract; smoke-tested nemo-retriever-workflow"
 ```
 
 ---
