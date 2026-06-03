@@ -178,10 +178,24 @@ Every returned hit is a table: tag type="table" and report the rows relevant to 
 phase('Setup')
 const setup = await agent(
   `Prepare the nemo-retriever index for a multi-angle query sweep. Run from ${cfg.repoRoot}.
+
 1. Resolve the retriever venv: run \`command -v retriever\`. If it prints .../bin/retriever, the venv ROOT is the directory two levels up (strip /bin/retriever). If retriever is NOT found, follow ${cfg.repoRoot}/skills/nemo-retriever/references/install.md to install it, then resolve the path.
-2. Check whether the index exists at ${cfg.indexDir}/${cfg.tableName}.lance. If it does NOT exist, ingest the corpus: \`<venv>/bin/retriever ingest ${cfg.corpusDir}/ --embed-model-name ${cfg.embedModel}\`. Build an index even if the corpus is large (a text-only index beats none; see ${cfg.repoRoot}/skills/nemo-retriever/references/setup.md for the >800-page recipe).
-3. Report: retrieverVenv (the venv root), indexReady (true once the .lance table exists/queryable), docCount, and distinctDocs. Get counts via:
-   \`<venv>/bin/python -c "import lancedb; df=lancedb.connect('${cfg.indexDir}').open_table('${cfg.tableName}').to_pandas(); print(len(df)); import json; print(json.dumps(sorted(df.pdf_basename.unique().tolist())))"\``,
+
+2. If the table ALREADY exists at ${cfg.indexDir}/${cfg.tableName}.lance, REUSE it — do NOT ingest, and set ingestedTypes=[]. Otherwise build it with FORMAT-AWARE MULTI-PASS ingest:
+   a. Inventory file extensions in ${cfg.corpusDir}: \`find ${cfg.corpusDir} -type f -name '*.*' | sed 's/.*\\.//' | tr 'A-Z' 'a-z' | sort -u\`
+   b. Group extensions into buckets (skip empty buckets):
+      - default (.pdf .html .txt): NO --input-type flag
+      - image (.jpg .jpeg .png .tiff .bmp): --input-type image --ocr-version v2 --ocr-lang ${cfg.ocrLang}
+      - doc (.docx .pptx): --input-type doc          [needs libreoffice host pkg]
+      - audio (.mp3 .wav .m4a): --input-type audio    [needs the [multimedia] extra + ffmpeg]
+      - video (.mp4 .mov .mkv): --input-type video    [needs the [multimedia] extra + ffmpeg]
+   c. Run ONE ingest pass per non-empty bucket, ALL into the same table. The FIRST pass uses --overwrite (the default; creates a fresh table). EVERY SUBSEQUENT pass MUST add --append (adds rows, no dup-check) so earlier passes are not clobbered. Base form:
+      \`<venv>/bin/retriever ingest ${cfg.corpusDir}/ --table-name ${cfg.tableName} --lancedb-uri ${cfg.indexDir} --embed-model-name ${cfg.embedModel} <bucket flags> [--append for passes after the first]\`
+      An explicit --input-type processes only that format's files in the folder, so all passes can point at the same ${cfg.corpusDir}.
+   d. If a bucket needs a host dep that is missing: ${cfg.installExtras ? 'attempt to install it per references/install.md, then ingest that bucket' : 'do NOT install anything — skip that bucket'}. For every skipped bucket add {type, reason} to skippedTypes. NEVER silently drop a format. Record each successfully-ingested bucket in ingestedTypes.
+
+3. Report retrieverVenv, indexReady (true once the table is queryable), docCount, distinctDocs, ingestedTypes, skippedTypes. Get counts SCHEMA-TOLERANTLY (the table may have a "source" column instead of "pdf_basename"):
+   \`<venv>/bin/python -c "import lancedb,os,json; df=lancedb.connect('${cfg.indexDir}').open_table('${cfg.tableName}').to_pandas(); col='pdf_basename' if 'pdf_basename' in df.columns else 'source'; print(len(df)); print(json.dumps(sorted({os.path.basename(str(x)) for x in df[col].tolist()})))"\``,
   { label: 'setup', phase: 'Setup', schema: SETUP_SCHEMA }
 )
 
