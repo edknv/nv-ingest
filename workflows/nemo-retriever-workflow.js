@@ -181,21 +181,15 @@ const setup = await agent(
 
 1. Resolve the retriever venv: run \`command -v retriever\`. If it prints .../bin/retriever, the venv ROOT is the directory two levels up (strip /bin/retriever). If retriever is NOT found, follow ${cfg.repoRoot}/skills/nemo-retriever/references/install.md to install it, then resolve the path.
 
-2. If the table ALREADY exists at ${cfg.indexDir}/${cfg.tableName}.lance, REUSE it — do NOT ingest, and set ingestedTypes=[]. Otherwise build it with FORMAT-AWARE MULTI-PASS ingest:
-   a. Inventory file extensions in ${cfg.corpusDir}: \`find ${cfg.corpusDir} -type f -name '*.*' | sed 's/.*\\.//' | tr 'A-Z' 'a-z' | sort -u\`
-   b. Group extensions into buckets (skip empty buckets):
-      - default (.pdf .html .txt): NO --input-type flag
-      - image (.jpg .jpeg .png .tiff .bmp): --input-type image --ocr-version v2 --ocr-lang ${cfg.ocrLang}
-      - doc (.docx .pptx): --input-type doc          [needs libreoffice host pkg]
-      - audio (.mp3 .wav .m4a): --input-type audio    [needs the [multimedia] extra + ffmpeg]
-      - video (.mp4 .mov .mkv): --input-type video    [needs the [multimedia] extra + ffmpeg]
-   c. Run ONE ingest pass per non-empty bucket, ALL into the same table. The FIRST pass uses --overwrite (the default; creates a fresh table). EVERY SUBSEQUENT pass MUST add --append (adds rows, no dup-check) so earlier passes are not clobbered. Base form:
-      \`<venv>/bin/retriever ingest ${cfg.corpusDir}/ --table-name ${cfg.tableName} --lancedb-uri ${cfg.indexDir} --embed-model-name ${cfg.embedModel} <bucket flags> [--append for passes after the first]\`
-      An explicit --input-type processes only that format's files in the folder, so all passes can point at the same ${cfg.corpusDir}.
-   d. If a bucket needs a host dep that is missing: ${cfg.installExtras ? 'attempt to install it per references/install.md, then ingest that bucket' : 'do NOT install anything — skip that bucket'}. For every skipped bucket add {type, reason} to skippedTypes. NEVER silently drop a format. Record each successfully-ingested bucket in ingestedTypes.
+2. If the table ALREADY exists at ${cfg.indexDir}/${cfg.tableName}.lance, REUSE it — do NOT ingest, and set ingestedTypes=[]. Otherwise build it. The installed \`retriever ingest\` AUTO-DETECTS and ingests a MIXED-FORMAT folder in a SINGLE pass (PDF, HTML, TXT, images, .docx/.pptx, audio, video) — there is NO --input-type flag. So:
+   a. Inventory the file extensions present (you will compare against what actually lands): \`find ${cfg.corpusDir} -type f -name '*.*' | sed 's/.*\\.//' | tr 'A-Z' 'a-z' | sort | uniq -c\`
+   b. Ingest in ONE pass (--ocr-version v2 + --ocr-lang improve image OCR; they apply globally and are harmless for non-image inputs):
+      \`<venv>/bin/retriever ingest ${cfg.corpusDir}/ --table-name ${cfg.tableName} --lancedb-uri ${cfg.indexDir} --embed-model-name ${cfg.embedModel} --ocr-version v2 --ocr-lang ${cfg.ocrLang} --quiet\`
+      Office (.docx/.pptx) needs the libreoffice host pkg; audio/video need the [multimedia] extra + ffmpeg. If ingest errors or a present format is missing afterward because a dep is absent: ${cfg.installExtras ? 'install the dep per references/install.md and re-run the ingest' : 'do NOT install anything'}.
+   c. Map the extensions you inventoried to format buckets (pdf/html/txt→"text-doc"; jpg/jpeg/png/tiff/bmp→"image"; docx/pptx→"doc"; mp3/wav/m4a→"audio"; mp4/mov/mkv→"video"). Set ingestedTypes to the buckets whose files actually appear in the index (step 3 distinctDocs), and for any bucket whose files are present in ${cfg.corpusDir} but absent from the index, add {type, reason} to skippedTypes (e.g. reason "libreoffice not installed" or "unsupported by this build"). NEVER silently drop a format.
 
-3. Report retrieverVenv, indexReady (true once the table is queryable), docCount, distinctDocs, ingestedTypes, skippedTypes. Get counts SCHEMA-TOLERANTLY (the table may have a "source" column instead of "pdf_basename"):
-   \`<venv>/bin/python -c "import lancedb,os,json; df=lancedb.connect('${cfg.indexDir}').open_table('${cfg.tableName}').to_pandas(); col='pdf_basename' if 'pdf_basename' in df.columns else 'source'; print(len(df)); print(json.dumps(sorted({os.path.basename(str(x)) for x in df[col].tolist()})))"\``,
+3. Report retrieverVenv, indexReady (true once the table is queryable), docCount, distinctDocs, ingestedTypes, skippedTypes. The table's "source" column is a JSON string ({"source_id","source_name"}); parse it for source_name (falling back to a path basename for plain-string builds):
+   \`<venv>/bin/python -c "import lancedb,json,os; df=lancedb.connect('${cfg.indexDir}').open_table('${cfg.tableName}').to_pandas(); g=lambda s:(json.loads(s).get('source_name') if str(s).strip().startswith('{') else os.path.basename(str(s))); print(len(df)); print(json.dumps(sorted({g(s) for s in df['source']})))"\``,
   { label: 'setup', phase: 'Setup', schema: SETUP_SCHEMA }
 )
 
