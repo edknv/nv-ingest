@@ -10,21 +10,24 @@ export const meta = {
 }
 
 // ---------- config / args ----------
+// args may arrive as an object OR as a JSON-encoded string (the harness can
+// stringify the Workflow tool's `args` input) — normalize both into an object.
+const A = typeof args === 'string' ? JSON.parse(args) : (args ?? {})
 const cfg = {
-  question:    args?.question,
-  corpusDir:   args?.corpusDir   ?? './pdfs',
-  indexDir:    args?.indexDir    ?? './lancedb',
-  tableName:   args?.tableName   ?? 'nv-ingest',
-  topK:        args?.topK        ?? 10,
-  embedModel:  args?.embedModel  ?? 'nvidia/llama-nemotron-embed-1b-v2',
-  angles:      args?.angles      ?? ['semantic', 'reformulated', 'keyword', 'visual', 'tabular'],
-  verify:      args?.verify      ?? true,
-  writeReport: args?.writeReport ?? true,
-  grepScript:  args?.grepScript  ?? 'skills/nemo-retriever/scripts/grep_corpus.py',
-  reportPath:  args?.reportPath  ?? './multimodal-sweep-report.md',
-  repoRoot:    args?.repoRoot    ?? '/home/edwardk/git/nv-ingest',
+  question:    A.question,
+  corpusDir:   A.corpusDir   ?? './pdfs',
+  indexDir:    A.indexDir    ?? './lancedb',
+  tableName:   A.tableName   ?? 'nv-ingest',
+  topK:        A.topK        ?? 10,
+  embedModel:  A.embedModel  ?? 'nvidia/llama-nemotron-embed-1b-v2',
+  angles:      A.angles      ?? ['semantic', 'reformulated', 'keyword', 'visual', 'tabular'],
+  verify:      A.verify      ?? true,
+  writeReport: A.writeReport ?? true,
+  grepScript:  A.grepScript  ?? 'skills/nemo-retriever/scripts/grep_corpus.py',
+  reportPath:  A.reportPath  ?? './multimodal-sweep-report.md',
+  repoRoot:    A.repoRoot    ?? '/home/edwardk/git/nv-ingest',
 }
-if (!cfg.question) throw new Error('multimodal-sweep: args.question is required')
+if (!cfg.question) throw new Error('multimodal-sweep: args.question is required (pass {question: "..."} as the workflow args)')
 
 // ---------- schemas (inter-agent contracts) ----------
 const HIT_SCHEMA = {
