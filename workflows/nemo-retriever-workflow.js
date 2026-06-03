@@ -26,6 +26,8 @@ const cfg = {
   grepScript:  A.grepScript  ?? 'skills/nemo-retriever/scripts/grep_corpus.py',
   reportPath:  A.reportPath  ?? './nemo-retriever-workflow-report.md',
   repoRoot:    A.repoRoot    ?? '/home/edwardk/git/nv-ingest',
+  ocrLang:     A.ocrLang     ?? 'english',
+  installExtras: A.installExtras ?? false,
 }
 if (!cfg.question) throw new Error('nemo-retriever-workflow: args.question is required (pass {question: "..."} as the workflow args)')
 
@@ -44,12 +46,22 @@ const HIT_SCHEMA = {
 
 const SETUP_SCHEMA = {
   type: 'object', additionalProperties: false,
-  required: ['retrieverVenv', 'indexReady', 'docCount', 'distinctDocs'],
+  required: ['retrieverVenv', 'indexReady', 'docCount', 'distinctDocs', 'ingestedTypes', 'skippedTypes'],
   properties: {
     retrieverVenv: { type: 'string', description: 'absolute venv root containing bin/retriever' },
     indexReady: { type: 'boolean' },
     docCount: { type: 'number' },
     distinctDocs: { type: 'array', items: { type: 'string' } },
+    ingestedTypes: { type: 'array', items: { type: 'string' }, description: 'format buckets ingested this run; [] if the index was reused' },
+    skippedTypes: {
+      type: 'array',
+      items: {
+        type: 'object', additionalProperties: false,
+        required: ['type', 'reason'],
+        properties: { type: { type: 'string' }, reason: { type: 'string' } },
+      },
+      description: 'format buckets skipped because host deps were missing',
+    },
     note: { type: 'string' },
   },
 }
@@ -94,7 +106,7 @@ const VERDICT_SCHEMA = {
   required: ['claim', 'verdict', 'evidence'],
   properties: {
     claim: { type: 'string' },
-    verdict: { type: 'string', enum: ['confirmed', 'refuted', 'not_found'] },
+    verdict: { type: 'string', enum: ['confirmed', 'refuted', 'not_found', 'unverifiable'] },
     evidence: { type: 'string' },
   },
 }
