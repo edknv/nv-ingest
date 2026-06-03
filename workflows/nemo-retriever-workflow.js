@@ -138,7 +138,7 @@ DISCIPLINE: at most 2 Bash calls; no narration between calls; do NOT spawn subag
 The installed CLI emits lean hits: each hit is JSON with at least "page_number" (1-indexed int), "source" (a file path), and "text". It MAY also carry "pdf_basename" and "metadata.type" on other versions.
 For each hit you return:
 - doc = the "pdf_basename" field if present, else the basename of "source" with any ".pdf" suffix stripped (e.g. /a/b/foo.pdf -> foo).
-- page = "page_number" as-is (1-indexed).
+- page = "page_number" as-is (1-indexed; for audio/video this may instead be a segment index or timestamp — report it verbatim).
 - rank = position in the returned list, starting at 1.
 - type = the hit's metadata.type if present, otherwise infer from YOUR angle (stated below).
 confidence reflects how well the hits actually answer the question.`
@@ -257,12 +257,15 @@ if (cfg.verify && merge.claims_to_verify?.length) {
   verdicts = (await parallel(
     merge.claims_to_verify.map(c => () =>
       agent(
-        `Adversarially verify ONE claim against PROSE text. retriever venv: ${setup.retrieverVenv}. Run from ${cfg.repoRoot}.
-CLAIM: "${c.claim}" (attributed to ${c.doc}, page ${c.page}, 1-indexed).
-Run the targeted prose extract on that PDF, then read its page ${c.page}:
-${setup.retrieverVenv}/bin/retriever pdf stage page-elements ${cfg.corpusDir} --method pdfium --json-output-dir /tmp/sweep_verify --compact-json
-then inspect /tmp/sweep_verify/${c.doc}.pdf.pdf_extraction.json for page ${c.page}'s prose.
-verdict: "confirmed" if prose states the same number/direction; "refuted" if prose contradicts it; "not_found" if prose doesn't mention it. evidence = the relevant verbatim prose snippet, or a note on why not found.`,
+        `Adversarially verify ONE claim against an INDEPENDENT modality. retriever venv: ${setup.retrieverVenv}. Run from ${cfg.repoRoot}.
+CLAIM: "${c.claim}" (attributed to ${c.doc}, page/segment ${c.page}).
+Pick the check by the source file type of "${c.doc}":
+- PDF source: run the targeted prose re-extract, then read page ${c.page}:
+  ${setup.retrieverVenv}/bin/retriever pdf stage page-elements ${cfg.corpusDir} --method pdfium --json-output-dir /tmp/sweep_verify --compact-json
+  then inspect /tmp/sweep_verify/${c.doc}.pdf.pdf_extraction.json for page ${c.page}'s prose.
+- Non-PDF source (image / office / audio / video): re-query the index for corroborating TEXT/TABLE content and check whether a hit whose "source" matches "${c.doc}" states the same number/direction in genuine (non-caption) text:
+  ${setup.retrieverVenv}/bin/retriever query "${c.claim}" --top-k 10 --rerank --content-types text,table --table-name ${cfg.tableName} --lancedb-uri ${cfg.indexDir} --embed-model-name ${cfg.embedModel}
+verdict: "confirmed" if an independent modality states the same number/direction; "refuted" if it contradicts; "not_found" if that modality is present but silent on the claim; "unverifiable" if NO independent modality exists for this source (e.g. a number only in an image with no transcript). evidence = the relevant verbatim snippet, or why none.`,
         { label: `verify:${c.doc}-p${c.page}`, phase: 'Verify', schema: VERDICT_SCHEMA }
       )
     )
@@ -280,7 +283,7 @@ VERIFICATION VERDICTS: ${JSON.stringify(verdicts, null, 2)}
 PER-ANGLE RESULTS: ${JSON.stringify(sweep, null, 2)}
 
 Rules:
-- Fold verdicts into the answer: "confirmed" -> assert the number/direction confidently; "refuted" or "not_found" -> hedge by quoting the chart phrase verbatim and tagging "(chart-derived, not verified against prose)". NEVER restate a refuted/not_found chart number as fact.
+- Fold verdicts into the answer: "confirmed" -> assert the number/direction confidently; "refuted" / "not_found" / "unverifiable" -> hedge by quoting the source phrase verbatim and tagging "(derived from chart/image, not confirmed against an independent modality)". NEVER restate a refuted/not_found/unverifiable number as a confident fact.
 - final_answer: one paragraph with [doc p.N] citations (1-indexed pages).
 - citations: the (doc, page, type) hits the final answer relies on.
 - confidence: overall ("high"/"medium"/"low").
