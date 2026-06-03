@@ -110,7 +110,7 @@ Workflow returns:
   verified: [...Phase 3 verdicts...] }
 ```
 
-If `writeReport`, also write a markdown report (`final_answer`, per-angle hit tables, verification verdicts) to the repo.
+The workflow returns `reportMarkdown` (a full report string: `final_answer`, per-angle hit tables, verification verdicts) and `reportPath` (the intended path, or null when `writeReport` is false). Workflow scripts have no filesystem access, so the **caller writes** `reportMarkdown` to `reportPath` after the run returns.
 
 ## Indexing note
 
