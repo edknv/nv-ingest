@@ -108,45 +108,55 @@ const FINAL_SCHEMA = {
 }
 
 // ---------- angle prompt builders ----------
+// Schema-tolerant: the installed retriever query CLI emits lean hits
+// {page_number, source, text}; other versions add {pdf_basename, metadata.type,
+// _distance}. Prompts derive doc from pdf_basename-or-source and infer type from
+// the producing angle when the CLI omits it. All queries target the index
+// explicitly (--table-name/--lancedb-uri) instead of relying on CLI defaults.
 const baseContext = (venv) => `You are ONE retrieval angle in a multi-angle sweep answering this question over a PRE-BUILT nemo-retriever LanceDB corpus.
 
 QUESTION: ${cfg.question}
 
 retriever venv: ${venv} (use ${venv}/bin/retriever and ${venv}/bin/python). Run from ${cfg.repoRoot}.
-Index: ${cfg.indexDir}, table "${cfg.tableName}". It is ALREADY BUILT — NEVER ingest or re-extract the whole corpus.
+ALWAYS target this index explicitly by passing --table-name ${cfg.tableName} --lancedb-uri ${cfg.indexDir} to retriever query (and grep_corpus.py). Do NOT rely on CLI defaults — the default table name differs. The index is ALREADY BUILT — NEVER ingest or re-extract.
 DISCIPLINE: at most 2 Bash calls; no narration between calls; do NOT spawn subagents; go straight from your command to returning structured output.
-Each LanceDB hit has: text, pdf_basename, page_number (1-indexed int), metadata.type in {text,table,chart,image}, _distance.
-Return your candidate answer plus the hits you used: doc = pdf_basename without ".pdf"; page = page_number as-is (1-indexed); rank starts at 1. confidence reflects how well the hits actually answer the question.`
+The installed CLI emits lean hits: each hit is JSON with at least "page_number" (1-indexed int), "source" (a file path), and "text". It MAY also carry "pdf_basename" and "metadata.type" on other versions.
+For each hit you return:
+- doc = the "pdf_basename" field if present, else the basename of "source" with any ".pdf" suffix stripped (e.g. /a/b/foo.pdf -> foo).
+- page = "page_number" as-is (1-indexed).
+- rank = position in the returned list, starting at 1.
+- type = the hit's metadata.type if present, otherwise infer from YOUR angle (stated below).
+confidence reflects how well the hits actually answer the question.`
 
 const ANGLE_SPECS = {
   semantic: (venv) => `${baseContext(venv)}
 
-YOUR ANGLE = "semantic": straight semantic search with reranking. Run exactly this single pipeline:
-${venv}/bin/retriever query "${cfg.question}" --top-k ${cfg.topK} --rerank --embed-model-name ${cfg.embedModel} | tee /tmp/sweep_semantic.json | ${venv}/bin/python -c "import json,sys;[print(f'rank={h.get(\\"rank\\",0)} page={h[\\"page_number\\"]} pdf={h[\\"pdf_basename\\"]} type={h.get(\\"metadata\\",{}).get(\\"type\\",\\"?\\")}') for h in json.load(sys.stdin)]"
+YOUR ANGLE = "semantic": straight semantic search with reranking. Tag every hit type="text". Run exactly this single pipeline:
+${venv}/bin/retriever query "${cfg.question}" --top-k ${cfg.topK} --rerank --table-name ${cfg.tableName} --lancedb-uri ${cfg.indexDir} --embed-model-name ${cfg.embedModel} | tee /tmp/sweep_semantic.json | ${venv}/bin/python -c "import json,sys;[print(f'rank={i+1} page={h.get(\\"page_number\\")} src={h.get(\\"source\\",\\"\\")}') for i,h in enumerate(json.load(sys.stdin))]"
 Then read the hit text you need from /tmp/sweep_semantic.json and synthesize.`,
 
   reformulated: (venv) => `${baseContext(venv)}
 
-YOUR ANGLE = "reformulated": semantic search is phrasing-sensitive. Rephrase the question into 2-3 alternatives (one keyword-dense; one HyDE-style: a single hypothetical SENTENCE that, if present in a doc, would answer it). Run one query per phrasing (combine into a single Bash command to stay within budget), union the hits, dedupe by (pdf,page), report the best. Use:
-${venv}/bin/retriever query "<phrasing>" --top-k ${cfg.topK} --rerank --embed-model-name ${cfg.embedModel}`,
+YOUR ANGLE = "reformulated": semantic search is phrasing-sensitive. Tag every hit type="text". Rephrase the question into 2-3 alternatives (one keyword-dense; one HyDE-style: a single hypothetical SENTENCE that, if present in a doc, would answer it). Run one query per phrasing (combine into a single Bash command to stay within budget), union the hits, dedupe by (source,page), report the best. Use:
+${venv}/bin/retriever query "<phrasing>" --top-k ${cfg.topK} --rerank --table-name ${cfg.tableName} --lancedb-uri ${cfg.indexDir} --embed-model-name ${cfg.embedModel}`,
 
   keyword: (venv) => `${baseContext(venv)}
 
 YOUR ANGLE = "keyword": exact-term matches semantic search may miss. Extract the key identifiers/terms/numbers from the question, build a regex, and run:
-${venv}/bin/python ${cfg.grepScript} "<regex>" --max-hits 50
-Output is "<pdf>:p<page>:<type>:  ...snippet..." per line, or NO_MATCH. Map those lines to hits (rank by order). If NO_MATCH, return empty hits with confidence "low".`,
+${venv}/bin/python ${cfg.grepScript} "<regex>" --lancedb-uri ${cfg.indexDir} --table-name ${cfg.tableName} --max-hits 50
+Output is "<source>:p<page>:<type>:  ...snippet..." per line, or NO_MATCH. Map those lines to hits, ranked by order; use the printed <type> for each hit's type. If NO_MATCH, return empty hits with confidence "low".`,
 
   visual: (venv) => `${baseContext(venv)}
 
-YOUR ANGLE = "visual": facts hidden in figures. Run the semantic query, then KEEP ONLY chart/image-type hits:
-${venv}/bin/retriever query "${cfg.question}" --top-k ${cfg.topK} --rerank --embed-model-name ${cfg.embedModel} | tee /tmp/sweep_visual.json
-Filter /tmp/sweep_visual.json to hits with metadata.type in {chart,image}. Their text is a model caption that MAY misread numbers/directions — report it but set confidence "low" for any exact number unless corroborated elsewhere.`,
+YOUR ANGLE = "visual": facts hidden in figures (charts/images). Filter to chart/image content SERVER-SIDE with --content-types:
+${venv}/bin/retriever query "${cfg.question}" --top-k ${cfg.topK} --rerank --content-types chart,image --table-name ${cfg.tableName} --lancedb-uri ${cfg.indexDir} --embed-model-name ${cfg.embedModel} | tee /tmp/sweep_visual.json
+Every returned hit is a chart or image: tag type="chart" (or "image" if its text reads like a photo/picture caption rather than a chart). Their text is a model caption that MAY misread numbers/directions — report it but set confidence "low" for any exact number. If the CLI rejects --content-types (older build), rerun without it and keep only hits whose metadata.type is chart or image.`,
 
   tabular: (venv) => `${baseContext(venv)}
 
-YOUR ANGLE = "tabular": facts in tables. Run the semantic query, then KEEP ONLY table-type hits:
-${venv}/bin/retriever query "${cfg.question}" --top-k ${cfg.topK} --rerank --embed-model-name ${cfg.embedModel} | tee /tmp/sweep_tabular.json
-Filter /tmp/sweep_tabular.json to hits with metadata.type == "table" and report the rows relevant to the question.`,
+YOUR ANGLE = "tabular": facts in tables. Filter to table content SERVER-SIDE with --content-types:
+${venv}/bin/retriever query "${cfg.question}" --top-k ${cfg.topK} --rerank --content-types table --table-name ${cfg.tableName} --lancedb-uri ${cfg.indexDir} --embed-model-name ${cfg.embedModel} | tee /tmp/sweep_tabular.json
+Every returned hit is a table: tag type="table" and report the rows relevant to the question. If the CLI rejects --content-types (older build), rerun without it and keep only hits whose metadata.type == "table".`,
 }
 
 // ---------- Phase 0: setup (barrier) ----------
@@ -199,10 +209,12 @@ QUESTION: ${cfg.question}
 ANGLE RESULTS (JSON):
 ${JSON.stringify(sweep, null, 2)}
 
+Each result carries its "angle": chart/image evidence comes from the "visual" angle and tables from "tabular"; "semantic"/"reformulated"/"keyword" return prose-or-mixed hits. Note: some corpora store a figure's caption AS a text chunk too, so the SAME chart number may also surface as a text-tagged hit — that is the chart's own caption, NOT independent corroboration.
+
 Tasks:
-1. Dedupe hits by (doc, page, type). For any exact number or directional claim, PREFER text/table hits over chart/image hits.
+1. Dedupe hits by (doc, page, type). For any exact number or directional claim, PREFER genuine prose/table evidence over chart/image captions.
 2. draftAnswer: one paragraph answering the question, citing sources inline as [doc p.N] (1-indexed). Address every entity/year/category the question names, even if some are "not provided".
-3. claims_to_verify: every number OR directional claim in draftAnswer that is supported ONLY by a chart- or image-type hit, with NO corroborating text/table hit for the same fact. Each entry = {claim, doc, page}. If none qualify, return [].
+3. claims_to_verify: every number OR directional claim in draftAnswer whose evidence traces to a chart- or image-type hit (typically the "visual" angle), UNLESS a DISTINCT prose passage — not the same figure's caption restated as text — independently states the same fact. Each entry = {claim, doc, page}. If none qualify, return [].
 4. citations: the (doc, page, type) hits the draft relies on.
 5. confidence: overall.`,
   { label: 'merge', phase: 'Merge', schema: MERGE_SCHEMA }
