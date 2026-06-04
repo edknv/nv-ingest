@@ -300,3 +300,30 @@ def test_root_query_passes_hybrid_into_vdb_kwargs(monkeypatch) -> None:
     assert retriever_calls == [
         {"top_k": 5, "vdb_kwargs": {"uri": "/tmp/lancedb", "table_name": "docs", "hybrid": True}}
     ]
+
+
+def test_root_query_max_text_chars_truncates_and_omits(monkeypatch) -> None:
+    hits = [{"text": "abcdefghij", "source": "d.pdf", "page_number": 1,
+             "metadata": {"type": "text"}, "_distance": 0.1}]
+
+    class FakeRetriever:
+        def __init__(self, **_: Any) -> None:
+            pass
+
+        def query(self, query: str, **_kwargs: Any) -> list[dict[str, Any]]:
+            return hits
+
+    monkeypatch.setattr(sdk_workflow, "Retriever", FakeRetriever)
+
+    snip = RUNNER.invoke(cli_main.app, ["query", "q", "--max-text-chars", "5"])
+    assert snip.exit_code == 0
+    snip_hit = json.loads(snip.output)[0]
+    assert snip_hit["text"] == "abcde…"
+    assert snip_hit["modality"] == "text"  # non-text fields intact
+    assert snip_hit["source"] == "d.pdf"
+
+    meta = RUNNER.invoke(cli_main.app, ["query", "q", "--max-text-chars", "0"])
+    meta_hit = json.loads(meta.output)[0]
+    assert meta_hit["text"] == ""
+    assert meta_hit["source"] == "d.pdf"
+    assert meta_hit["page_number"] == 1

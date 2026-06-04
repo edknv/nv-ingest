@@ -72,7 +72,7 @@ for _name, _module, _attr in _LAZY_SUBAPPS:
 _ROOT_CLI_ERRORS = (OSError, RuntimeError, ValueError, ValidationError)
 
 
-def _query_cli_hit(hit: RetrievalHit) -> dict[str, object]:
+def _query_cli_hit(hit: RetrievalHit, max_text_chars: int | None = None) -> dict[str, object]:
     metadata = hit.get("metadata") or {}
     modality = hit.get("content_type") or metadata.get("type") or "text"
     # Relevance the engine ranked by: rerank/hybrid score if present, else the
@@ -83,10 +83,15 @@ def _query_cli_hit(hit: RetrievalHit) -> dict[str, object]:
         score = hit["_distance"]
     else:
         score = None
+    text = hit.get("text", "")
+    # Compact output: truncate text to max_text_chars (0 = omit -> metadata-only
+    # summary). None/negative = full text (default, backward-compatible).
+    if max_text_chars is not None and max_text_chars >= 0 and len(text) > max_text_chars:
+        text = text[:max_text_chars] + ("…" if max_text_chars > 0 else "")
     return {
         "source": hit.get("source", ""),
         "page_number": hit.get("page_number"),
-        "text": hit.get("text", ""),
+        "text": text,
         "modality": modality,
         "score": score,
     }
@@ -647,6 +652,11 @@ def query_command(
         "--hybrid",
         help="Combine vector + full-text (BM25) retrieval. Requires an index built with `ingest --hybrid`.",
     ),
+    max_text_chars: int | None = typer.Option(
+        None,
+        "--max-text-chars",
+        help="Truncate each hit's text to N chars (0 = omit text, metadata-only summary). Default: full text.",
+    ),
 ) -> None:
     if reranker_invoke_url is None:
         reranker_invoke_url = os.environ.get("RERANKER_INVOKE_URL") or None
@@ -676,7 +686,7 @@ def query_command(
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
 
-    typer.echo(json.dumps([_query_cli_hit(hit) for hit in hits], indent=2, sort_keys=True, default=str))
+    typer.echo(json.dumps([_query_cli_hit(hit, max_text_chars) for hit in hits], indent=2, sort_keys=True, default=str))
 
 
 @app.command("verify")
