@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "nemo-retriever/actual-hit",
+  "title": "Actual retriever query hit (engine v26.x)",
+  "type": "object",
+  "required": ["page_number", "source", "text"],
+  "properties": {
+    "page_number": { "type": "integer", "description": "1-indexed page, or segment/timestamp for A/V" },
+    "source": { "type": "string", "description": "source file path (flattened from the table's source JSON)" },
+    "text": { "type": "string" }
+  },
+  "additionalProperties": true
+}

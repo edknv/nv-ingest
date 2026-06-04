@@ -1,0 +1,15 @@
+{
+  "contract_version": "1.0.0",
+  "query": {
+    "required_flags": ["--top-k", "--content-types", "--rerank", "--embed-model-name", "--lancedb-uri", "--table-name"],
+    "forbidden_flags": [],
+    "default_table_name": "nemo-retriever",
+    "hit_schema": "actual-hit.schema.json"
+  },
+  "ingest": {
+    "required_flags": ["--append", "--overwrite", "--ocr-version", "--ocr-lang", "--table-name", "--lancedb-uri", "--embed-model-name"],
+    "forbidden_flags": ["--input-type"],
+    "single_pass_multiformat": true
+  },
+  "table_columns": ["vector", "text", "metadata", "source"]
+}
