@@ -37,8 +37,8 @@ def test_root_query_passes_query_options_and_prints_json(monkeypatch) -> None:
         },
     ]
     expected_output = [
-        {"source": "doc.pdf", "page_number": 1, "text": "passage"},
-        {"source": "other.pdf", "page_number": 2, "text": "other"},
+        {"source": "doc.pdf", "page_number": 1, "text": "passage", "modality": "text", "score": 0.2},
+        {"source": "other.pdf", "page_number": 2, "text": "other", "modality": "table", "score": 0.4},
     ]
 
     class FakeRetriever:
@@ -108,7 +108,7 @@ def test_root_query_passes_candidate_dedup_and_content_filters(monkeypatch) -> N
     assert result.exit_code == 0
     assert query_kwargs == [{"candidate_k": 3, "page_dedup": True, "content_types": "text,table"}]
     assert json.loads(result.output) == [
-        {"page_number": 1, "source": "doc.pdf", "text": "text row"},
+        {"page_number": 1, "source": "doc.pdf", "text": "text row", "modality": "text", "score": None},
     ]
 
 
