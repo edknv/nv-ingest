@@ -11,6 +11,8 @@ Run that **exactly** as a single pipeline — do not split it into `HITS=$(...)`
 
 That's your FIRST tool call on every query turn. Do not Read, Glob, Grep, or list PDFs before this — those duplicate what `retriever query` already did.
 
+**Hybrid query (optional):** if the index was built with `ingest --hybrid`, add `--hybrid` to the query to combine vector + full-text (BM25) retrieval — recovers exact-term/identifier matches semantic search alone misses. No effect (and no FTS index) on a non-hybrid index.
+
 **No narration between tool calls.** Do not write "Let me search…", "I'll now analyze…", "The retriever returned…", or any other commentary. Every assistant token you emit with the `retriever query` Bash call becomes input tokens (and cached input tokens) for every subsequent turn in this session — quadratic cost. Go straight from reading the summary to writing the JSON file. The only assistant text in a query turn should be the tool calls themselves.
 
 Each hit emitted by `retriever query` has: `page_number` (int, **1-indexed**), `source` (the file path), `text`, `modality` (`text`|`table`|`chart`|`image`|`audio`|`video_frame`), and `score` (number or null — relevance/distance; hit order is authoritative, so don't re-sort on it). (There is no `pdf_basename` in the query output — derive a display name from `source`. Schema asserted by `contract/actual-hit.schema.json` / `scripts/doctor.py`.) Use `modality` to tell chart/image hits from prose **directly** — no need to guess from content.

@@ -1,13 +1,13 @@
 {
-  "contract_version": "1.1.0",
+  "contract_version": "1.2.0",
   "query": {
-    "required_flags": ["--top-k", "--content-types", "--rerank", "--embed-model-name", "--lancedb-uri", "--table-name"],
+    "required_flags": ["--top-k", "--content-types", "--rerank", "--hybrid", "--embed-model-name", "--lancedb-uri", "--table-name"],
     "forbidden_flags": [],
     "default_table_name": "nemo-retriever",
     "hit_schema": "actual-hit.schema.json"
   },
   "ingest": {
-    "required_flags": ["--append", "--overwrite", "--ocr-version", "--ocr-lang", "--table-name", "--lancedb-uri", "--embed-model-name"],
+    "required_flags": ["--append", "--overwrite", "--hybrid", "--ocr-version", "--ocr-lang", "--table-name", "--lancedb-uri", "--embed-model-name"],
     "forbidden_flags": ["--input-type"],
     "single_pass_multiformat": true
   },

@@ -17,7 +17,7 @@ If `command -v retriever` returns nothing, follow `references/install.md` to ins
 
 ## Contract (run once on the setup turn)
 
-This skill targets engine **contract_version 1.1.0** (`contract/cli-contract.json`). On the setup turn, after the index is built, verify the installed engine matches:
+This skill targets engine **contract_version 1.2.0** (`contract/cli-contract.json`). On the setup turn, after the index is built, verify the installed engine matches:
 
 `<RETRIEVER_VENV>/bin/python <skill_dir>/scripts/doctor.py`
 
