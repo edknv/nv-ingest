@@ -938,6 +938,7 @@ def query_documents(
     reranker_model_name: str | None = None,
     reranker_backend: str | None = None,
     rerank: bool = False,
+    hybrid: bool = False,
 ) -> list[RetrievalHit]:
     """Run the minimal SDK query path used by the root CLI.
 
@@ -945,9 +946,12 @@ def query_documents(
     args via the CLI, which implicitly set ``rerank=True``) to enable.
     """
     embed_kwargs = _build_embed_kwargs(embed_invoke_url, embed_model_name)
+    vdb_kwargs: dict[str, Any] = {"uri": lancedb_uri, "table_name": table_name}
+    if hybrid:
+        vdb_kwargs["hybrid"] = True
     retriever_kwargs: dict[str, Any] = {
         "top_k": top_k,
-        "vdb_kwargs": {"uri": lancedb_uri, "table_name": table_name},
+        "vdb_kwargs": vdb_kwargs,
     }
     if embed_kwargs:
         retriever_kwargs["embed_kwargs"] = embed_kwargs

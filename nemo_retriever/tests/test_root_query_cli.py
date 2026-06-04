@@ -277,3 +277,26 @@ def test_root_query_reports_os_errors(monkeypatch) -> None:
 
     assert result.exit_code == 1
     assert "Error: database unavailable" in result.output
+
+
+def test_root_query_passes_hybrid_into_vdb_kwargs(monkeypatch) -> None:
+    retriever_calls: list[dict[str, Any]] = []
+
+    class FakeRetriever:
+        def __init__(self, **kwargs: Any) -> None:
+            retriever_calls.append(kwargs)
+
+        def query(self, query: str, **_kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+    monkeypatch.setattr(sdk_workflow, "Retriever", FakeRetriever)
+
+    result = RUNNER.invoke(
+        cli_main.app,
+        ["query", "q", "--top-k", "5", "--lancedb-uri", "/tmp/lancedb", "--table-name", "docs", "--hybrid"],
+    )
+
+    assert result.exit_code == 0
+    assert retriever_calls == [
+        {"top_k": 5, "vdb_kwargs": {"uri": "/tmp/lancedb", "table_name": "docs", "hybrid": True}}
+    ]

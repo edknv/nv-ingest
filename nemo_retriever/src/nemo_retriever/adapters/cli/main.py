@@ -635,6 +635,11 @@ def query_command(
             "any of --reranker-invoke-url / --reranker-model-name / --reranker-backend is set."
         ),
     ),
+    hybrid: bool = typer.Option(
+        False,
+        "--hybrid",
+        help="Combine vector + full-text (BM25) retrieval. Requires an index built with `ingest --hybrid`.",
+    ),
 ) -> None:
     if reranker_invoke_url is None:
         reranker_invoke_url = os.environ.get("RERANKER_INVOKE_URL") or None
@@ -658,6 +663,7 @@ def query_command(
                 reranker_model_name=reranker_model_name,
                 reranker_backend=reranker_backend,
                 rerank=rerank,
+                hybrid=hybrid,
             )
     except _ROOT_CLI_ERRORS as exc:
         typer.echo(f"Error: {exc}", err=True)
