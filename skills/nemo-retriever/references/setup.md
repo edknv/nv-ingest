@@ -22,12 +22,12 @@ After the setup command returns successfully, STOP. Don't run smoke queries to "
 
 ## Other input shapes
 
-Same `retriever ingest` command, different `--input-type` and (for non-PDF) install extras. Install extras live in `references/install.md` "Optional extras".
+Same `retriever ingest` command — it auto-detects formats in a single pass, so there is **no `--input-type` flag** (verified by `scripts/doctor.py`). Non-PDF formats only need their install extras; extras live in `references/install.md` "Optional extras".
 
 **Images / scanned forms / charts** (`.jpg` `.png` `.tiff` `.bmp`):
 
 ```bash
-<RETRIEVER_VENV>/bin/retriever ingest ./images/ --input-type image --ocr-version v2 --ocr-lang english
+<RETRIEVER_VENV>/bin/retriever ingest ./images/ --ocr-version v2 --ocr-lang english
 ```
 For mixed-script docs (bilingual contracts, multilingual forms) use `--ocr-lang multi`. Chart understanding (axis/legend/data) runs inline — no separate call.
 
@@ -40,12 +40,12 @@ For mixed-script docs (bilingual contracts, multilingual forms) use `--ocr-lang 
 **Office** (`.docx` `.pptx`) — requires libreoffice (host package, not pip):
 
 ```bash
-<RETRIEVER_VENV>/bin/retriever ingest ./office/ --input-type doc
+<RETRIEVER_VENV>/bin/retriever ingest ./office/
 ```
 
 **Audio / video** — requires the `[multimedia]` extra **and** ffmpeg (host pkg). Both audio and video go through the same extra:
 
 ```bash
-<RETRIEVER_VENV>/bin/retriever ingest ./media/ --input-type audio   # or --input-type video
+<RETRIEVER_VENV>/bin/retriever ingest ./media/   # audio/video auto-detected; needs [multimedia] + ffmpeg
 ```
 Audio is `.mp3` / `.wav` / `.m4a` only — `.flac` is silently filtered. Inventory first.

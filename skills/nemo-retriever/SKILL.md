@@ -15,6 +15,14 @@ The `retriever` CLI indexes a folder of PDFs into LanceDB (`retriever ingest`) a
 
 If `command -v retriever` returns nothing, follow `references/install.md` to install the NeMo Retriever Library before proceeding. It prints `RETRIEVER_VENV=<path>`; substitute that path for `<RETRIEVER_VENV>` in every example in this skill (setup, query, troubleshooting, and the CLI references).
 
+## Contract (run once on the setup turn)
+
+This skill targets engine **contract_version 1.0.0** (`contract/cli-contract.json`). On the setup turn, after the index is built, verify the installed engine matches:
+
+`<RETRIEVER_VENV>/bin/python <skill_dir>/scripts/doctor.py`
+
+If `doctor.py` reports any `[FAIL]`, the installed `retriever` has drifted from what this skill assumes — read `contract/CONTRACT.md` and the failing check before trusting query results.
+
 ## Workflow — read the reference for the current phase, then execute
 
 | Turn type | Read this once | Then execute |

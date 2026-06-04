@@ -13,7 +13,7 @@ That's your FIRST tool call on every query turn. Do not Read, Glob, Grep, or lis
 
 **No narration between tool calls.** Do not write "Let me search…", "I'll now analyze…", "The retriever returned…", or any other commentary. Every assistant token you emit with the `retriever query` Bash call becomes input tokens (and cached input tokens) for every subsequent turn in this session — quadratic cost. Go straight from reading the summary to writing the JSON file. The only assistant text in a query turn should be the tool calls themselves.
 
-Each hit has: `text`, `pdf_basename`, `page_number` (int, **1-indexed**: the first page of a PDF is page `1`), `pdf_page` (string composite key `"<basename>_<page_number>"` — not a number, don't use it as one), `_distance`, and `metadata` (JSON with `type` ∈ `text|table|chart|image`).
+Each hit emitted by `retriever query` has exactly: `page_number` (int, **1-indexed**), `source` (the file path), and `text`. (There is no `pdf_basename`/`metadata`/`_distance` in the query output — those live only in the LanceDB table, not the query result. Derive a display name from `source`. Schema asserted by `contract/actual-hit.schema.json` / `scripts/doctor.py`.)
 
 ## Keyword/regex search across the corpus
 
