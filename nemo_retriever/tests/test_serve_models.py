@@ -49,3 +49,14 @@ def test_wait_ready_true_against_fake_health_server() -> None:
 
 def test_wait_ready_false_when_nothing_listening() -> None:
     assert sm.wait_ready("127.0.0.1", 1, timeout=1.0, interval=0.2) is False
+
+
+def test_terminate_group_reaps_spawned_process() -> None:
+    proc = sm.spawn(["sleep", "100"])
+    try:
+        assert proc.poll() is None  # running
+        sm.terminate_group(proc, timeout=5)
+        assert proc.poll() is not None  # reaped
+    finally:
+        if proc.poll() is None:
+            proc.kill()

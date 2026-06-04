@@ -715,12 +715,18 @@ def serve_models_command(
     Prints an `export EMBED_INVOKE_URL=...` line; query/verify/MCP honor that env var.
     A warm query must also pass `--embed-model-name` matching the served model.
     """
-    import subprocess
+    import signal as _signal
 
     from nemo_retriever.adapters.cli import serve_models as sm
 
     argv = sm.build_vllm_argv(embed_model_name, host, embed_port)
-    proc = subprocess.Popen(argv)
+    proc = sm.spawn(argv)  # own process group, so the whole vLLM tree can be reaped
+
+    def _on_sigterm(_signum, _frame):
+        # Default SIGTERM would skip cleanup and orphan the vLLM children.
+        raise SystemExit(0)
+
+    _signal.signal(_signal.SIGTERM, _on_sigterm)
     try:
         if not sm.wait_ready(host, embed_port, timeout=ready_timeout):
             typer.echo("Error: embedder server did not become ready in time.", err=True)
@@ -730,12 +736,10 @@ def serve_models_command(
         typer.echo(sm.usage_hint(embed_model_name))
         typer.echo("Leave this running; Ctrl-C to stop.")
         proc.wait()
+    except KeyboardInterrupt:
+        pass
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=10)
-        except Exception:  # noqa: BLE001
-            proc.kill()
+        sm.terminate_group(proc)
 
 
 @app.callback()

@@ -10,7 +10,10 @@ nemotron embed model requires `--trust-remote-code`.
 
 from __future__ import annotations
 
+import os
 import shutil
+import signal
+import subprocess
 import time
 import urllib.request
 
@@ -42,6 +45,43 @@ def usage_hint(model: str) -> str:
     callers pass `--embed-model-name <model>` (there is no env fallback for it).
     """
     return f'Then query with the matching model name, e.g.:\n  retriever query "<q>" --embed-model-name {model}'
+
+
+def spawn(argv: list[str]) -> subprocess.Popen:
+    """Launch the server in its OWN process group so the whole tree can be reaped.
+
+    vLLM spawns multiprocessing children (e.g. ``VLLM::EngineCore``) that hold GPU
+    memory; killing only the parent orphans them. ``start_new_session=True`` puts
+    the parent in a new session/group so ``terminate_group`` can signal them all.
+    """
+    return subprocess.Popen(argv, start_new_session=True)
+
+
+def terminate_group(proc: subprocess.Popen, timeout: float = 10.0) -> None:
+    """Terminate ``proc`` AND its process group (SIGTERM, then SIGKILL on timeout)."""
+    if proc.poll() is not None:
+        return
+    try:
+        pgid = os.getpgid(proc.pid)
+    except Exception:  # noqa: BLE001
+        pgid = None
+    try:
+        if pgid is not None:
+            os.killpg(pgid, signal.SIGTERM)
+        else:
+            proc.terminate()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        proc.wait(timeout=timeout)
+    except Exception:  # noqa: BLE001
+        try:
+            if pgid is not None:
+                os.killpg(pgid, signal.SIGKILL)
+            else:
+                proc.kill()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def wait_ready(host: str, port: int, timeout: float = 600.0, interval: float = 3.0) -> bool:
