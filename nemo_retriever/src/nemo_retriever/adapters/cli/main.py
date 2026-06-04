@@ -693,6 +693,14 @@ def verify_command(
     typer.echo(json.dumps(result, indent=2, sort_keys=True, default=str))
 
 
+@app.command("mcp")
+def mcp_command() -> None:
+    """Serve the retriever's read tools (query, verify) over MCP (stdio transport)."""
+    from nemo_retriever.adapters.cli.mcp_server import mcp
+
+    mcp.run()
+
+
 @app.callback()
 def _callback(
     version: bool = typer.Option(
