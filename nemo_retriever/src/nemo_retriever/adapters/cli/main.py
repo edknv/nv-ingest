@@ -307,6 +307,11 @@ def ingest_command(
         "--caption-infographics/--no-caption-infographics",
         help="Caption infographic crops in addition to extracted images.",
     ),
+    hybrid: bool = typer.Option(
+        False,
+        "--hybrid",
+        help="Build a full-text (BM25) index alongside vectors so `query --hybrid` can run hybrid search.",
+    ),
     overwrite: bool = typer.Option(
         True,
         "--overwrite/--append",
@@ -528,6 +533,7 @@ def ingest_command(
                 lancedb_uri=lancedb_uri,
                 table_name=table_name,
                 overwrite=overwrite,
+                hybrid=hybrid,
                 page_elements_invoke_url=page_elements_invoke_url,
                 ocr_invoke_url=ocr_invoke_url,
                 ocr_version=ocr_version,

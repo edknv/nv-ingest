@@ -535,6 +535,7 @@ def resolve_ingest_plan(
     lancedb_uri: str = DEFAULT_LANCEDB_URI,
     table_name: str = DEFAULT_TABLE_NAME,
     overwrite: bool = True,
+    hybrid: bool = False,
     page_elements_invoke_url: str | None = None,
     ocr_invoke_url: str | None = None,
     ocr_version: OcrVersionValue | None = None,
@@ -639,9 +640,10 @@ def resolve_ingest_plan(
     )
     extract_params = ExtractParams(**extract_kwargs)
     embed_params = EmbedParams(**embed_kwargs) if embed_kwargs else None
-    vdb_params = VdbUploadParams(
-        vdb_kwargs={"uri": lancedb_uri, "table_name": table_name, "overwrite": bool(overwrite)}
-    )
+    vdb_upload_kwargs: dict[str, Any] = {"uri": lancedb_uri, "table_name": table_name, "overwrite": bool(overwrite)}
+    if hybrid:
+        vdb_upload_kwargs["hybrid"] = True
+    vdb_params = VdbUploadParams(vdb_kwargs=vdb_upload_kwargs)
     caption_params = _build_caption_params(
         caption=caption,
         caption_invoke_url=caption_invoke_url,
@@ -736,6 +738,7 @@ def ingest_documents(
     lancedb_uri: str = DEFAULT_LANCEDB_URI,
     table_name: str = DEFAULT_TABLE_NAME,
     overwrite: bool = True,
+    hybrid: bool = False,
     page_elements_invoke_url: str | None = None,
     ocr_invoke_url: str | None = None,
     ocr_version: OcrVersionValue | None = None,
@@ -816,6 +819,7 @@ def ingest_documents(
         lancedb_uri=lancedb_uri,
         table_name=table_name,
         overwrite=overwrite,
+        hybrid=hybrid,
         page_elements_invoke_url=page_elements_invoke_url,
         ocr_invoke_url=ocr_invoke_url,
         ocr_version=ocr_version,
