@@ -57,6 +57,11 @@ Expected: both queries return hits; the second is fast (a few seconds, no ~30–
 `kill "$(cat /tmp/vllm_embed.pid)" 2>/dev/null; rm -rf /tmp/sm /tmp/sm_db`.
 **Record the exact working `vllm serve` invocation (esp. the task flag).** If Step 1-3 failed irrecoverably, STOP: report that `vllm serve` can't warm-serve this embedder and the mechanism needs rethinking (do not proceed to Task 2).
 
+**SPIKE RESULT (executed 2026-06-03 — PASSED):**
+- Working invocation: `vllm serve nvidia/llama-nemotron-embed-1b-v2 --runner pooling --trust-remote-code --host 127.0.0.1 --port 8081` (the old `--task embed` is gone in vLLM 0.20; use `--runner pooling`, and the model needs `--trust-remote-code`). Ready in ~55s.
+- `/v1/embeddings` returns a 2048-dim vector.
+- Warm query works with **both** `--embed-invoke-url http://127.0.0.1:8081/v1/embeddings` **and** `--embed-model-name nvidia/llama-nemotron-embed-1b-v2` — vLLM returns **404** if the requested model name ≠ the served one. Two queries ran ~5.6s each (no per-query cold-load). Task 2 reflects these (argv uses `--runner pooling --trust-remote-code`; serve-models prints the model-name guidance).
+
 ---
 
 ### Task 2: Build the `serve-models` command (embedder)

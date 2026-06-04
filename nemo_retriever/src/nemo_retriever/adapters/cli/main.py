@@ -701,6 +701,43 @@ def mcp_command() -> None:
     mcp.run()
 
 
+@app.command("serve-models")
+def serve_models_command(
+    embed_model_name: str = typer.Option(
+        "nvidia/llama-nemotron-embed-1b-v2", "--embed-model-name", help="Embedding model to serve warm."
+    ),
+    host: str = typer.Option("127.0.0.1", "--host", help="Host to bind the vLLM server."),
+    embed_port: int = typer.Option(8081, "--embed-port", help="Port for the embeddings server."),
+    ready_timeout: float = typer.Option(600.0, "--ready-timeout", help="Seconds to wait for readiness."),
+) -> None:
+    """Serve a WARM embedder so `retriever query` avoids the per-query cold-load.
+
+    Prints an `export EMBED_INVOKE_URL=...` line; query/verify/MCP honor that env var.
+    A warm query must also pass `--embed-model-name` matching the served model.
+    """
+    import subprocess
+
+    from nemo_retriever.adapters.cli import serve_models as sm
+
+    argv = sm.build_vllm_argv(embed_model_name, host, embed_port)
+    proc = subprocess.Popen(argv)
+    try:
+        if not sm.wait_ready(host, embed_port, timeout=ready_timeout):
+            typer.echo("Error: embedder server did not become ready in time.", err=True)
+            raise typer.Exit(1)
+        typer.echo(f"Embedder warm at {sm.embeddings_url(host, embed_port)}")
+        typer.echo(sm.export_line(host, embed_port))
+        typer.echo(sm.usage_hint(embed_model_name))
+        typer.echo("Leave this running; Ctrl-C to stop.")
+        proc.wait()
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except Exception:  # noqa: BLE001
+            proc.kill()
+
+
 @app.callback()
 def _callback(
     version: bool = typer.Option(
