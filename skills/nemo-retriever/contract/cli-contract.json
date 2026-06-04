@@ -1,8 +1,8 @@
 {
-  "contract_version": "1.3.0",
+  "contract_version": "1.4.0",
   "subcommands": ["ingest", "query", "verify"],
   "query": {
-    "required_flags": ["--top-k", "--content-types", "--rerank", "--hybrid", "--embed-model-name", "--lancedb-uri", "--table-name"],
+    "required_flags": ["--top-k", "--content-types", "--rerank", "--hybrid", "--max-text-chars", "--embed-model-name", "--lancedb-uri", "--table-name"],
     "forbidden_flags": [],
     "default_table_name": "nemo-retriever",
     "hit_schema": "actual-hit.schema.json"
