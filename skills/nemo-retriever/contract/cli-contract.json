@@ -1,6 +1,6 @@
 {
-  "contract_version": "1.5.0",
-  "subcommands": ["ingest", "query", "verify", "mcp"],
+  "contract_version": "1.6.0",
+  "subcommands": ["ingest", "query", "verify", "mcp", "serve-models"],
   "query": {
     "required_flags": ["--top-k", "--content-types", "--rerank", "--hybrid", "--max-text-chars", "--embed-model-name", "--lancedb-uri", "--table-name"],
     "forbidden_flags": [],
