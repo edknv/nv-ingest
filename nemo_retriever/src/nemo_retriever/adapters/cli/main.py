@@ -31,6 +31,7 @@ from nemo_retriever.adapters.cli.sdk_workflow import (
     verify_claim,
 )
 from nemo_retriever.vdb.records import RetrievalHit
+from nemo_retriever.adapters.cli._hit_format import _query_cli_hit
 from nemo_retriever.version import get_version_info
 
 logger = logging.getLogger(__name__)
@@ -72,29 +73,7 @@ for _name, _module, _attr in _LAZY_SUBAPPS:
 _ROOT_CLI_ERRORS = (OSError, RuntimeError, ValueError, ValidationError)
 
 
-def _query_cli_hit(hit: RetrievalHit, max_text_chars: int | None = None) -> dict[str, object]:
-    metadata = hit.get("metadata") or {}
-    modality = hit.get("content_type") or metadata.get("type") or "text"
-    # Relevance the engine ranked by: rerank/hybrid score if present, else the
-    # vector distance, else null. Hit ORDER is authoritative; score is informational.
-    if "_score" in hit:
-        score: object = hit["_score"]
-    elif "_distance" in hit:
-        score = hit["_distance"]
-    else:
-        score = None
-    text = hit.get("text", "")
-    # Compact output: truncate text to max_text_chars (0 = omit -> metadata-only
-    # summary). None/negative = full text (default, backward-compatible).
-    if max_text_chars is not None and max_text_chars >= 0 and len(text) > max_text_chars:
-        text = text[:max_text_chars] + ("…" if max_text_chars > 0 else "")
-    return {
-        "source": hit.get("source", ""),
-        "page_number": hit.get("page_number"),
-        "text": text,
-        "modality": modality,
-        "score": score,
-    }
+# _query_cli_hit moved to adapters/cli/_hit_format.py (shared with the MCP surface)
 
 
 def _silence_noisy_libraries() -> None:
