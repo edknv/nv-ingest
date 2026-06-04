@@ -22,3 +22,7 @@ about the installed **engine**. Run `scripts/doctor.py` to verify the installed
 LIVE probe — ingest a tiny fixture, run a query, validate the hit against `actual-hit.schema.json`
 — plus static `--help` flag-surface checks. Any divergence (e.g. a renamed field, a removed flag,
 `--input-type` reappearing) fails loudly with a remediation hint.
+
+## Changelog
+- **1.1.0** — query hits now carry `modality` (required) and `score` (optional); see `actual-hit.schema.json`. First step from `actual-hit` toward `target-hit`.
+- **1.0.0** — initial contract (lean `{page_number, source, text}` hit, flag surface, table conventions).

@@ -1,13 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "nemo-retriever/actual-hit",
-  "title": "Actual retriever query hit (engine v26.x)",
+  "title": "Actual retriever query hit (engine v26.x, contract 1.1.0)",
   "type": "object",
-  "required": ["page_number", "source", "text"],
+  "required": ["page_number", "source", "text", "modality"],
   "properties": {
     "page_number": { "type": "integer", "description": "1-indexed page, or segment/timestamp for A/V" },
     "source": { "type": "string", "description": "source file path (flattened from the table's source JSON)" },
-    "text": { "type": "string" }
+    "text": { "type": "string" },
+    "modality": { "type": "string", "description": "content type: text | table | chart | image | audio | video_frame" },
+    "score": { "type": ["number", "null"], "description": "relevance: _score (higher=better) or _distance (lower=closer), null if neither; hit ORDER is authoritative" }
   },
   "additionalProperties": true
 }

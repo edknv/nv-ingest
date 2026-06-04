@@ -100,18 +100,29 @@ def main():
 
 
 def validate(obj, schema):
-    """Tiny dependency-free validator for the subset of JSON Schema we use."""
+    """Tiny dependency-free validator for the subset of JSON Schema we use.
+
+    Handles both a single type string and a union list (e.g. ["number", "null"]).
+    """
     if not isinstance(obj, dict):
         return False, "hit is not an object"
     for req in schema.get("required", []):
         if req not in obj:
             return False, f"missing required field '{req}'"
-    types = {"integer": int, "string": str, "number": (int, float), "object": dict, "array": list}
+    types = {"integer": int, "string": str, "number": (int, float), "object": dict,
+             "array": list, "null": type(None), "boolean": bool}
     for name, spec in schema.get("properties", {}).items():
-        if name in obj and "type" in spec:
-            py = types.get(spec["type"])
-            if py and not isinstance(obj[name], py):
-                return False, f"field '{name}' should be {spec['type']}, got {type(obj[name]).__name__}"
+        if name not in obj or "type" not in spec:
+            continue
+        allowed = spec["type"] if isinstance(spec["type"], list) else [spec["type"]]
+        pytypes = []
+        for key in allowed:
+            mapped = types.get(key)
+            if mapped is None:
+                continue
+            pytypes.extend(mapped if isinstance(mapped, tuple) else [mapped])
+        if pytypes and not isinstance(obj[name], tuple(pytypes)):
+            return False, f"field '{name}' should be {spec['type']}, got {type(obj[name]).__name__}"
     return True, ""
 
 

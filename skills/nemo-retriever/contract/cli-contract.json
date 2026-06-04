@@ -1,5 +1,5 @@
 {
-  "contract_version": "1.0.0",
+  "contract_version": "1.1.0",
   "query": {
     "required_flags": ["--top-k", "--content-types", "--rerank", "--embed-model-name", "--lancedb-uri", "--table-name"],
     "forbidden_flags": [],
