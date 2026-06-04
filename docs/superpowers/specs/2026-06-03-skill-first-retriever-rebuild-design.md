@@ -6,15 +6,15 @@
 
 ## Motivation
 
-Today the `nemo-retriever` **skill** is a thick adapter that compensates for a **library** that was not built for agent consumption. This session produced direct evidence of the compensation tax:
+"Skill" here means **`SKILL.md`** — the disciplined single-query-turn `nemo-retriever` skill — not any workflow built on top of it. Today that skill is a thick adapter that compensates for a **library** not built for agent consumption. The compensations are visible *in the skill's own files*:
 
-- Skill docs assume query hits carry `pdf_basename` / `metadata.type` / `rank` / `_distance`; the installed CLI emits lean `{page_number, source, text}` → the workflow needed schema-tolerance hacks.
-- Skill `setup.md` documents an `--input-type` flag for per-format ingest; the installed CLI has **no such flag** and ingests mixed folders in one pass → a multi-pass design was written, shipped, and had to be ripped out.
-- The CLI's default table name differs from what the skill assumes → every query must pass `--table-name`/`--lancedb-uri` explicitly.
-- Every `retriever query` cold-loads the embedder/reranker on GPU via vLLM (~30–60s) → the dominant real cost of every run.
-- Multi-angle retrieval and chart/image verification had to be **orchestrated by an agent** (the entire `nemo-retriever-workflow`) because the library offers neither natively.
+- **Schema gymnastics** — `query.md` documents hits as `pdf_basename` / `metadata.type` / `rank` / `_distance`, but the installed CLI emits lean `{page_number, source, text}`; the skill must reconcile the difference and derive a display name from `source`.
+- **A manual verification recipe** — `query.md`'s entire "Charts and images" section, including "run ONE `pdf stage page-elements --method pdfium` call to confirm the number," is a hand-rolled `verify` the skill performs because the engine offers none.
+- **Cache-cost hard limits** — the skill's "≤2 Bash calls, no narration between calls, quadratic cache cost" rules exist purely to manage agent economics the engine forces on it.
+- **Drift-prone setup recipes** — `setup.md` documents an `--input-type` flag per format that the installed CLI **does not have** (it auto-detects in one pass), and a default table name that differs from what the skill uses, so every query needs explicit `--table-name`/`--lancedb-uri`.
+- **Cold-load cost** — every `retriever query` cold-loads the embedder/reranker on GPU via vLLM (~30–60s), which `troubleshooting.md` and the hard-limits exist to work around.
 
-**Thesis:** "Reorient everything for the skill" = push the skill's hard-won compensations *down into the library* behind a stable typed contract, so the skill becomes thin and the agent stops doing the library's job. The `nemo-retriever-workflow` is a prototype of what the library should do natively.
+**Thesis:** "Reorient everything for the skill" = push these `SKILL.md` compensations *down into the library* behind a stable typed contract, so `SKILL.md` collapses to a thin, declarative page and stops doing the engine's job. *(The `nemo-retriever-workflow` built earlier is one optional consumer that independently hit the same gaps — a useful corroboration, not the design's subject.)*
 
 ## Objectives (ranked, with dependencies)
 
@@ -60,15 +60,15 @@ Keep the single-pass auto-detect (already the real behavior), but rebuilt to be:
 - **Loud about gaps:** always emit `IngestManifest` (skipped formats + reasons + install hints); never silently drop a format.
 - **Modality-faithful at extraction:** every chunk tagged with `modality` + `fidelity` at ingest time, so downstream honesty is structural.
 
-### 3. Retrieval strategies as a first-class primitive (Objective 2 — the big one)
+### 3. Multi-strategy fusion *inside* the single query (Objective 2 — the big one)
 
-The workflow's manual 5-angle fan-out becomes one engine call:
+The skill issues **one disciplined query per turn** — it does not fan out. So the engine makes that single call strong internally: multi-strategy retrieval + fusion happen *inside* `query()`, transparently to the skill.
 
 ```
 query(q, strategies=[semantic, lexical, visual, tabular], fuse=rrf, verify=auto) -> Hit[]
 ```
 
-The engine owns fan-out + reciprocal-rank fusion + dedup-by-`(doc, locator, modality)`. Strategies are a pluggable registry (`semantic` = embed+rerank, `lexical` = keyword/regex, `visual`/`tabular` = modality filters), so adding an angle never touches the skill. This subsumes Phase 1 of the workflow and removes per-angle CLI-flag knowledge from the agent.
+The engine owns fan-out + reciprocal-rank fusion + dedup-by-`(doc, locator, modality)`. Strategies are a pluggable registry (`semantic` = embed+rerank, `lexical` = keyword/regex, `visual`/`tabular` = modality filters), defaulting to all of them so the skill's one call is automatically as strong as a hand-built sweep — with no orchestration, no per-angle CLI flags, and no subagents (which the skill bans anyway). Single-strategy stays available for callers who want it; the skill simply takes the strong default.
 
 ### 4. Verification as an engine op (Objective 2)
 
@@ -76,7 +76,7 @@ The engine owns fan-out + reciprocal-rank fusion + dedup-by-`(doc, locator, moda
 verify(claim, hit) -> Verdict
 ```
 
-Auto-selects the strongest independent modality (prose re-extract for PDF; cross-modal corroboration otherwise). Because the engine knows `fidelity`, it can auto-flag claims resting only on a `vlm_caption` and verify them inside `query(..., verify=auto)`, returning answer-ready, trust-tagged evidence. This is the workflow's Phase 3, promoted into the engine.
+Auto-selects the strongest independent modality (prose re-extract for PDF; cross-modal corroboration otherwise). Because the engine knows `fidelity`, it can auto-flag claims resting only on a `vlm_caption` and verify them inside `query(..., verify=auto)`, returning answer-ready, trust-tagged evidence. This **replaces `query.md`'s hand-rolled "run ONE `pdf stage page-elements` call to confirm the chart number" recipe** — the skill stops carrying a verification procedure the engine should own.
 
 ### 5. Persistent serving (Objective 3 — the cost multiplier)
 
@@ -115,7 +115,7 @@ Stand up the contract API + daemon **alongside** the current engine; move the sk
 
 ## The tell that this design is right
 
-The `nemo-retriever-workflow` built this session becomes either obsolete or a ~20-line batch/eval wrapper: multi-angle sweep and chart/image verification are now single engine calls. The orchestration assembled by hand is exactly what migrates into the engine.
+`SKILL.md` collapses from a multi-file adapter (SKILL + setup/query/troubleshooting/cli references) to roughly a **single declarative page**: start daemon → ingest once → `query` with verify → cite via provenance. The schema gymnastics, the chart/image verification recipe, the cache-cost hard-limits, and the per-format setup recipes all disappear because the engine no longer surprises the skill. *(Secondary corroboration: the `nemo-retriever-workflow` also becomes obsolete or a ~20-line wrapper, since the multi-strategy sweep and verification it hand-assembled are now single engine calls — but the skill, not the workflow, is the design's measure of success.)*
 
 ## Non-goals
 
