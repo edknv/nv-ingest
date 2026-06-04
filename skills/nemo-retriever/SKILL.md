@@ -33,7 +33,7 @@ If `doctor.py` reports any `[FAIL]`, the installed `retriever` has drifted from 
 
 For the full `retriever ingest` / `retriever query` CLI specs, see `references/cli/ingest.md` and `references/cli/query.md`. You do not need these for routine turns — `<RETRIEVER_VENV>/bin/retriever <subcommand> --help` is faster.
 
-Before ingesting a mixed folder, inventory extensions (`find <dir> -name '*.*' | sed 's/.*\.//' | sort -u`) — `--input-type=auto` silently drops anything outside the supported set. See `references/troubleshooting.md` "Unsupported file types".
+Before ingesting a mixed folder, inventory extensions (`find <dir> -name '*.*' | sed 's/.*\.//' | sort -u`) — `retriever ingest` auto-detects formats in one pass and silently drops anything outside the supported set. See `references/troubleshooting.md` "Unsupported file types".
 
 ## Hard limits (apply to every turn)
 
