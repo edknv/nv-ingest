@@ -24,6 +24,7 @@ LIVE probe — ingest a tiny fixture, run a query, validate the hit against `act
 `--input-type` reappearing) fails loudly with a remediation hint.
 
 ## Changelog
+- **1.5.0** — `mcp` subcommand added: serves the read tools (`query`, `verify`) over MCP (stdio) via FastMCP, so agent harnesses can call the engine directly.
 - **1.4.0** — `query` gains `--max-text-chars N`: truncate each hit's text to N chars (`0` = metadata-only summary; unset = full). Compact output for token economy.
 - **1.3.0** — `verify` subcommand added: fetches independent `text`/`table` evidence for a claim's (source, page) + a mechanical term/number-overlap signal. Engine retrieves; caller judges agreement.
 - **1.2.0** — `--hybrid` flag added to `ingest` (builds the BM25/FTS index) and `query` (vector + full-text retrieval). Opt-in; a `--hybrid` query needs a `--hybrid`-built index.

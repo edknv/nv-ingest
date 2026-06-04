@@ -17,7 +17,7 @@ If `command -v retriever` returns nothing, follow `references/install.md` to ins
 
 ## Contract (run once on the setup turn)
 
-This skill targets engine **contract_version 1.4.0** (`contract/cli-contract.json`). On the setup turn, after the index is built, verify the installed engine matches:
+This skill targets engine **contract_version 1.5.0** (`contract/cli-contract.json`). The engine can also be driven over MCP (`retriever mcp`, stdio) for harnesses that prefer MCP tools (`query`, `verify`) over CLI calls. On the setup turn, after the index is built, verify the installed engine matches:
 
 `<RETRIEVER_VENV>/bin/python <skill_dir>/scripts/doctor.py`
 
