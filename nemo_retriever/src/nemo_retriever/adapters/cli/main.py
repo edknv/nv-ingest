@@ -28,6 +28,7 @@ from nemo_retriever.adapters.cli.sdk_workflow import (
     TableOutputFormatValue,
     ingest_documents,
     query_documents,
+    verify_claim,
 )
 from nemo_retriever.vdb.records import RetrievalHit
 from nemo_retriever.version import get_version_info
@@ -676,6 +677,31 @@ def query_command(
         raise typer.Exit(1) from exc
 
     typer.echo(json.dumps([_query_cli_hit(hit) for hit in hits], indent=2, sort_keys=True, default=str))
+
+
+@app.command("verify")
+def verify_command(
+    claim: str = typer.Argument(..., help="Claim to find independent evidence for."),
+    source: str = typer.Option(..., "--source", help="Document the claim is attributed to (basename, with or without .pdf)."),
+    page: int | None = typer.Option(None, "--page", help="Restrict to this 1-indexed page/segment."),
+    against: str = typer.Option("text,table", "--against", help="Comma-separated modalities treated as independent evidence."),
+    lancedb_uri: str = typer.Option(DEFAULT_LANCEDB_URI, "--lancedb-uri", help="LanceDB database URI."),
+    table_name: str = typer.Option(DEFAULT_TABLE_NAME, "--table-name", help="LanceDB table name."),
+) -> None:
+    """Fetch independent text/table evidence for a claim's location (you judge agreement)."""
+    try:
+        result = verify_claim(
+            claim,
+            source,
+            page=page,
+            lancedb_uri=lancedb_uri,
+            table_name=table_name,
+            against=against,
+        )
+    except _ROOT_CLI_ERRORS as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(json.dumps(result, indent=2, sort_keys=True, default=str))
 
 
 @app.callback()

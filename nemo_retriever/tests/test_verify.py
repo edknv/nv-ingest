@@ -50,3 +50,37 @@ def test_verify_reports_no_independent_evidence_when_only_chart(tmp_path) -> Non
     assert out["independent_evidence_found"] is False
     assert out["evidence"] == []
     assert out["unmatched_terms"] == ["999", "anything"]
+
+
+def test_root_verify_cli_prints_json(monkeypatch) -> None:
+    import importlib
+
+    from typer.testing import CliRunner
+
+    cli_main = importlib.import_module("nemo_retriever.adapters.cli.main")
+    captured: dict = {}
+
+    def fake_verify(claim, source, **kwargs):
+        captured["call"] = (claim, source, kwargs)
+        return {
+            "claim": claim, "source": source, "page": kwargs.get("page"),
+            "evidence": [], "independent_evidence_found": False,
+            "matched_terms": [], "unmatched_terms": [],
+        }
+
+    # verify_command calls the name imported INTO main.py, so patch it there.
+    monkeypatch.setattr(cli_main, "verify_claim", fake_verify)
+
+    result = CliRunner().invoke(
+        cli_main.app,
+        ["verify", "Premium desk fan costs $150", "--source", "doc", "--page", "1",
+         "--lancedb-uri", "/tmp/lancedb", "--table-name", "docs"],
+    )
+
+    assert result.exit_code == 0
+    out = json.loads(result.output)
+    assert out["claim"] == "Premium desk fan costs $150"
+    assert out["source"] == "doc"
+    assert captured["call"][2]["page"] == 1
+    assert captured["call"][2]["against"] == "text,table"
+    assert captured["call"][2]["table_name"] == "docs"
