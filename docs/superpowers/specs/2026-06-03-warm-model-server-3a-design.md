@@ -80,3 +80,18 @@ Because `query`/`verify`/the MCP tools already consume `embed_invoke_url`/`reran
 ## Open questions (resolve during the plan)
 - Exact vLLM serve flags/task for the embedder (`--task embed`?) and reranker (`--task score`/rerank?), and the exact reranker endpoint path `rerank.py` expects — pin in the spike.
 - Port defaults and whether to also write the exports to a dotfile the CLI can source automatically (deferred; explicit export for v1).
+
+## Reranker spike result (executed 2026-06-03)
+
+**Outcome: reranker-warm via plain `vllm serve` is NOT viable as-is — deferred.**
+
+vLLM's OpenAI server exposes reranking only at `/score` and `/rerank` (verified in
+`vllm/entrypoints/openai/`), with the `{query, documents}` shape. But `rerank.py`
+POSTs to **`/v1/ranking`** with the NVIDIA NIM shape (`{"model", "query":{"text"},
+"passages":[{"text"}]}`) — a path vLLM does not expose. So the two protocols don't
+match.
+
+**Decision:** embedder-warm ships now (the dominant cold-load). Reranker-warm is a
+**follow-up slice** needing one of: (a) a thin `/v1/ranking`→vLLM-`/score` adapter that
+`serve-models` also runs, or (b) a `rerank.py` option to speak vLLM's native `/rerank`
+protocol. Reranking is off by default, so this does not block the embedder win.
