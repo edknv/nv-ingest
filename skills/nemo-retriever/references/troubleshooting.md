@@ -26,7 +26,7 @@ For an unlisted subcommand: `<RETRIEVER_VENV>/bin/retriever <subcommand> --help`
 
 ## Unsupported file types (silent filter — the v2 regression mode)
 
-`retriever ingest --input-type=auto` silently drops `.flac`, `.rtf`, `.eml`, `.py`, `.jsonl`, `.zip`, etc. The "Ingested N documents" line uses the count of supported files — N may be lower than the folder count with no error. Before ingest, inventory:
+`retriever ingest` (which auto-detects formats; there is no `--input-type` flag) silently drops `.flac`, `.rtf`, `.eml`, `.py`, `.jsonl`, `.zip`, etc. The "Ingested N documents" line uses the count of supported files — N may be lower than the folder count with no error. Before ingest, inventory:
 
 ```bash
 find <dir> -type f -name '*.*' | sed 's/.*\.//' | sort -u
