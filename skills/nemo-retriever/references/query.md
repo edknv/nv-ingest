@@ -45,7 +45,7 @@ When `metadata.type` of a hit is `chart` or `image`, its `text` field is a model
 
 If a question asks for an exact percentage or a directional claim **and the evidence is only a chart/image hit** (no `text`-type hit corroborates the same number or direction):
 
-1. Run the targeted `<RETRIEVER_VENV>/bin/retriever pdf stage page-elements --method pdfium` text-extract on the rank-1 PDF (this counts as your second tool call) and look for the number in prose.
+1. Run `<RETRIEVER_VENV>/bin/retriever verify "<the chart claim>" --source <pdf_basename> --page <N>` (this counts as your second tool call). It returns the page's independent `text`/`table` evidence plus which of the claim's numbers/terms appear in it — you then judge whether the prose confirms the chart number.
 2. If prose confirms the chart number, assert it confidently.
 3. If prose doesn't mention it, **quote the chart transcription verbatim with an explicit hedge in `final_answer`**: "The chart on page N indicates [verbatim phrase] (chart-derived, not verified against prose)." Do NOT restate the chart's number as a confident fact.
 

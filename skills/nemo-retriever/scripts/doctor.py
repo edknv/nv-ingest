@@ -63,6 +63,14 @@ def main():
         check(flag not in ihelp, f"ingest does NOT have {flag}",
               "engine changed: skill assumes single-pass auto-detect")
 
+    # --- Subcommands exist (static, no GPU) ---
+    for sub in contract.get("subcommands", []):
+        try:
+            rc = subprocess.run([bin_path, sub, "--help"], capture_output=True, text=True, timeout=60).returncode
+        except Exception:  # noqa: BLE001
+            rc = 1
+        check(rc == 0, f"subcommand `{sub}` exists")
+
     # --- Live probe: ingest tiny fixture, query, validate hit schema (GPU) ---
     tmp = tempfile.mkdtemp(prefix="retriever_doctor_")
     try:

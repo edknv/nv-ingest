@@ -24,6 +24,7 @@ LIVE probe — ingest a tiny fixture, run a query, validate the hit against `act
 `--input-type` reappearing) fails loudly with a remediation hint.
 
 ## Changelog
+- **1.3.0** — `verify` subcommand added: fetches independent `text`/`table` evidence for a claim's (source, page) + a mechanical term/number-overlap signal. Engine retrieves; caller judges agreement.
 - **1.2.0** — `--hybrid` flag added to `ingest` (builds the BM25/FTS index) and `query` (vector + full-text retrieval). Opt-in; a `--hybrid` query needs a `--hybrid`-built index.
 - **1.1.0** — query hits now carry `modality` (required) and `score` (optional); see `actual-hit.schema.json`. First step from `actual-hit` toward `target-hit`.
 - **1.0.0** — initial contract (lean `{page_number, source, text}` hit, flag surface, table conventions).
