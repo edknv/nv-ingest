@@ -1092,12 +1092,20 @@ def retrieve(
     lancedb_uri: str = DEFAULT_LANCEDB_URI,
     table_name: str = DEFAULT_TABLE_NAME,
     embed_model_name: str | None = None,
+    embed_invoke_url: str | None = None,
 ) -> dict[str, Any]:
     """Skill-first retrieve: one fused query -> answer-ready, fidelity-tagged, cited evidence + coverage.
 
     Single hybrid (vector+BM25) query; if the index has no FTS index, gracefully
     falls back to vector-only. Returns the ``retrieve_result`` contract shape.
+
+    ``embed_invoke_url`` defaults from ``EMBED_INVOKE_URL`` (set by ``retriever
+    serve-models``) so retrieval is warm when a model server is running.
     """
+    import os as _os
+
+    endpoint = embed_invoke_url if embed_invoke_url is not None else (_os.environ.get("EMBED_INVOKE_URL") or None)
+
     def _run(use_hybrid: bool) -> list:
         return query_documents(
             question,
@@ -1106,6 +1114,7 @@ def retrieve(
             lancedb_uri=lancedb_uri,
             table_name=table_name,
             embed_model_name=embed_model_name,
+            embed_invoke_url=endpoint,
         )
 
     if hybrid:

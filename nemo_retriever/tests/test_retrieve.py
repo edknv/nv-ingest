@@ -111,3 +111,32 @@ def test_retrieve_cli_prints_json(monkeypatch) -> None:
     out = json.loads(result.output)
     assert out["coverage"]["strategies_used"] == ["semantic"]
     assert out["evidence"] == []
+
+
+def test_retrieve_threads_embed_invoke_url_from_env(monkeypatch):
+    captured = {}
+
+    def fake_qd(question, **k):
+        captured.update(k)
+        return [_hit("p")]
+
+    monkeypatch.setattr(sw, "query_documents", fake_qd)
+    monkeypatch.setenv("EMBED_INVOKE_URL", "http://127.0.0.1:8081/v1/embeddings")
+    sw.retrieve("q", lancedb_uri="x", table_name="t")
+    assert captured.get("embed_invoke_url") == "http://127.0.0.1:8081/v1/embeddings"
+
+
+def test_retrieve_explicit_embed_invoke_url_overrides_env(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(sw, "query_documents", lambda question, **k: captured.update(k) or [_hit("p")])
+    monkeypatch.setenv("EMBED_INVOKE_URL", "http://env/v1/embeddings")
+    sw.retrieve("q", lancedb_uri="x", table_name="t", embed_invoke_url="http://explicit/v1/embeddings")
+    assert captured.get("embed_invoke_url") == "http://explicit/v1/embeddings"
+
+
+def test_retrieve_no_env_means_no_endpoint(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(sw, "query_documents", lambda question, **k: captured.update(k) or [_hit("p")])
+    monkeypatch.delenv("EMBED_INVOKE_URL", raising=False)
+    sw.retrieve("q", lancedb_uri="x", table_name="t")
+    assert captured.get("embed_invoke_url") is None
