@@ -1014,6 +1014,127 @@ def verify_claim(
     }
 
 
+_KNOWN_MODALITIES = {"text", "table", "chart", "image", "audio", "video_frame"}
+
+
+def _normalize_modality(value: Any) -> str:
+    m = str(value or "text").lower()
+    if m in _KNOWN_MODALITIES:
+        return m
+    if m.startswith("table"):
+        return "table"
+    if m.startswith("chart"):
+        return "chart"
+    if m.startswith(("image", "infographic")):
+        return "image"
+    if m.startswith("video"):
+        return "video_frame"
+    if m.startswith("audio"):
+        return "audio"
+    return "text"
+
+
+def _evidence_item(hit: dict[str, Any]) -> dict[str, Any]:
+    import os as _os
+
+    from nemo_retriever.vdb.records import _derive_fidelity
+
+    meta = hit.get("metadata") if isinstance(hit.get("metadata"), dict) else {}
+    src_raw = hit.get("pdf_basename") or hit.get("source") or ""
+    source = _os.path.basename(str(src_raw))
+    if source.lower().endswith(".pdf"):
+        source = source[:-4]
+    raw_modality = hit.get("content_type") or meta.get("type") or "text"
+    modality = _normalize_modality(raw_modality)
+
+    page = hit.get("page_number")
+    if page is not None:
+        locator = {"kind": "page", "value": page}
+        citation = f"{source} p.{page}"
+    elif meta.get("segment_start_seconds") is not None:
+        locator = {"kind": "segment", "value": meta["segment_start_seconds"]}
+        citation = f"{source} @{meta['segment_start_seconds']}"
+    elif meta.get("frame_timestamp_seconds") is not None:
+        locator = {"kind": "timestamp", "value": meta["frame_timestamp_seconds"]}
+        citation = f"{source} @{meta['frame_timestamp_seconds']}"
+    elif meta.get("bbox_xyxy_norm") is not None:
+        locator = {"kind": "bbox", "value": meta["bbox_xyxy_norm"]}
+        citation = source
+    else:
+        locator = {"kind": "page", "value": None}
+        citation = source
+
+    fidelity = meta.get("fidelity") or _derive_fidelity(raw_modality, meta, meta) or "verbatim"
+
+    if "_score" in hit and hit["_score"] is not None:
+        score: float = hit["_score"]
+    elif "_distance" in hit and hit["_distance"] is not None:
+        score = hit["_distance"]
+    else:
+        score = 0.0
+
+    return {
+        "text": hit.get("text", ""),
+        "source": source,
+        "locator": locator,
+        "modality": modality,
+        "fidelity": fidelity,
+        "score": score,
+        "citation": citation,
+    }
+
+
+def retrieve(
+    question: str,
+    *,
+    top_k: int = 10,
+    hybrid: bool = True,
+    lancedb_uri: str = DEFAULT_LANCEDB_URI,
+    table_name: str = DEFAULT_TABLE_NAME,
+    embed_model_name: str | None = None,
+) -> dict[str, Any]:
+    """Skill-first retrieve: one fused query -> answer-ready, fidelity-tagged, cited evidence + coverage.
+
+    Single hybrid (vector+BM25) query; if the index has no FTS index, gracefully
+    falls back to vector-only. Returns the ``retrieve_result`` contract shape.
+    """
+    def _run(use_hybrid: bool) -> list:
+        return query_documents(
+            question,
+            top_k=top_k,
+            hybrid=use_hybrid,
+            lancedb_uri=lancedb_uri,
+            table_name=table_name,
+            embed_model_name=embed_model_name,
+        )
+
+    if hybrid:
+        try:
+            hits = _run(True)
+            strategies = ["semantic", "lexical"]
+        except Exception:  # noqa: BLE001 — e.g. table has no FTS index; degrade to vector
+            hits = _run(False)
+            strategies = ["semantic"]
+    else:
+        hits = _run(False)
+        strategies = ["semantic"]
+
+    evidence = [_evidence_item(h) for h in (hits or [])]
+    sources = {e["source"] for e in evidence if e.get("source")}
+    thin: list[str] = []
+    if not evidence:
+        thin.append("no matches — likely out of corpus")
+    else:
+        if len(sources) == 1:
+            thin.append("single source")
+        if all(e["fidelity"] == "vlm_caption" for e in evidence):
+            thin.append("only low-fidelity (chart/image) evidence")
+    return {
+        "evidence": evidence,
+        "coverage": {"strategies_used": strategies, "n_docs_seen": len(sources), "thin_spots": thin},
+    }
+
+
 def query_documents(
     query: str,
     *,
