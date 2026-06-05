@@ -93,3 +93,21 @@ def test_retrieve_graceful_vector_fallback(monkeypatch):
     assert calls == [True, False]  # tried hybrid, fell back to vector
     assert r["coverage"]["strategies_used"] == ["semantic"]
     assert len(r["evidence"]) == 1
+
+
+def test_retrieve_cli_prints_json(monkeypatch) -> None:
+    import importlib
+
+    from typer.testing import CliRunner
+
+    cli_main = importlib.import_module("nemo_retriever.adapters.cli.main")
+
+    monkeypatch.setattr(
+        sw, "retrieve",
+        lambda question, **k: {"evidence": [], "coverage": {"strategies_used": ["semantic"], "n_docs_seen": 0, "thin_spots": ["no matches — likely out of corpus"]}},
+    )
+    result = CliRunner().invoke(cli_main.app, ["retrieve", "q", "--no-hybrid", "--table-name", "t"])
+    assert result.exit_code == 0
+    out = json.loads(result.output)
+    assert out["coverage"]["strategies_used"] == ["semantic"]
+    assert out["evidence"] == []

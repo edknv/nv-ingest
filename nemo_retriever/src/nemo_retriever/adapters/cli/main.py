@@ -701,6 +701,34 @@ def mcp_command() -> None:
     mcp.run()
 
 
+@app.command("retrieve")
+def retrieve_command(
+    question: str = typer.Argument(..., help="The question to retrieve evidence for."),
+    top_k: int = typer.Option(10, "--top-k", min=1, help="Max evidence items."),
+    hybrid: bool = typer.Option(True, "--hybrid/--no-hybrid", help="Fused vector+BM25 (falls back to vector if no FTS index)."),
+    lancedb_uri: str = typer.Option(DEFAULT_LANCEDB_URI, "--lancedb-uri", help="LanceDB database URI."),
+    table_name: str = typer.Option(DEFAULT_TABLE_NAME, "--table-name", help="LanceDB table name."),
+    embed_model_name: str | None = typer.Option(None, "--embed-model-name", help="Embedding model name."),
+) -> None:
+    """Retrieve answer-ready, fidelity-tagged, cited evidence + coverage for a question."""
+    from nemo_retriever.adapters.cli.sdk_workflow import retrieve
+
+    try:
+        with _quiet_capture():
+            result = retrieve(
+                question,
+                top_k=top_k,
+                hybrid=hybrid,
+                lancedb_uri=lancedb_uri,
+                table_name=table_name,
+                embed_model_name=embed_model_name,
+            )
+    except _ROOT_CLI_ERRORS as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(json.dumps(result, indent=2, sort_keys=True, default=str))
+
+
 @app.command("serve-models")
 def serve_models_command(
     embed_model_name: str = typer.Option(
