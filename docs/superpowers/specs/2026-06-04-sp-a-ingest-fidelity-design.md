@@ -56,3 +56,17 @@ Modality is **unchanged and still stored separately**, so the skill sees both `m
 ## Open questions
 - Does `needs_ocr_for_text` survive to `row["metadata"]` at the funnel? Pinned by the live validation; if not, text=`verbatim` fallback + a follow-up to thread it.
 - `infographic` modality maps to `ocr` here; revisit if a distinct treatment is wanted.
+
+## SP-A live result (executed 2026-06-04)
+
+Ingested `multimodal_test.pdf` (+ a `.wav`) → 11 rows. Stored `(type, fidelity)`:
+`(chart, ocr)×3`, `(table, ocr)×2`, `(text, verbatim)×6`. **Fidelity is stored and
+queryable — SP-A's goal met.**
+
+Findings:
+- **`needs_ocr_for_text` did NOT survive to the funnel** — all text chunks got `verbatim`
+  (no `text→ocr`). The verbatim/ocr split is best-effort in SP-A; threading the flag from
+  the OCR stage to `row["metadata"]` is the follow-up to make it fully correct.
+- The `.wav` produced no rows this run (ASR likely needs an endpoint/extra not active), so
+  the `audio→transcribed` branch wasn't exercised live — it remains unit-tested only.
+- `chart`/`table`→`ocr` and `text`→`verbatim` confirmed end-to-end.
