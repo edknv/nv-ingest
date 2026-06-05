@@ -81,3 +81,34 @@ def test_mcp_verify_tool(monkeypatch) -> None:
     res = _run(go())
     assert res.data["claim"] == "c"
     assert res.data["source"] == "doc"
+
+
+def test_mcp_exposes_retrieve_tool() -> None:
+    async def go():
+        async with Client(mcp_server.mcp) as c:
+            return [t.name for t in await c.list_tools()]
+
+    names = _run(go())
+    assert "retrieve" in names
+    assert "query" in names and "verify" in names  # still present
+
+
+def test_mcp_retrieve_tool_returns_contract_shape(monkeypatch) -> None:
+    import nemo_retriever.adapters.cli.sdk_workflow as sw
+
+    monkeypatch.setattr(
+        sw, "query_documents",
+        lambda *a, **k: [
+            {"text": "p", "pdf_basename": "doc", "source": "doc.pdf", "page_number": 2,
+             "content_type": "text", "metadata": {"type": "text", "fidelity": "verbatim"}, "_score": 0.4}
+        ],
+    )
+
+    async def go():
+        async with Client(mcp_server.mcp) as c:
+            return await c.call_tool("retrieve", {"question": "q", "hybrid": False})
+
+    res = _run(go())
+    ev = res.data["evidence"]
+    assert ev and ev[0]["fidelity"] == "verbatim" and ev[0]["citation"] == "doc p.2"
+    assert res.data["coverage"]["strategies_used"] == ["semantic"]

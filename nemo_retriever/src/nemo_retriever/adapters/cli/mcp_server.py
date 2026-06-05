@@ -70,3 +70,29 @@ def verify(
         lancedb_uri=lancedb_uri,
         table_name=table_name,
     )
+
+
+@mcp.tool
+def retrieve(
+    question: str,
+    top_k: int = 10,
+    hybrid: bool = True,
+    lancedb_uri: str = DEFAULT_LANCEDB_URI,
+    table_name: str = DEFAULT_TABLE_NAME,
+    embed_model_name: str | None = None,
+) -> dict:
+    """Answer-ready, fidelity-tagged, cited evidence + coverage for a question.
+
+    Returns {evidence:[{text,source,locator,modality,fidelity,score,citation}], coverage}.
+    Warm when `retriever serve-models` is running (honors EMBED_INVOKE_URL).
+    """
+    from nemo_retriever.adapters.cli.sdk_workflow import retrieve as _retrieve
+
+    return _retrieve(
+        question,
+        top_k=top_k,
+        hybrid=hybrid,
+        lancedb_uri=lancedb_uri,
+        table_name=table_name,
+        embed_model_name=embed_model_name,
+    )
