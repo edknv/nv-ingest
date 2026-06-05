@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "nemo-retriever/actual-hit",
-  "title": "Actual retriever query hit (engine v26.x, contract 1.1.0)",
+  "$id": "retriever/legacy-query-hit",
+  "title": "Legacy `retriever query` hit (NOT the skill primitive; see retrieve-result.schema.json)",
   "type": "object",
   "required": ["page_number", "source", "text", "modality"],
   "properties": {
