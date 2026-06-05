@@ -29,3 +29,10 @@ would be a broken skill. SP-D moves it into `skills/retriever/` once `retrieve` 
   and as MCP tools (build on `retriever mcp`), re-pointed to `retrieve`.
 - **SP-D — ship the skill**: move `SKILL.md` into `skills/retriever/`; retire the old
   CLI `nemo-retriever` skill.
+
+## Warm MCP (today's wiring)
+The library already supports the contract over MCP, warm:
+1. `retriever serve-models` — warm embedder; export the printed `EMBED_INVOKE_URL`.
+2. Point a harness at `retriever mcp` — its `retrieve`/`query`/`verify` tools then run
+   warm (`retrieve` honors `EMBED_INVOKE_URL`), no per-call cold-load.
+`index` remains a CLI/setup step (`retriever ingest`), not an MCP tool.
