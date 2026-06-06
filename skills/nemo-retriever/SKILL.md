@@ -1,5 +1,5 @@
 ---
-name: retriever
+name: nemo-retriever
 description: Answer, quote, verify, or aggregate over a document corpus (PDF, image,
   Office, HTML, TXT, audio, video). Use for any multi-file or non-text question instead
   of native Read / Grep. Not for editing files, web browsing, or single-file plain-text lookups.
