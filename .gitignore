@@ -274,3 +274,6 @@ spool/
 
 # Local git worktrees
 .worktrees/
+
+# superpowers design docs (specs/plans/contracts) — kept on local disk for reference, not tracked
+docs/superpowers/
