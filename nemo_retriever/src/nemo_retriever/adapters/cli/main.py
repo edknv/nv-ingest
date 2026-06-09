@@ -897,3 +897,9 @@ def _callback(
     )
 ) -> None:
     _ = version
+
+
+# Register the evidence + fetch commands (imported for their @app.command side effect).
+from nemo_retriever.adapters.cli import evidence_cmd as _evidence_cmd  # noqa: E402,F401
+from nemo_retriever.adapters.cli import fetch_cmd as _fetch_cmd  # noqa: E402,F401
+from nemo_retriever.adapters.cli import answer_cmd as _answer_cmd  # noqa: E402,F401

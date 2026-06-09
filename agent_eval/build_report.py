@@ -136,6 +136,10 @@ def load_gold(manifest_path: Path) -> dict[str, Gold]:
 _PIPELINE_SEP = re.compile(r"(?:;|&&|\|\||\||\n|\$\(|`)")
 _ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _WRAPPERS = {"sudo", "time", "nice", "nohup", "exec", "env", "command", "builtin"}
+# Shell control keywords that can prefix a real command inside a compound statement,
+# e.g. `if command -v retriever; then retriever retrieve ...` or `for f in *; do retriever ingest ...`.
+# After splitting on `;`/`&&`/`|`, the retriever segment starts with one of these.
+_SHELL_KEYWORDS = {"if", "then", "elif", "else", "fi", "for", "while", "until", "do", "done", "case", "esac", "{", "}"}
 _TIMEOUT_VAL_FLAGS = {"-k", "--kill-after", "-s", "--signal"}
 _PARSE_ERR = re.compile(r"pdf_basename|JSONDecodeError|Extra data|_default_decoder|KeyError", re.I)
 # The baseline profile installs a PATH shim that prints this and exits 127. A
@@ -159,7 +163,7 @@ def _strip_wrappers(seg: str) -> list[str]:
             if i < len(toks):  # the DURATION token
                 i += 1
             continue
-        if t in _WRAPPERS:
+        if t in _WRAPPERS or t in _SHELL_KEYWORDS:
             i += 1
             continue
         break
@@ -330,6 +334,16 @@ class QueryScore:
     tokens: dict = field(default_factory=dict)
 
 
+def _coerce_page(pg: Any) -> int | None:
+    """Parse a page value to int. Agents emit ints, '42', or 'p.42'/'page 42'."""
+    if isinstance(pg, bool) or pg is None:
+        return None
+    if isinstance(pg, int):
+        return pg
+    m = re.search(r"-?\d+", str(pg))
+    return int(m.group()) if m else None
+
+
 def _ranked_pairs(selected_chunks: list[dict], page_base: int = 0) -> list[tuple[str, int]]:
     """Ranked (doc, page) pairs normalized to the 0-indexed gold convention by
     subtracting ``page_base`` (1 for retriever-emitted 1-indexed pages, 0 for
@@ -337,10 +351,10 @@ def _ranked_pairs(selected_chunks: list[dict], page_base: int = 0) -> list[tuple
     pairs: list[tuple[str, int]] = []
     for c in sorted(selected_chunks, key=lambda x: x.get("rank", 999)):
         loc = c.get("locator") or {}
-        pg = loc.get("page_number")
-        if pg is None:
+        n = _coerce_page(loc.get("page_number"))
+        if n is None:
             continue
-        pairs.append((_norm_doc(c.get("doc_id", "")), int(pg) - page_base))
+        pairs.append((_norm_doc(c.get("doc_id", "")), n - page_base))
     return pairs
 
 

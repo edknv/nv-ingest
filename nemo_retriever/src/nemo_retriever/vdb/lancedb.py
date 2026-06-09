@@ -328,7 +328,7 @@ class LanceDB(VDB):
         metric: str = "l2",
         num_partitions: int = 16,
         num_sub_vectors: int = 256,
-        hybrid: bool = False,
+        hybrid: bool = True,
         fts_language: str = "English",
         vector_dim: int = _DEFAULT_VECTOR_DIM,
         on_bad_vectors: str = "drop",

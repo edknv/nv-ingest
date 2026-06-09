@@ -432,6 +432,30 @@ def _build_dedup_params(
     return DedupParams(**dedup_kwargs)
 
 
+_SERVED_MODEL_CACHE: dict[str, str | None] = {}
+
+
+def _resolve_served_model(embed_url: str) -> str | None:
+    """Resolve the model id an OpenAI-compatible embed server actually serves
+    (from ``<base>/v1/models``), so the embed request's model name matches."""
+    if embed_url in _SERVED_MODEL_CACHE:
+        return _SERVED_MODEL_CACHE[embed_url]
+    import json as _json
+    import urllib.request
+
+    base = embed_url.split("/v1/")[0].split("/v2/")[0].rstrip("/")
+    val: str | None = None
+    try:
+        with urllib.request.urlopen(f"{base}/v1/models", timeout=5) as r:
+            data = _json.load(r)
+        models = data.get("data") or []
+        val = models[0]["id"] if models else None
+    except Exception:
+        val = None
+    _SERVED_MODEL_CACHE[embed_url] = val
+    return val
+
+
 def _build_embed_kwargs(
     embed_invoke_url: str | None,
     embed_model_name: str | None,
@@ -449,6 +473,11 @@ def _build_embed_kwargs(
     embed_kwargs: dict[str, Any] = {}
     if embed_invoke_url is not None:
         embed_kwargs["embed_invoke_url"] = embed_invoke_url
+        if embed_model_name is None:
+            # The HTTP embedder defaults to the VL model name, but serve-models may
+            # host a different id — sending a mismatched name 404s. Resolve the
+            # server's actual model so warm querying works out of the box.
+            embed_model_name = _resolve_served_model(embed_invoke_url)
     if embed_model_name is not None:
         # Remote HTTP embedding reads model_name; local/GPU paths read embed_model_name.
         embed_kwargs["model_name"] = embed_model_name
