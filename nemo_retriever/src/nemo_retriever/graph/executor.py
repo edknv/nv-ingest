@@ -258,6 +258,10 @@ class RayDataExecutor(AbstractExecutor):
         nodes = self._linearize(resolved_graph)
         for node in nodes:
             overrides = dict(self._node_overrides.get(node.name, {}))
+            from nemo_retriever.operators.extract.txt.ray_data import TextChunkCPUActor
+
+            if issubclass(node.operator_class, TextChunkCPUActor):
+                overrides.setdefault("batch_size", None)
             target_num_rows_per_block = overrides.pop("target_num_rows_per_block", None)
             batch_size = overrides.pop("batch_size", self._default_batch_size)
             batch_format = overrides.pop("batch_format", self._default_batch_format)
