@@ -25,6 +25,7 @@ import copy
 import json
 import logging
 import multiprocessing as mp
+import os
 import time
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
@@ -974,10 +975,13 @@ def build_asr_params(nim: "NimEndpointsConfig", local: "LocalModelsConfig | None
     if nim.audio_grpc_endpoint:
         from nemo_retriever.common.params import ASRParams
 
+        function_id = (os.environ.get("AUDIO_FUNCTION_ID") or "").strip() or None
+        auth_token = nim.api_key or (os.environ.get("NVIDIA_API_KEY") or "").strip() or None
         return ASRParams(
             audio_endpoints=(nim.audio_grpc_endpoint, None),
             audio_infer_protocol="grpc",
-            auth_token=nim.api_key,
+            auth_token=auth_token,
+            function_id=function_id,
         )
     if local.enabled and local.asr.enabled:
         from nemo_retriever.common.params import ASRParams
