@@ -396,7 +396,8 @@ def to_client_vdb_records(rows: Any) -> list[list[dict[str, Any]]]:
     no row survives conversion.
     """
     if isinstance(rows, list) and all(isinstance(batch, list) for batch in rows):
-        return rows
+        nonempty_batches = [batch for batch in rows if batch]
+        return rows if len(nonempty_batches) == len(rows) else nonempty_batches
     if hasattr(rows, "to_pandas"):
         rows = rows.to_pandas()
     if hasattr(rows, "to_dict"):
