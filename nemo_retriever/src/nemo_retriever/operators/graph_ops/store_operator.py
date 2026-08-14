@@ -198,6 +198,21 @@ def _ensure_object_column(df: pd.DataFrame, column: str) -> None:
         df[column] = df[column].astype(object)
 
 
+def _with_uploaded_image_uri(metadata: Any, stored_uri: str) -> Any:
+    """Return metadata with the public structured-image URI synchronized."""
+    if not isinstance(metadata, dict):
+        return metadata
+
+    out = dict(metadata)
+    for key in ("content_metadata", "image_metadata", "table_metadata", "chart_metadata"):
+        structured_metadata = out.get(key)
+        if isinstance(structured_metadata, dict):
+            updated = dict(structured_metadata)
+            updated["uploaded_image_uri"] = stored_uri
+            out[key] = updated
+    return out
+
+
 def _store_row_images(
     df: pd.DataFrame,
     *,
@@ -216,13 +231,14 @@ def _store_row_images(
         return df
 
     out = df.copy()
-    for column in (*image_columns, *row_image_columns, "_stored_image_uri"):
+    for column in (*image_columns, *row_image_columns, "_stored_image_uri", "metadata"):
         _ensure_object_column(out, column)
     fallback_format = _normalize_image_format(image_format)
     fsspec_options = dict(storage_options or {})
 
     for idx, row in out.iterrows():
         image_b64, image_source = _row_image_b64_with_source(row)
+        stored_uri = row.get("_stored_image_uri")
         raw = _decode_image_b64(image_b64)
         if raw is not None:
             stored_uri = _write_image_b64(
@@ -245,6 +261,9 @@ def _store_row_images(
                 if strip_base64:
                     if image_source in row_image_columns and image_source in out.columns:
                         out.at[idx, image_source] = None
+
+        if isinstance(stored_uri, str) and stored_uri.strip() and "metadata" in out.columns:
+            out.at[idx, "metadata"] = _with_uploaded_image_uri(row.get("metadata"), stored_uri)
 
         for column in image_columns:
             if column not in out.columns:

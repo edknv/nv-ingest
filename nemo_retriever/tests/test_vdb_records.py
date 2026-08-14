@@ -167,6 +167,7 @@ def test_graph_record_conversion_preserves_service_provenance() -> None:
         "type": "table",
         "fidelity": "ocr",
         "stored_image_uri": "s3://artifacts/table.png",
+        "uploaded_image_uri": "s3://artifacts/table.png",
         "bbox_xyxy_norm": [0.1, 0.2, 0.8, 0.9],
         "page_elements_v3_num_detections": 3,
         "page_elements_v3_counts_by_label": {"table": 2, "chart": 1},

@@ -290,6 +290,7 @@ def _client_record_from_graph_row(row: dict[str, Any], *, require_embedding: boo
     stored_image_uri = _first_str(row.get("_stored_image_uri"), row.get("stored_image_uri"))
     if stored_image_uri:
         content_metadata.setdefault("stored_image_uri", stored_image_uri)
+        content_metadata.setdefault("uploaded_image_uri", stored_image_uri)
     bbox = _bbox_from_graph_row(row)
     if bbox is not None:
         content_metadata.setdefault("bbox_xyxy_norm", bbox)
