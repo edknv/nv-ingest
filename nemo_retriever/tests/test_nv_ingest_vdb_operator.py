@@ -370,7 +370,7 @@ def test_ingest_operator_rejects_nonempty_batch_with_zero_uploadable_records() -
     assert vdb.run_calls == []
 
 
-def test_ingest_operator_surfaces_upstream_row_errors_before_vdb_write() -> None:
+def test_ingest_operator_reports_upstream_error_counts_without_payloads() -> None:
     vdb = FakeVDB()
     operator = IngestVdbOperator(vdb=vdb)
     data = pd.DataFrame(
@@ -379,7 +379,13 @@ def test_ingest_operator_surfaces_upstream_row_errors_before_vdb_write() -> None
                 "text": "",
                 "metadata": {
                     "source_path": "/tmp/scanned.pdf",
-                    "error": {"stage": "ocr", "type": "RuntimeError", "message": "model failed"},
+                    "error": {
+                        "stage": "ocr-nvapi-secret",
+                        "type": "CustomerDocumentText",
+                        "message": "private document content Authorization: Bearer token-secret",
+                    },
+                    "exception": "password=credential-secret",
+                    "traceback": "Traceback containing private customer text",
                 },
             }
         ]
@@ -387,12 +393,17 @@ def test_ingest_operator_surfaces_upstream_row_errors_before_vdb_write() -> None
 
     with pytest.raises(
         VdbUploadError,
-        match=(
-            r"none were uploadable because upstream stages reported errors: "
-            r"metadata\.error: ocr: RuntimeError: model failed"
-        ),
-    ):
+        match=r"reported 3 structured row error\(s\) \(error=1, exception=1, traceback=1\)",
+    ) as exc_info:
         operator.process(data)
+    rendered = str(exc_info.value)
+    assert "payloads are omitted because they may contain sensitive data" in rendered
+    assert "nvapi-secret" not in rendered
+    assert "CustomerDocumentText" not in rendered
+    assert "private document content" not in rendered
+    assert "token-secret" not in rendered
+    assert "credential-secret" not in rendered
+    assert "private customer text" not in rendered
     assert vdb.run_calls == []
 
 

@@ -15,7 +15,7 @@ from typing import Any, TypedDict
 from pydantic import ValidationError
 
 from nemo_retriever.common.schemas.collections import QueryHit
-from nemo_retriever.common.stage_errors import iter_stage_errors_from_value
+from nemo_retriever.common.stage_errors import ERROR_FIELD_KEYS, iter_stage_errors_from_value
 
 _CONTENT_TYPE_ALIASES: dict[str, str] = {
     "chart_caption": "chart",
@@ -342,24 +342,23 @@ def _row_has_uploadable_content_without_embedding(row: dict[str, Any]) -> bool:
     return bool(_text_from_graph_row(row, metadata)) or _is_image_backed_row(row)
 
 
-def _format_stage_error(path: str, error: Any) -> str:
-    if isinstance(error, dict):
-        details = [error.get(key) for key in ("stage", "type", "message")]
-        message = ": ".join(str(value).strip() for value in details if value is not None and str(value).strip())
-        if message:
-            return f"{path}: {message}"
-    return f"{path}: {error}"
+def _stage_error_field(path: Any) -> str:
+    text = str(path or "")
+    for field in ERROR_FIELD_KEYS:
+        if text == field or text.endswith(f".{field}"):
+            return field
+    return "error"
 
 
 def _raise_for_empty_vdb_conversion(graph_rows: list[dict[str, Any]]) -> None:
     upstream_errors = [error for row in graph_rows for error in iter_stage_errors_from_value(row)]
     if upstream_errors:
-        rendered = "; ".join(_format_stage_error(str(error["path"]), error["error"]) for error in upstream_errors[:3])
-        remaining = len(upstream_errors) - 3
-        suffix = f"; and {remaining} more" if remaining > 0 else ""
+        error_fields = Counter(_stage_error_field(error.get("path")) for error in upstream_errors)
+        summary = ", ".join(f"{field}={count}" for field, count in sorted(error_fields.items()))
         raise VdbUploadError(
             f"vdb_upload received {len(graph_rows)} row(s), but none were uploadable because upstream stages "
-            f"reported errors: {rendered}{suffix}"
+            f"reported {len(upstream_errors)} structured row error(s) ({summary}); "
+            "error payloads are omitted because they may contain sensitive data."
         )
 
     reasons = Counter(
