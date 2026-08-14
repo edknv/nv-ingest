@@ -101,6 +101,26 @@ class TestStoreOperatorInGraph:
 
         assert result.iloc[0]["metadata"]["table_metadata"]["uploaded_image_uri"] == "file:///stored/table.png"
 
+    def test_store_operator_does_not_publish_inherited_page_uri_as_table_asset(self, tmp_path: Path):
+        df = _make_embedded_df(None)
+        df["_content_type"] = ["table"]
+        df["_stored_image_uri"] = ["file:///stored/page.png"]
+        df["page_image"] = [{"image_b64": None, "stored_image_uri": "file:///stored/page.png"}]
+        df["metadata"] = [
+            {
+                "content_metadata": {"type": "structured", "uploaded_image_uri": ""},
+                "table_metadata": {
+                    "table_format": "image",
+                    "uploaded_image_uri": "file:///stored/table.png",
+                },
+            }
+        ]
+
+        result = StoreOperator(params=StoreParams(storage_uri=str(tmp_path))).process(df)
+
+        assert result.iloc[0]["metadata"]["content_metadata"]["uploaded_image_uri"] == ""
+        assert result.iloc[0]["metadata"]["table_metadata"]["uploaded_image_uri"] == "file:///stored/table.png"
+
     def test_store_operator_clears_row_and_page_payloads_after_write(self, tmp_path: Path):
         b64 = _make_tiny_png_b64()
         df = _make_embedded_df(b64)
