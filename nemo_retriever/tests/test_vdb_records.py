@@ -179,6 +179,25 @@ def test_graph_record_conversion_preserves_service_provenance() -> None:
     }
 
 
+@pytest.mark.parametrize("content_type", ["table", "chart_caption", "infographic"])
+def test_graph_record_conversion_does_not_publish_inherited_page_uri(content_type: str) -> None:
+    records = to_client_vdb_records(
+        [
+            {
+                "text": "structured content",
+                "text_embeddings_1b_v2": {"embedding": [0.1, 0.2]},
+                "_content_type": content_type,
+                "_stored_image_uri": "s3://artifacts/page.png",
+                "page_image": {"stored_image_uri": "s3://artifacts/page.png"},
+            }
+        ]
+    )
+
+    content_metadata = records[0][0]["metadata"]["content_metadata"]
+    assert content_metadata["stored_image_uri"] == "s3://artifacts/page.png"
+    assert "uploaded_image_uri" not in content_metadata
+
+
 def test_graph_record_conversion_normalizes_arrow_backed_bbox_array() -> None:
     records = to_client_vdb_records(
         [
