@@ -383,10 +383,32 @@ Hugging Face remains the local query backend for non-ModelOpt checkpoints.
 Local directories must contain `config.json`, and their absolute path must be
 available to every Ray worker or service replica that loads the model.
 
-### OCR language mode
+### PDF extraction method
+
+Use `--method` to select how the CLI extracts text from PDF pages. The default
+method is `pdfium`.
+
+- `pdfium` extracts native PDF text. It does not use OCR as a fallback for
+  scanned-page text.
+- `pdfium_hybrid` extracts native PDF text and uses OCR as a fallback for
+  scanned pages.
+- `ocr` uses OCR for PDF page text.
+- `nemotron_parse` uses the Nemotron Parse extraction path.
+
+For example, select hybrid extraction for a PDF that contains scanned pages:
 
 ```bash
 retriever ingest ./data/scanned.pdf \
+  --method pdfium_hybrid
+```
+
+`--ocr-version` and `--ocr-lang` configure the local OCR engine when an enabled
+stage uses OCR. These options do not select a PDF extraction method.
+
+### OCR language mode
+
+```bash
+retriever ingest ./data/multimodal_test.pdf \
   --ocr-version v2 \
   --ocr-lang english
 ```
