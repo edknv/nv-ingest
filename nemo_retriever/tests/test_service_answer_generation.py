@@ -719,8 +719,7 @@ def test_local_vectordb_uses_configured_local_embedding(monkeypatch: pytest.Monk
     assert ["--device", "cuda:1"] == command[command.index("--device") : command.index("--device") + 2]
     assert "--embed-endpoint" not in command
     assert ["--max-concurrent-queries", "7"] == command[
-        command.index("--max-concurrent-queries") : command.index("--max-concurrent-queries")
-        + 2
+        command.index("--max-concurrent-queries") : command.index("--max-concurrent-queries") + 2
     ]
 
 

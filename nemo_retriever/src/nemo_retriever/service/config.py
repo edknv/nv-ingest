@@ -447,10 +447,7 @@ class VectorDbConfig(RichModel):
     max_concurrent_queries: int = Field(
         default=4,
         ge=1,
-        description=(
-            "Maximum number of concurrent queries handled by a supervised "
-            "VectorDB child."
-        ),
+        description=("Maximum number of concurrent queries handled by a supervised " "VectorDB child."),
     )
     lancedb_uri: str = "/data/vectordb"
     table_name: str = "nemo_retriever"
