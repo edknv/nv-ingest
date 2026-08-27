@@ -375,7 +375,7 @@ class LanceDBCollectionStore:
         where: str | None = None,
         columns: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        query = self._db.open_table(table_name).search()
+        query = self._open_table(table_name).search()
         if where:
             query = query.where(where)
         if columns:
