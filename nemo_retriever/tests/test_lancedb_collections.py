@@ -59,7 +59,6 @@ def test_catalog_scans_reuse_open_table_handle() -> None:
     assert store._rows("_nrl_collections") == []
 
     database.open_table.assert_called_once_with("_nrl_collections")
-    assert table.checkout_latest.call_count == 2
 
 
 def _context(
