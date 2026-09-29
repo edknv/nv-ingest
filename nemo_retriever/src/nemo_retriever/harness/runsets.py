@@ -286,6 +286,13 @@ def _run_prepared_benchmark_isolated(
 ) -> RunOutcome:
     """Run one child with a process boundary that releases Ray and dataframe memory."""
 
+    # The child creates a fresh status file after startup. Clear any status from
+    # a previous run before launching it so a startup failure cannot reuse it.
+    try:
+        (Path(output_dir) / "status.json").unlink(missing_ok=True)
+    except OSError as exc:
+        raise artifact_write_error(exc) from exc
+
     context = multiprocessing.get_context("spawn")
     receive_connection, send_connection = context.Pipe(duplex=False)
     process = context.Process(

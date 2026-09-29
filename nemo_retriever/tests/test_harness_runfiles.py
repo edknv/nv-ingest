@@ -550,6 +550,51 @@ def test_single_run_timeout_writes_failed_result(monkeypatch, tmp_path):
     assert status["failure"] == outcome.results["failure"]
 
 
+def test_single_run_startup_failure_does_not_reuse_old_status(monkeypatch, tmp_path):
+    from nemo_retriever.harness.execution import PreparedBenchmark
+
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    _write_json(
+        artifacts / "status.json",
+        {"run_id": "reused", "status": "running", "phase": "ingest", "started_at": "2000-01-01T00:00:00Z"},
+    )
+    prepared = PreparedBenchmark(
+        benchmark="jp20_beir",
+        mode="batch",
+        overrides=(),
+        requirements=(),
+        dry_run=False,
+        resolved={"dataset": {"name": "jp20"}, "ingest": {}},
+        dataset_path=tmp_path,
+    )
+    monkeypatch.setattr("nemo_retriever.harness.runsets.preflight_benchmark", lambda *args, **kwargs: prepared)
+    receive_connection = Mock()
+    send_connection = Mock()
+    process = Mock()
+
+    def fail_start():
+        assert not (artifacts / "status.json").exists()
+        raise OSError("child did not start")
+
+    process.start.side_effect = fail_start
+    context = Mock()
+    context.Pipe.return_value = receive_connection, send_connection
+    context.Process.return_value = process
+    monkeypatch.setattr("nemo_retriever.harness.runsets.multiprocessing.get_context", lambda method: context)
+
+    outcome = run_benchmark_with_timeout("jp20_beir", timeout_seconds=25, output_dir=str(artifacts), run_id="reused")
+
+    status = json.loads((artifacts / "status.json").read_text(encoding="utf-8"))
+    assert outcome.exit_code == EXIT_INTERNAL_ERROR
+    assert status["status"] == "failed"
+    assert status["phase"] == "resolve"
+    assert status["started_at"] != "2000-01-01T00:00:00Z"
+    assert status["failure"] == outcome.results["failure"]
+    receive_connection.close.assert_called_once_with()
+    send_connection.close.assert_called_once_with()
+
+
 def test_run_files_dry_run_stays_in_process_and_writes_terminal_summary(tmp_path):
     documents = tmp_path / "documents"
     documents.mkdir()
