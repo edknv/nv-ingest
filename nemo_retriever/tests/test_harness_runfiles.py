@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from typer.testing import CliRunner
 
 from nemo_retriever.harness.contracts import (
     EXIT_ARTIFACT_WRITE_FAILURE,
@@ -17,7 +18,13 @@ from nemo_retriever.harness.contracts import (
     HarnessRunError,
     RunOutcome,
 )
-from nemo_retriever.harness.runsets import _run_prepared_benchmark_isolated, run_runfiles, run_runset
+from nemo_retriever.harness.cli import app
+from nemo_retriever.harness.runsets import (
+    _run_prepared_benchmark_isolated,
+    run_benchmark_with_timeout,
+    run_runfiles,
+    run_runset,
+)
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -452,6 +459,79 @@ def test_runfile_rejects_invalid_timeout(tmp_path, value):
     _write_json(runfile, {"benchmark": "jp20_beir", "timeout_seconds": value})
     with pytest.raises(HarnessRunError, match="finite positive number"):
         load_runfile(runfile)
+
+
+def test_run_command_enforces_runfile_timeout(monkeypatch, tmp_path):
+    runfile = tmp_path / "run.json"
+    _write_json(runfile, {"benchmark": "jp20_beir", "timeout_seconds": 25})
+    calls = []
+
+    def fake_timed_run(benchmark, **kwargs):
+        calls.append((benchmark, kwargs))
+        return _successful_outcome(benchmark, str(tmp_path / "artifacts"))
+
+    monkeypatch.setattr("nemo_retriever.harness.cli.run_benchmark_with_timeout", fake_timed_run)
+    monkeypatch.setattr(
+        "nemo_retriever.harness.cli.run_benchmark",
+        lambda *args, **kwargs: pytest.fail("timed runfile should use the isolated runner"),
+    )
+
+    result = CliRunner().invoke(app, ["run", "--runfile", str(runfile)])
+
+    assert result.exit_code == 0, result.output
+    assert calls[0][0] == "jp20_beir"
+    assert calls[0][1]["timeout_seconds"] == 25
+    assert calls[0][1]["runfile_path"] == str(runfile)
+
+
+def test_run_command_dry_run_skips_runfile_timeout(monkeypatch, tmp_path):
+    runfile = tmp_path / "run.json"
+    _write_json(runfile, {"benchmark": "jp20_beir", "timeout_seconds": 25})
+    calls = []
+
+    def fake_run(benchmark, **kwargs):
+        calls.append((benchmark, kwargs))
+        return _successful_outcome(benchmark, str(tmp_path / "artifacts"))
+
+    monkeypatch.setattr("nemo_retriever.harness.cli.run_benchmark", fake_run)
+    monkeypatch.setattr(
+        "nemo_retriever.harness.cli.run_benchmark_with_timeout",
+        lambda *args, **kwargs: pytest.fail("dry run should stay in process"),
+    )
+
+    result = CliRunner().invoke(app, ["run", "--runfile", str(runfile), "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert calls[0][1]["dry_run"] is True
+
+
+def test_single_run_timeout_writes_failed_result(monkeypatch, tmp_path):
+    from nemo_retriever.harness.execution import PreparedBenchmark
+
+    prepared = PreparedBenchmark(
+        benchmark="jp20_beir",
+        mode="batch",
+        overrides=(),
+        requirements=(),
+        dry_run=False,
+        resolved={"dataset": {"name": "jp20"}, "ingest": {}},
+        dataset_path=tmp_path,
+    )
+    monkeypatch.setattr("nemo_retriever.harness.runsets.preflight_benchmark", lambda *args, **kwargs: prepared)
+
+    def fake_isolated_run(run, *, output_dir, run_id):
+        assert run.timeout_seconds == 25
+        assert run_id == "timed"
+        raise TimeoutError("isolated benchmark 'jp20_beir' exceeded the 25-second child timeout")
+
+    monkeypatch.setattr("nemo_retriever.harness.runsets._run_prepared_benchmark_isolated", fake_isolated_run)
+    outcome = run_benchmark_with_timeout(
+        "jp20_beir", timeout_seconds=25, output_dir=str(tmp_path / "artifacts"), run_id="timed"
+    )
+
+    assert outcome.exit_code == EXIT_INTERNAL_ERROR
+    assert "25-second child timeout" in outcome.results["failure"]["message"]
+    assert json.loads(outcome.results_path.read_text(encoding="utf-8")) == outcome.results
 
 
 def test_run_files_dry_run_stays_in_process_and_writes_terminal_summary(tmp_path):

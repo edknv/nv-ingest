@@ -26,6 +26,7 @@ from nemo_retriever.harness.contracts import (
 from nemo_retriever.harness.dataset_paths import load_dataset_paths
 from nemo_retriever.harness.execution import PreparedBenchmark, preflight_benchmark, run_prepared_benchmark
 from nemo_retriever.harness.json_io import artifact_write_error, write_json
+from nemo_retriever.harness.resolution import make_run_id, resolve_artifact_dir
 from nemo_retriever.harness.runfile import load_runfile
 
 _SESSION_LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
@@ -314,6 +315,50 @@ def _run_prepared_benchmark_isolated(
     if message_type != "outcome" or not isinstance(payload, RunOutcome):
         raise RuntimeError("isolated benchmark process returned an invalid outcome")
     return payload
+
+
+def run_benchmark_with_timeout(
+    benchmark: str,
+    *,
+    timeout_seconds: float,
+    output_dir: str | None = None,
+    run_id: str | None = None,
+    mode: str = "local",
+    overrides: Sequence[str] = (),
+    requirements: Sequence[str] = (),
+    service_endpoint: str | None = None,
+    runfile_payload: dict[str, Any] | None = None,
+    runfile_path: str | None = None,
+) -> RunOutcome:
+    """Run a single benchmark in a child process with a runfile deadline."""
+
+    prepared = preflight_benchmark(
+        benchmark,
+        mode=mode,
+        overrides=overrides,
+        requirements=requirements,
+        dry_run=False,
+        service_endpoint=service_endpoint,
+    )
+    effective_run_id = run_id or make_run_id(benchmark)
+    artifact_dir = resolve_artifact_dir(benchmark, effective_run_id, output_dir)
+    run = PreparedRun(
+        name=benchmark,
+        artifact_name=effective_run_id,
+        prepared=prepared,
+        runfile_payload=runfile_payload,
+        runfile_path=runfile_path,
+        timeout_seconds=timeout_seconds,
+    )
+    try:
+        return _run_prepared_benchmark_isolated(run, output_dir=str(artifact_dir), run_id=effective_run_id)
+    except Exception as exc:
+        return _failed_child_outcome(
+            benchmark=benchmark,
+            artifact_dir=artifact_dir,
+            dry_run=False,
+            exc=exc,
+        )
 
 
 def _session_summary(
