@@ -356,7 +356,32 @@ def run_benchmark_with_timeout(
     runfile_payload: dict[str, Any] | None = None,
     runfile_path: str | None = None,
 ) -> RunOutcome:
-    """Run a single benchmark in a child process with a runfile deadline."""
+    """Run one benchmark in an isolated process with a deadline.
+
+    A child timeout or process failure produces a failed outcome and writes
+    ``results.json`` and ``status.json`` in the artifact directory. Preflight
+    failures occur before the child starts and raise ``HarnessRunError``.
+
+    Args:
+        benchmark: Name of a registered benchmark.
+        timeout_seconds: Finite, positive deadline in seconds for child execution.
+        output_dir: Artifact directory. Uses the default artifacts root if omitted.
+        run_id: Artifact run identifier. Generates one if omitted.
+        mode: Execution mode (``local``, ``batch``, or ``service``).
+        overrides: Benchmark configuration overrides as ``KEY=VALUE`` strings.
+        requirements: Summary metric gates to enforce after execution.
+        service_endpoint: Retriever service URL for service mode.
+        runfile_payload: Runfile content to include in the run artifacts.
+        runfile_path: Source runfile path to include in the run artifacts.
+
+    Returns:
+        The benchmark outcome, including the exit code and artifact paths.
+
+    Raises:
+        HarnessRunError: Preflight finds an invalid benchmark, configuration,
+            metric gate, or missing dataset input. Correct the reported input
+            and retry the run.
+    """
 
     prepared = preflight_benchmark(
         benchmark,
