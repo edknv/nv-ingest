@@ -43,6 +43,7 @@ class PreparedRun:
     runfile_payload: dict[str, Any] | None = None
     runfile_path: str | None = None
     summary_mode: str | None = None
+    timeout_seconds: float | None = None
 
 
 def _invalid_runfile(message: str) -> HarnessRunError:
@@ -280,10 +281,10 @@ def _run_prepared_benchmark_isolated(
 
     message: tuple[str, Any] | None = None
     try:
-        if not receive_connection.poll(_ISOLATED_CHILD_TIMEOUT_SECONDS):
+        timeout_seconds = getattr(run, "timeout_seconds", None) or _ISOLATED_CHILD_TIMEOUT_SECONDS
+        if not receive_connection.poll(timeout_seconds):
             raise TimeoutError(
-                f"isolated benchmark {run.name!r} exceeded the "
-                f"{_ISOLATED_CHILD_TIMEOUT_SECONDS:g}-second child timeout"
+                f"isolated benchmark {run.name!r} exceeded the " f"{timeout_seconds:g}-second child timeout"
             )
         try:
             message = receive_connection.recv()
@@ -519,6 +520,7 @@ def run_runfiles(
                 runfile_payload=dict(request.payload),
                 runfile_path=str(request.source_path),
                 summary_mode=effective_mode,
+                timeout_seconds=request.timeout_seconds,
             )
         )
         expanded_runs.append(
@@ -535,6 +537,7 @@ def run_runfiles(
                 "overrides": list(effective_overrides),
                 "requirements": list(effective_requirements),
                 "dry_run": bool(dry_run),
+                "timeout_seconds": request.timeout_seconds or _ISOLATED_CHILD_TIMEOUT_SECONDS,
             }
         )
 

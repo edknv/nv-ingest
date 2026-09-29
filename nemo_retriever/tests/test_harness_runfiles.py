@@ -49,6 +49,7 @@ def test_run_files_applies_machine_paths_then_cli_overrides(monkeypatch, tmp_pat
             "name": "jp20_beir",
             "benchmark": "jp20_beir",
             "mode": "batch",
+            "timeout_seconds": 86400,
             "require": ["files==20"],
             "set": {"query.top_k": 10},
         },
@@ -108,6 +109,7 @@ def test_run_files_applies_machine_paths_then_cli_overrides(monkeypatch, tmp_pat
     assert "results" not in outcome.results
 
     expanded = json.loads((outcome.artifact_dir / "expanded_runs.json").read_text(encoding="utf-8"))
+    assert expanded["runfiles"][0]["timeout_seconds"] == 86400
     assert expanded["working_tree_dirty"] is True
     assert expanded["runfiles"][0]["dataset_paths"] == {
         "path": str(documents),
@@ -361,7 +363,8 @@ def test_isolated_child_reports_nonzero_process_exit_without_outcome(monkeypatch
     send_connection.close.assert_called_once_with()
 
 
-def test_isolated_child_timeout_uses_bounded_terminate_and_kill(monkeypatch):
+@pytest.mark.parametrize(("configured_timeout", "expected_timeout"), [(None, 1), (25, 25)])
+def test_isolated_child_timeout_uses_bounded_terminate_and_kill(monkeypatch, configured_timeout, expected_timeout):
     class FakeConnection:
         def __init__(self, *, readable):
             self.readable = readable
@@ -424,8 +427,8 @@ def test_isolated_child_timeout_uses_bounded_terminate_and_kill(monkeypatch):
     )
     monkeypatch.setattr("nemo_retriever.harness.runsets._ISOLATED_CHILD_TIMEOUT_SECONDS", 1)
 
-    run = SimpleNamespace(name="hung", artifact_name="hung")
-    with pytest.raises(TimeoutError, match="exceeded the 1-second child timeout"):
+    run = SimpleNamespace(name="hung", artifact_name="hung", timeout_seconds=configured_timeout)
+    with pytest.raises(TimeoutError, match=f"exceeded the {expected_timeout}-second child timeout"):
         _run_prepared_benchmark_isolated(
             run,
             output_dir="/tmp/unused",
@@ -436,9 +439,19 @@ def test_isolated_child_timeout_uses_bounded_terminate_and_kill(monkeypatch):
     assert process.terminated is True
     assert process.killed is True
     assert process.join_timeouts == [30, 30]
-    assert receive_connection.poll_timeout == 1
+    assert receive_connection.poll_timeout == expected_timeout
     assert receive_connection.closed is True
     assert send_connection.closed is True
+
+
+@pytest.mark.parametrize("value", [0, -1, True, "86400", float("inf")])
+def test_runfile_rejects_invalid_timeout(tmp_path, value):
+    from nemo_retriever.harness.runfile import load_runfile
+
+    runfile = tmp_path / "invalid.json"
+    _write_json(runfile, {"benchmark": "jp20_beir", "timeout_seconds": value})
+    with pytest.raises(HarnessRunError, match="finite positive number"):
+        load_runfile(runfile)
 
 
 def test_run_files_dry_run_stays_in_process_and_writes_terminal_summary(tmp_path):
