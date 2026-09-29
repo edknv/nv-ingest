@@ -304,6 +304,9 @@ def test_run_files_isolated_timeout_records_failure_and_continues(monkeypatch, t
     assert isolated_calls == ["jp20_beir", "bo767_beir"]
     assert [run["success"] for run in outcome.results["runs"]] == [False, True]
     assert "TimeoutError" in outcome.results["runs"][0]["failure_reason"]
+    failed_status = json.loads((outcome.artifact_dir / "001_jp20_beir" / "status.json").read_text(encoding="utf-8"))
+    assert failed_status["status"] == "failed"
+    assert failed_status["results_path"] == "results.json"
 
 
 def _fake_exited_isolated_child(monkeypatch, *, message, exitcode):
@@ -522,6 +525,12 @@ def test_single_run_timeout_writes_failed_result(monkeypatch, tmp_path):
     def fake_isolated_run(run, *, output_dir, run_id):
         assert run.timeout_seconds == 25
         assert run_id == "timed"
+        artifacts = Path(output_dir)
+        artifacts.mkdir()
+        _write_json(
+            artifacts / "status.json",
+            {"run_id": "timed", "status": "running", "phase": "ingest", "started_at": "2026-09-29T12:00:00Z"},
+        )
         raise TimeoutError("isolated benchmark 'jp20_beir' exceeded the 25-second child timeout")
 
     monkeypatch.setattr("nemo_retriever.harness.runsets._run_prepared_benchmark_isolated", fake_isolated_run)
@@ -532,6 +541,13 @@ def test_single_run_timeout_writes_failed_result(monkeypatch, tmp_path):
     assert outcome.exit_code == EXIT_INTERNAL_ERROR
     assert "25-second child timeout" in outcome.results["failure"]["message"]
     assert json.loads(outcome.results_path.read_text(encoding="utf-8")) == outcome.results
+    status = json.loads((outcome.artifact_dir / "status.json").read_text(encoding="utf-8"))
+    assert status["status"] == "failed"
+    assert status["phase"] == "ingest"
+    assert status["started_at"] == "2026-09-29T12:00:00Z"
+    assert status["run_id"] == "timed"
+    assert status["results_path"] == "results.json"
+    assert status["failure"] == outcome.results["failure"]
 
 
 def test_run_files_dry_run_stays_in_process_and_writes_terminal_summary(tmp_path):

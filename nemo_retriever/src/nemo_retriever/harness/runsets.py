@@ -11,7 +11,7 @@ from pathlib import Path
 import re
 from typing import Any, Mapping, Sequence
 
-from nemo_retriever.harness.artifact_writer import redact
+from nemo_retriever.harness.artifact_writer import redact, utc_now
 from nemo_retriever.harness.artifacts import get_artifacts_root, last_commit, now_timestr, working_tree_dirty
 from nemo_retriever.harness.benchmark_registry import get_benchmark, get_runset, runset_names
 from nemo_retriever.harness.contracts import (
@@ -21,11 +21,12 @@ from nemo_retriever.harness.contracts import (
     EXIT_SUCCESS,
     FailurePayload,
     HarnessRunError,
+    PHASE_VALUES,
     RunOutcome,
 )
 from nemo_retriever.harness.dataset_paths import load_dataset_paths
 from nemo_retriever.harness.execution import PreparedBenchmark, preflight_benchmark, run_prepared_benchmark
-from nemo_retriever.harness.json_io import artifact_write_error, write_json
+from nemo_retriever.harness.json_io import artifact_write_error, read_json_object, write_json
 from nemo_retriever.harness.resolution import make_run_id, resolve_artifact_dir
 from nemo_retriever.harness.runfile import load_runfile
 
@@ -171,6 +172,7 @@ def _failed_result_payload(
 def _failed_child_outcome(
     *,
     benchmark: str,
+    run_id: str,
     artifact_dir: Path,
     dry_run: bool,
     exc: Exception,
@@ -197,6 +199,30 @@ def _failed_child_outcome(
         artifact_dir.mkdir(parents=True, exist_ok=True)
         results_path: Path | None = artifact_dir / "results.json"
         write_json(results_path, result)
+        status_path = artifact_dir / "status.json"
+        try:
+            previous_status = read_json_object(status_path)
+        except (FileNotFoundError, OSError, ValueError):
+            previous_status = {}
+        if previous_status.get("run_id") != run_id:
+            previous_status = {}
+        phase = previous_status.get("phase")
+        if not isinstance(phase, str) or phase not in PHASE_VALUES:
+            phase = failure.failed_phase if failure.failed_phase in PHASE_VALUES else "resolve"
+        write_json(
+            status_path,
+            {
+                "run_id": run_id,
+                "benchmark": benchmark,
+                "status": "failed",
+                "phase": phase,
+                "started_at": previous_status.get("started_at") or utc_now(),
+                "updated_at": utc_now(),
+                "artifact_dir": str(artifact_dir.resolve()),
+                "results_path": "results.json",
+                "failure": failure.to_dict(),
+            },
+        )
     except Exception as write_exc:
         exit_code = EXIT_ARTIFACT_WRITE_FAILURE
         if isinstance(write_exc, HarnessRunError) and write_exc.exit_code == EXIT_ARTIFACT_WRITE_FAILURE:
@@ -355,6 +381,7 @@ def run_benchmark_with_timeout(
     except Exception as exc:
         return _failed_child_outcome(
             benchmark=benchmark,
+            run_id=effective_run_id,
             artifact_dir=artifact_dir,
             dry_run=False,
             exc=exc,
@@ -427,6 +454,7 @@ def _run_session(
         except Exception as exc:
             outcome = _failed_child_outcome(
                 benchmark=run.prepared.benchmark,
+                run_id=run_id,
                 artifact_dir=artifact_dir,
                 dry_run=run.prepared.dry_run,
                 exc=exc,
