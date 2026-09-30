@@ -56,6 +56,16 @@ class _BatchEmbedActor(AbstractOperator, GPUOperator):
 
         self._model = local_spec.create()
 
+    def unload(self) -> None:
+        """Release the cached embedder, retaining it if cleanup fails."""
+        model = self._model
+        if model is None:
+            return
+        unload = getattr(model, "unload", None)
+        if callable(unload):
+            unload()
+        self._model = None
+
     def preprocess(self, data: Any, **kwargs: Any) -> Any:
         return data
 

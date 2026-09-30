@@ -206,6 +206,34 @@ class Retriever:
         self._cache_key = key
         return g
 
+    def unload(self) -> None:
+        """Release the owned query graph; caller-supplied graphs remain caller-owned.
+
+        Cleanup uses only cached operators. If an operator fails to unload,
+        retain the graph so cleanup can be retried.
+        """
+        graph = self._cached_graph
+        if graph is None:
+            return
+        pending = list(graph.roots)
+        seen_nodes: set[int] = set()
+        seen_operators: set[int] = set()
+        while pending:
+            node = pending.pop()
+            if id(node) in seen_nodes:
+                continue
+            seen_nodes.add(id(node))
+            pending.extend(node.children)
+            operator = node.operator
+            if id(operator) in seen_operators:
+                continue
+            seen_operators.add(id(operator))
+            unload = getattr(operator, "unload", None)
+            if callable(unload):
+                unload()
+        self._cached_graph = None
+        self._cache_key = None
+
     def _execute_queries_graph(
         self,
         query_texts: list[str],
