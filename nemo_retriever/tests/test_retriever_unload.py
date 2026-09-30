@@ -7,6 +7,7 @@
 from threading import Event, Lock, Thread
 from types import SimpleNamespace
 from unittest.mock import MagicMock
+from weakref import ref
 
 import pytest
 
@@ -22,6 +23,42 @@ from nemo_retriever.operators.embed.operators import _BatchEmbedActor
 from nemo_retriever.operators.abstract_operator import AbstractOperator
 from nemo_retriever.operators.rerank import NemotronRerankActor, NemotronRerankGPUActor
 from nemo_retriever.query.agentic import AgenticRetriever
+
+
+@pytest.mark.parametrize(
+    "model_class",
+    [LlamaNemotronEmbed1BV2Embedder, LlamaNemotronEmbedVL1BV2VLLMEmbedder, NemotronRerankVLV2VLLM],
+)
+@pytest.mark.parametrize("cuda_available", [False, True])
+def test_unload_releases_engine_reference_before_cuda_cleanup(monkeypatch, model_class, cuda_available):
+    events = []
+
+    class EngineCore:
+        def shutdown(self, *, timeout):
+            events.append(("shutdown", timeout))
+
+    class LLM:
+        def __init__(self):
+            self.llm_engine = SimpleNamespace(engine_core=EngineCore())
+
+    model = model_class.__new__(model_class)
+    model._llm = LLM()
+    engine_ref = ref(model._llm)
+
+    def is_available():
+        assert model._llm is None
+        assert engine_ref() is None
+        return cuda_available
+
+    def empty_cache():
+        assert engine_ref() is None
+        events.append(("empty_cache",))
+
+    monkeypatch.setattr("torch.cuda.is_available", is_available)
+    monkeypatch.setattr("torch.cuda.empty_cache", empty_cache)
+    model.unload()
+    model.unload()
+    assert events == [("shutdown", 30.0)] + ([("empty_cache",)] if cuda_available else [])
 
 
 def _cached_chain(embedder_class=LlamaNemotronEmbedVL1BV2VLLMEmbedder):

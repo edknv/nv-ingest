@@ -351,5 +351,6 @@ class LlamaNemotronEmbedVL1BV2VLLMEmbedder:
 
         llm.llm_engine.engine_core.shutdown(timeout=30.0)
         self._llm = None
+        del llm
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
