@@ -4,28 +4,33 @@
 
 """Exercise cached cleanup ownership without loading models or using a GPU."""
 
-from threading import Lock
+from threading import Event, Lock, Thread
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
 from nemo_retriever.graph.pipeline_graph import Graph, Node
 from nemo_retriever.graph.retriever import Retriever
+from nemo_retriever.models.local.llama_nemotron_embed_1b_v2_embedder import LlamaNemotronEmbed1BV2Embedder
+from nemo_retriever.models.local.nemotron_rerank_vl_v2 import NemotronRerankVLV2VLLM
 from nemo_retriever.models.local.llama_nemotron_embed_vl_1b_v2_embedder import (
     LlamaNemotronEmbedVL1BV2VLLMEmbedder,
 )
 from nemo_retriever.operators.embed.gpu_operator import _BatchEmbedActor as GPUEmbedActor
 from nemo_retriever.operators.embed.operators import _BatchEmbedActor
 from nemo_retriever.operators.abstract_operator import AbstractOperator
+from nemo_retriever.operators.rerank import NemotronRerankActor, NemotronRerankGPUActor
 from nemo_retriever.query.agentic import AgenticRetriever
 
 
-def _cached_chain():
-    embedder = LlamaNemotronEmbedVL1BV2VLLMEmbedder.__new__(LlamaNemotronEmbedVL1BV2VLLMEmbedder)
+def _cached_chain(embedder_class=LlamaNemotronEmbedVL1BV2VLLMEmbedder):
+    embedder = embedder_class.__new__(embedder_class)
     llm = MagicMock()
     embedder._llm = llm
     operator = GPUEmbedActor.__new__(GPUEmbedActor)
     operator._model = embedder
+    operator._owns_model = True
     archetype = _BatchEmbedActor(params=None)
     archetype._resolved_delegate = operator
     archetype._resolved_delegate_key = (1, 1)
@@ -41,8 +46,9 @@ def _cached_chain():
 
 
 @pytest.mark.parametrize("cuda_available", [False, True])
-def test_agentic_unload_shuts_down_cached_embedding_chain(monkeypatch, cuda_available):
-    agent, inner, archetype, operator, embedder, llm = _cached_chain()
+@pytest.mark.parametrize("embedder_class", [LlamaNemotronEmbed1BV2Embedder, LlamaNemotronEmbedVL1BV2VLLMEmbedder])
+def test_agentic_unload_shuts_down_cached_embedding_chain(monkeypatch, cuda_available, embedder_class):
+    agent, inner, archetype, operator, embedder, llm = _cached_chain(embedder_class)
     monkeypatch.setattr("torch.cuda.is_available", lambda: cuda_available)
     empty_cache = MagicMock()
     monkeypatch.setattr("torch.cuda.empty_cache", empty_cache)
@@ -69,8 +75,9 @@ def test_agentic_unload_shuts_down_cached_embedding_chain(monkeypatch, cuda_avai
     resolve.assert_not_called()
 
 
-def test_shutdown_failure_preserves_entire_chain_for_retry(monkeypatch):
-    agent, inner, archetype, operator, embedder, llm = _cached_chain()
+@pytest.mark.parametrize("embedder_class", [LlamaNemotronEmbed1BV2Embedder, LlamaNemotronEmbedVL1BV2VLLMEmbedder])
+def test_shutdown_failure_preserves_entire_chain_for_retry(monkeypatch, embedder_class):
+    agent, inner, archetype, operator, embedder, llm = _cached_chain(embedder_class)
     graph = inner._cached_graph
     empty_cache = MagicMock()
     monkeypatch.setattr("torch.cuda.is_available", lambda: True)
@@ -141,3 +148,129 @@ def test_agent_llm_failure_retains_owner_and_still_cleans_inner_retriever():
     agent._retriever.unload.assert_called_once_with()
     agent.unload()
     assert agent._chat_completion_fn is None
+
+
+def test_reranker_cleanup_forwards_through_cached_delegate_and_retries(monkeypatch):
+    model = NemotronRerankVLV2VLLM.__new__(NemotronRerankVLV2VLLM)
+    model._llm = llm = MagicMock()
+    llm.llm_engine.engine_core.shutdown.side_effect = [RuntimeError("shutdown failed"), None]
+    monkeypatch.setattr("torch.cuda.is_available", lambda: False)
+    operator = NemotronRerankGPUActor.__new__(NemotronRerankGPUActor)
+    operator._model = model
+    archetype = NemotronRerankActor()
+    archetype._resolved_delegate = operator
+    archetype._resolved_delegate_key = (1, 1)
+    inner = Retriever(rerank=True)
+    graph = Graph()
+    graph.add_root(Node(archetype, operator_kwargs={}))
+    inner._cached_graph = graph
+
+    with pytest.raises(RuntimeError, match="shutdown failed"):
+        inner.unload()
+    assert inner._cached_graph is graph
+    assert archetype._resolved_delegate is operator
+    assert operator._model is model
+    assert model._llm is llm
+
+    inner.unload()
+    inner.unload()
+    assert llm.llm_engine.engine_core.shutdown.call_count == 2
+    llm.llm_engine.engine_core.shutdown.assert_called_with(timeout=30.0)
+    assert model._llm is None
+    assert operator._model is None
+    assert archetype._resolved_delegate is None
+
+
+def test_query_configuration_change_unloads_old_graph_before_building_new(monkeypatch):
+    inner = Retriever()
+    old_operator = MagicMock(spec=AbstractOperator)
+    old_operator.unload = MagicMock()
+    old_graph = Graph()
+    old_graph.add_root(Node(old_operator, operator_kwargs={}))
+    new_graph = Graph()
+    builds = []
+
+    def build(**kwargs):
+        if builds:
+            old_operator.unload.assert_called_once_with()
+            assert inner._cached_graph is None
+        builds.append(kwargs)
+        return old_graph if len(builds) == 1 else new_graph
+
+    monkeypatch.setattr(inner, "_build_default_graph", build)
+    assert inner._get_graph() is old_graph
+    assert inner._get_graph() is old_graph
+    old_operator.unload.assert_not_called()
+    inner.embed_kwargs["model_name"] = "different"
+    old_key = inner._cache_key
+    old_operator.unload.side_effect = RuntimeError("shutdown failed")
+    with pytest.raises(RuntimeError, match="shutdown failed"):
+        inner._get_graph()
+    assert inner._cached_graph is old_graph
+    assert inner._cache_key == old_key
+    assert len(builds) == 1
+
+    old_operator.unload.reset_mock(side_effect=True)
+    assert inner._get_graph() is new_graph
+    old_operator.unload.assert_called_once_with()
+    assert len(builds) == 2
+    inner.unload()
+    assert inner._cached_graph is None
+
+
+def test_agentic_unload_waits_for_active_retrieval_hop():
+    agent = AgenticRetriever.__new__(AgenticRetriever)
+    agent._lock = Lock()
+    agent._chat_completion_fn = None
+    agent._cfg = SimpleNamespace(candidate_k=None)
+    agent._retriever = MagicMock()
+    query_started = Event()
+    release_query = Event()
+    cleanup_attempted = Event()
+    errors = []
+
+    def query(*args, **kwargs):
+        query_started.set()
+        assert release_query.wait(5)
+        return []
+
+    def unload_inner():
+        # Verify cleanup holds the same lock used by retrieval hops.
+        acquired = agent._lock.acquire(blocking=False)
+        if acquired:
+            agent._lock.release()
+        assert not acquired
+        assert release_query.is_set()
+
+    def run_hop():
+        try:
+            agent._retrieve_for_agent("query", 1)
+        except BaseException as exc:
+            errors.append(exc)
+
+    def run_cleanup():
+        try:
+            cleanup_attempted.set()
+            agent.unload()
+        except BaseException as exc:
+            errors.append(exc)
+
+    agent._retriever.query.side_effect = query
+    agent._retriever.unload.side_effect = unload_inner
+    hop = Thread(target=run_hop)
+    cleanup = Thread(target=run_cleanup)
+    hop.start()
+    try:
+        assert query_started.wait(5)
+        cleanup.start()
+        assert cleanup_attempted.wait(5)
+        agent._retriever.unload.assert_not_called()
+    finally:
+        release_query.set()
+        hop.join(5)
+        if cleanup.ident is not None:
+            cleanup.join(5)
+    assert not hop.is_alive()
+    assert not cleanup.is_alive()
+    assert not errors
+    agent._retriever.unload.assert_called_once_with()

@@ -486,17 +486,18 @@ class AgenticRetriever:
         """Release the owned agent LLM and inner retriever's cached query graph.
 
         Retain ownership when cleanup fails so a later call can retry.
+        Serialize inner retriever cleanup with active retrieval hops.
         """
-        try:
-            with self._lock:
+        with self._lock:
+            try:
                 chat_fn = self._chat_completion_fn
                 if chat_fn is not None:
                     unload = getattr(chat_fn, "unload", None)
                     if callable(unload):
                         unload()
                     self._chat_completion_fn = None
-        finally:
-            self._retriever.unload()
+            finally:
+                self._retriever.unload()
 
     def answer(self, query_ids: Sequence[str], query_texts: Sequence[str]) -> pd.DataFrame:
         """Return one integrated agentic answer per query.
