@@ -215,6 +215,8 @@ class AgenticRetrievalConfig:
     llm_client: Optional[str] = None
     # Optional upper bound on tokens in each agent LLM response.
     max_tokens: Optional[int] = AGENTIC_MAX_TOKENS
+    # Per-request timeout in seconds for both agent LLM stages.
+    timeout_s: float = 120.0
     # Final number of documents the agent targets/selects and the pipeline returns.
     # Drives the ReAct target, the RRF/selection cut, and the per-hop fetch depth
     # (which is raised to at least this). Defaults to 10.
@@ -310,6 +312,18 @@ class AgenticRetrievalConfig:
             if candidate_k < int(self.top_k):
                 raise ValueError(f"candidate_k ({candidate_k}) must be greater than or equal to top_k ({self.top_k}).")
             object.__setattr__(self, "candidate_k", candidate_k)
+
+        object.__setattr__(
+            self,
+            "timeout_s",
+            agentic_float_range_value(
+                self.timeout_s,
+                field_name="timeout_s",
+                min_value=0.0,
+                max_value=float("inf"),
+                min_exclusive=True,
+            ),
+        )
 
         local_tp_error = agentic_int_min_error(
             self.local_tensor_parallel_size, field_name="local_tensor_parallel_size", min_value=1
@@ -479,6 +493,7 @@ class AgenticRetriever:
             temperature=self._cfg.temperature,
             backend=self._cfg.llm_client,
             max_tokens=self._cfg.max_tokens,
+            timeout_s=self._cfg.timeout_s,
             chat_completion_fn=chat_completion_fn,
         )
 
@@ -658,6 +673,7 @@ class AgenticRetriever:
             temperature=self._cfg.temperature,
             backend=self._cfg.llm_client,
             max_tokens=self._cfg.max_tokens,
+            timeout_s=self._cfg.timeout_s,
             chat_completion_fn=chat_completion_fn,
         )
         pipeline = (
