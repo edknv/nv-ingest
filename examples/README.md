@@ -10,7 +10,7 @@ If you run NeMo Retriever Library benchmarking or evaluation tests that use the 
 
 Start with these guides and notebooks:
 
-- [Rerank ViDoRe v3 HR (Text Only)](reranking/reranking_vidore_v3_hr_text_only.ipynb) — compare BM25 with local, text-only Nemotron 3.5 Rerank 8B over all 1,110 pages and 1,908 queries in the HR dataset (not all ViDoRe v3 datasets). This can take a long time and requires a suitable local GPU. It does not use the Bo benchmarking datasets above.
+- [Rerank ViDoRe v3 HR (Text Only)](reranking/reranking_vidore_v3_hr_text_only.ipynb) — compare BM25 with local, text-only Nemotron 3.5 Rerank 8B over all 1,110 pages and 1,908 queries in the HR dataset (not all ViDoRe v3 datasets). An optional, default-off Nemotron 3 embedding path compares its own retrieval and reranked results. This can take a long time and requires a suitable local GPU. It does not use the Bo benchmarking datasets above.
 - [Quickstart: retriever CLI](https://docs.nvidia.com/nemo/retriever/latest/reference/retriever-cli-quickstart/)
 - [Workflow: Ingest documents](https://docs.nvidia.com/nemo/retriever/latest/extraction/workflow-document-ingestion/)
 - [Adding Custom Metadata for Filtered Search/Retrieval](nemo_retriever_retriever_query_metadata_filter.ipynb) — also summarized on [Vector databases — Metadata and filtering](https://docs.nvidia.com/nemo/retriever/latest/extraction/vdbs/#metadata-and-filtering)
