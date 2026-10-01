@@ -20,4 +20,4 @@ For advanced scenarios, use these guides and notebooks:
 - [Try Enterprise RAG Blueprint](https://build.nvidia.com/nvidia/multimodal-pdf-data-extraction-for-enterprise-rag)
 - [Multimodal RAG with LangChain](langchain_multimodal_rag.ipynb)
 - [Multimodal RAG with LlamaIndex](llama_index_multimodal_rag.ipynb)
-- [Rerank ViDoRe v3 HR (Text Only)](reranking/reranking_vidore_v3_hr_text_only.ipynb) — compare BM25 with local, text-only Nemotron 3.5 Rerank 8B over all 1,110 pages and 1,908 queries in the HR dataset (not all ViDoRe v3 datasets). An optional, default-off Nemotron 3 embedding path compares its own retrieval and reranked results. This can take a long time and requires a suitable local GPU. It does not use the Bo benchmarking datasets above.
+- [Rerank ViDoRe v3 HR (Text Only)](reranking/reranking_vidore_v3_hr_text_only.ipynb)
