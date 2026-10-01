@@ -10,7 +10,6 @@ If you run NeMo Retriever Library benchmarking or evaluation tests that use the 
 
 Start with these guides and notebooks:
 
-- [Rerank Existing Retrieval Results (Text Only)](reranking/reranking_existing_retrieval_results_text_only.ipynb) — start here for a small-fixture example with Nemotron 3.5 Rerank 8B. It compares ranking quality without installing NeMo Retriever Library; first-run model download and optional embedding retrieval take longer. Requires a suitable local GPU.
 - [Rerank ViDoRe v3 HR (Text Only)](reranking/reranking_vidore_v3_hr_text_only.ipynb) — compare BM25 with local, text-only Nemotron 3.5 Rerank 8B over all 1,110 pages and 1,908 queries in the HR dataset (not all ViDoRe v3 datasets). This can take a long time and requires a suitable local GPU. It does not use the Bo benchmarking datasets above.
 - [Quickstart: retriever CLI](https://docs.nvidia.com/nemo/retriever/latest/reference/retriever-cli-quickstart/)
 - [Workflow: Ingest documents](https://docs.nvidia.com/nemo/retriever/latest/extraction/workflow-document-ingestion/)
