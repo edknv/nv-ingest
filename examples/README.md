@@ -4,13 +4,12 @@ Explore ready-made Jupyter notebooks and guides for [NeMo Retriever Library](htt
 
 ## Dataset Downloads for Benchmarking
 
-If you run NeMo Retriever Library benchmarking or evaluation tests that use the Bo20, Bo767, or Bo10k corpora, download the [Benchmark Datasets](https://github.com/NVIDIA/NeMo-Retriever/blob/main/evaluation/digital_corpora_download.ipynb) from Digital Corpora first. The standalone ViDoRe worked example below downloads its own dataset.
+If you run benchmarking or evaluation tests, download the [Benchmark Datasets (Bo20, Bo767, Bo10k)](https://github.com/NVIDIA/NeMo-Retriever/blob/main/evaluation/digital_corpora_download.ipynb) from Digital Corpora first. This prerequisite applies to all benchmarking operations.
 
 ## Getting Started
 
 Start with these guides and notebooks:
 
-- [Rerank ViDoRe v3 HR (Text Only)](reranking/reranking_vidore_v3_hr_text_only.ipynb) — compare BM25 with local, text-only Nemotron 3.5 Rerank 8B over all 1,110 pages and 1,908 queries in the HR dataset (not all ViDoRe v3 datasets). An optional, default-off Nemotron 3 embedding path compares its own retrieval and reranked results. This can take a long time and requires a suitable local GPU. It does not use the Bo benchmarking datasets above.
 - [Quickstart: retriever CLI](https://docs.nvidia.com/nemo/retriever/latest/reference/retriever-cli-quickstart/)
 - [Workflow: Ingest documents](https://docs.nvidia.com/nemo/retriever/latest/extraction/workflow-document-ingestion/)
 - [Adding Custom Metadata for Filtered Search/Retrieval](nemo_retriever_retriever_query_metadata_filter.ipynb) — also summarized on [Vector databases — Metadata and filtering](https://docs.nvidia.com/nemo/retriever/latest/extraction/vdbs/#metadata-and-filtering)
@@ -21,3 +20,4 @@ For advanced scenarios, use these guides and notebooks:
 - [Try Enterprise RAG Blueprint](https://build.nvidia.com/nvidia/multimodal-pdf-data-extraction-for-enterprise-rag)
 - [Multimodal RAG with LangChain](langchain_multimodal_rag.ipynb)
 - [Multimodal RAG with LlamaIndex](llama_index_multimodal_rag.ipynb)
+- [Rerank ViDoRe v3 HR (Text Only)](reranking/reranking_vidore_v3_hr_text_only.ipynb) — compare BM25 with local, text-only Nemotron 3.5 Rerank 8B over all 1,110 pages and 1,908 queries in the HR dataset (not all ViDoRe v3 datasets). An optional, default-off Nemotron 3 embedding path compares its own retrieval and reranked results. This can take a long time and requires a suitable local GPU. It does not use the Bo benchmarking datasets above.
