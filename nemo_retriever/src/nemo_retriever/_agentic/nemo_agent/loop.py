@@ -147,6 +147,7 @@ class BaseAgentLoopConfig(BaseModel):
                 values.get("context_window_tokens"),
                 values.get("context_output_tokens", 4096),
                 values.get("context_safety_margin_tokens", 512),
+                check_reservation=False,  # The LLM's completion cap is available when the agent is built.
             )
         return values
 
@@ -215,6 +216,12 @@ class _BaseAgentLoop:
             raise TypeError(f"config must be a BaseAgentLoopConfig, got {type(config).__name__}.")
         if not isinstance(llm, BaseLLMBackend):
             raise TypeError(f"llm must be a BaseLLMBackend, got {type(llm).__name__}.")
+        validate_context_budget(
+            config.context_window_tokens,
+            config.context_output_tokens,
+            config.context_safety_margin_tokens,
+            max_completion_tokens=llm.config.max_completion_tokens,
+        )
         self.config = config
         self.llm = llm
 

@@ -212,7 +212,12 @@ class ReActAgentOperator(AbstractOperator, CPUOperator):
         self._mode = mode
         from nemo_retriever._agentic.nemo_agent.context_budget import validate_context_budget
 
-        validate_context_budget(context_window_tokens, context_output_tokens, context_safety_margin_tokens)
+        validate_context_budget(
+            context_window_tokens,
+            context_output_tokens,
+            context_safety_margin_tokens,
+            max_completion_tokens=max_tokens,
+        )
         self._context_window_tokens = context_window_tokens
         self._context_output_tokens = context_output_tokens
         self._context_safety_margin_tokens = context_safety_margin_tokens

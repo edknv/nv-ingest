@@ -119,13 +119,60 @@ def test_custom_counter_is_used_for_every_budget_check():
     assert metrics["estimated_prompt_tokens_after"] == count(fitted, [])
 
 
-@pytest.mark.parametrize("window,output,margin", [(True, 1, 0), (1000, True, 0), (1000, 1, -1), (1000, 1000, 0)])
+@pytest.mark.parametrize("window,output,margin", [(True, 1, 0), (1000, True, 0), (1000, 1, -1)])
 def test_public_and_private_configs_reject_invalid_budgets(window, output, margin):
     from nemo_retriever.query.agentic import AgenticRetrievalConfig
 
     for config in (AgentConfig, AgenticRetrievalConfig):
         with pytest.raises(ValueError):
             config(context_window_tokens=window, context_output_tokens=output, context_safety_margin_tokens=margin)
+
+
+@pytest.mark.parametrize("maximum,window", [(128, 4096), ("128", 4096), (8192, 4609)])
+def test_small_window_uses_effective_completion_cap(maximum, window):
+    from nemo_retriever.operators.graph_ops.react_agent_operator import ReActAgentOperator
+    from nemo_retriever.query.agentic import AgenticRetrievalConfig
+
+    cfg = AgenticRetrievalConfig(context_window_tokens=window, max_tokens=maximum)
+    assert cfg.context_output_tokens == 4096
+    operator = ReActAgentOperator(
+        llm_model="test",
+        retriever_fn=lambda q, k: [],
+        context_window_tokens=window,
+        max_tokens=cfg.max_tokens,
+    )
+    agent = Agent(
+        config=AgentConfig(context_window_tokens=window),
+        llm=operator._build_llm(),
+        retrieve_tool=create_retrieve_tool("default", lambda q, k: []),
+    )
+    assert agent.config.context_output_tokens == 4096
+    assert agent.llm.config.max_completion_tokens == int(maximum)
+
+
+@pytest.mark.parametrize("maximum,window", [(None, 4096), (128, 640), (8192, 4608)])
+def test_unfit_effective_reservation_rejected_at_public_and_agent_construction(maximum, window):
+    from nemo_retriever.operators.graph_ops.react_agent_operator import ReActAgentOperator
+    from nemo_retriever.query.agentic import AgenticRetrievalConfig
+
+    with pytest.raises(ValueError, match="effective output reservation"):
+        AgenticRetrievalConfig(context_window_tokens=window, max_tokens=maximum)
+    with pytest.raises(ValueError, match="effective output reservation"):
+        ReActAgentOperator(
+            llm_model="test",
+            retriever_fn=lambda q, k: [],
+            context_window_tokens=window,
+            max_tokens=maximum,
+        )
+    with pytest.raises(ValueError, match="effective output reservation"):
+        Agent(
+            config=AgentConfig(context_window_tokens=window),
+            llm=create_llm(
+                create_llm_config("callable", model="test", max_completion_tokens=maximum),
+                completion_fn=lambda **kw: {},
+            ),
+            retrieve_tool=create_retrieve_tool("default", lambda q, k: []),
+        )
 
 
 @pytest.mark.parametrize("maximum", [None, 128])

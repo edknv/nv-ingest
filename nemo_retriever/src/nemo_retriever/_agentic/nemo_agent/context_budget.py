@@ -14,7 +14,15 @@ from .llm.errors import ContextLimitError
 _BUDGET_NOTE = "Document text truncated to fit the context budget; retrieve it again for evidence."
 
 
-def validate_context_budget(window: int | None, output: int, margin: int) -> None:
+def validate_context_budget(
+    window: int | None,
+    output: int,
+    margin: int,
+    *,
+    max_completion_tokens: int | None = None,
+    check_reservation: bool = True,
+) -> None:
+    """Validate fields and, once the LLM cap is known, the effective reservation."""
     for name, value, minimum in (
         ("context_window_tokens", window, 1),
         ("context_output_tokens", output, 1),
@@ -24,8 +32,12 @@ def validate_context_budget(window: int | None, output: int, margin: int) -> Non
             continue
         if type(value) is not int or value < minimum:
             raise ValueError(f"{name} must be an integer >= {minimum}")
-    if window is not None and window <= output + margin:
-        raise ValueError("context_window_tokens must exceed context_output_tokens + context_safety_margin_tokens")
+    if check_reservation and window is not None:
+        reservation = output if max_completion_tokens is None else min(output, max_completion_tokens)
+        if window <= reservation + margin:
+            raise ValueError(
+                "context_window_tokens must exceed the effective output reservation + context_safety_margin_tokens"
+            )
 
 
 def estimate_prompt_tokens(messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> int:

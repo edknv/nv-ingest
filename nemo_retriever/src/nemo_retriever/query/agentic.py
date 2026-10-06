@@ -229,9 +229,6 @@ class AgenticRetrievalConfig:
     def __post_init__(self) -> None:
         from nemo_retriever._agentic.nemo_agent.context_budget import validate_context_budget
 
-        validate_context_budget(
-            self.context_window_tokens, self.context_output_tokens, self.context_safety_margin_tokens
-        )
         invoke_url = _none_if_empty(self.invoke_url)
         object.__setattr__(self, "invoke_url", invoke_url)
 
@@ -339,6 +336,13 @@ class AgenticRetrievalConfig:
             if integer_error:
                 raise ValueError(integer_error)
             object.__setattr__(self, field_name, agentic_int_value(value, field_name=field_name))
+
+        validate_context_budget(
+            self.context_window_tokens,
+            self.context_output_tokens,
+            self.context_safety_margin_tokens,
+            max_completion_tokens=self.max_tokens,
+        )
 
         local_gpu_memory_utilization = agentic_float_range_value(
             self.local_gpu_memory_utilization,
