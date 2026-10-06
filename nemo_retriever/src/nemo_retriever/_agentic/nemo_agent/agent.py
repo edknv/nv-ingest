@@ -365,10 +365,11 @@ class Agent(_BaseAgentLoop):
             if num_new >= top_k:
                 break
 
-        # Repeats keep their slot but drop their content (the LLM saw it
-        # already); must run BEFORE the ids below join retrieved_docs.
+        # Without budgeting, repeats keep their slot but drop content already seen.
+        # With budgeting, supply it again because previous evidence may be evicted.
+        # Check before the ids below join retrieved_docs.
         for rec in output:
-            if rec["id"] in state.retrieved_docs:
+            if rec["id"] in state.retrieved_docs and self.config.context_window_tokens is None:
                 rec.pop("image", None)
                 rec.pop("text", None)
                 rec["note"] = (

@@ -66,6 +66,9 @@ class QueryAgenticOptions:
     local_max_num_seqs: int | None = None
     reasoning_effort: str | None = None
     react_max_steps: int = 50
+    context_window_tokens: int | None = None
+    context_output_tokens: int = 4096
+    context_safety_margin_tokens: int = 512
     text_truncation: int = 0
     num_concurrent: int = 1
     temperature: float | None = None

@@ -30,10 +30,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, Set, Tuple, Union
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from .atif import build_atif_trajectory, llm_trace_record
 from .cache_propagation import PropagationPacer
+from .context_budget import fit_context, validate_context_budget
 from .llm import (
     BaseLLMBackend,
     CompletionResult,
@@ -101,6 +102,13 @@ class BaseAgentLoopConfig(BaseModel):
 
     Attributes
     ----------
+    context_window_tokens:
+        Total server context window; ``None`` disables budgeting.
+    context_output_tokens:
+        Completion reservation and cap, reduced by a smaller configured
+        completion limit. Defaults to ``4096``.
+    context_safety_margin_tokens:
+        Additional protocol overhead reservation. Defaults to ``512``.
     max_steps:
         Maximum number of LLM calls per run; ``None`` = unlimited (callers set
         their own limit). An end-tool call made on the last allowed step still
@@ -125,6 +133,21 @@ class BaseAgentLoopConfig(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
+
+    context_window_tokens: Optional[int] = None
+    context_output_tokens: int = 4096
+    context_safety_margin_tokens: int = 512
+
+    @model_validator(mode="before")
+    @classmethod
+    def _validate_context_budget(cls, values: Any) -> Any:
+        if isinstance(values, dict):
+            validate_context_budget(
+                values.get("context_window_tokens"),
+                values.get("context_output_tokens", 4096),
+                values.get("context_safety_margin_tokens", 512),
+            )
+        return values
 
     max_steps: Optional[int] = None
     on_error: Literal["never_raise", "raise_unknown", "raise_all"] = "raise_unknown"
@@ -247,9 +270,22 @@ class _BaseAgentLoop:
 
     async def _step(self, state: _RunState) -> None:
         """One LLM call: append the assistant message or record a terminal error."""
+        overrides: Dict[str, Any] = {}
+        if self.config.context_window_tokens is not None:
+            output_tokens = self.config.context_output_tokens
+            configured_output = self.llm.config.max_completion_tokens
+            if configured_output is not None:
+                output_tokens = min(output_tokens, configured_output)
+            prompt_budget = self.config.context_window_tokens - output_tokens - self.config.context_safety_margin_tokens
+            state.message_history, metrics = fit_context(
+                state.message_history, state.tool_specs, prompt_budget, self.llm.count_prompt_tokens
+            )
+            metrics.update(prompt_budget_tokens=prompt_budget, reserved_output_tokens=output_tokens)
+            state.extra_data.setdefault("context_budget", []).append(metrics)
+            overrides["max_completion_tokens"] = output_tokens
         await state.pacer.await_propagation()
         with bind_stage(state.stage):
-            result = await self.llm.acompletion(messages=state.message_history, tools=state.tool_specs)
+            result = await self.llm.acompletion(messages=state.message_history, tools=state.tool_specs, **overrides)
         state.pacer.mark()
         step_idx = state.steps
         state.steps += 1

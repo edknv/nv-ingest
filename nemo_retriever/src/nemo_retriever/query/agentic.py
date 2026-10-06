@@ -215,6 +215,10 @@ class AgenticRetrievalConfig:
     llm_client: Optional[str] = None
     # Optional upper bound on tokens in each agent LLM response.
     max_tokens: Optional[int] = AGENTIC_MAX_TOKENS
+    # Opt-in ReAct prompt budgeting; use the actual endpoint context limit.
+    context_window_tokens: Optional[int] = None
+    context_output_tokens: int = 4096
+    context_safety_margin_tokens: int = 512
     # Final number of documents the agent targets/selects and the pipeline returns.
     # Drives the ReAct target, the RRF/selection cut, and the per-hop fetch depth
     # (which is raised to at least this). Defaults to 10.
@@ -223,6 +227,9 @@ class AgenticRetrievalConfig:
     candidate_k: Optional[int] = None
 
     def __post_init__(self) -> None:
+        from nemo_retriever._agentic.nemo_agent.context_budget import validate_context_budget
+
+        validate_context_budget(self.context_window_tokens, self.context_output_tokens, self.context_safety_margin_tokens)
         invoke_url = _none_if_empty(self.invoke_url)
         object.__setattr__(self, "invoke_url", invoke_url)
 
@@ -472,6 +479,9 @@ class AgenticRetriever:
             target_top_k=target_top_k,
             mode=mode,
             max_steps=int(self._cfg.react_max_steps),
+            context_window_tokens=self._cfg.context_window_tokens,
+            context_output_tokens=self._cfg.context_output_tokens,
+            context_safety_margin_tokens=self._cfg.context_safety_margin_tokens,
             api_key=_none_if_empty(self._cfg.api_key),
             parallel_tool_calls=AGENTIC_PARALLEL_TOOL_CALLS,
             num_concurrent=int(self._cfg.num_concurrent),

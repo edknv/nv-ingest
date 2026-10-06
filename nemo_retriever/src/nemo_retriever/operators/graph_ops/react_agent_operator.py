@@ -138,6 +138,14 @@ class ReActAgentOperator(AbstractOperator, CPUOperator):
         by the LLM backend).
     max_tokens : int, optional
         Per-request completion budget (the LLM config's ``max_completion_tokens``).
+    context_window_tokens : int, optional
+        Total server context window. Enables request budgeting when set; ``None``
+        preserves existing behavior. Uses a conservative text token estimate.
+    context_output_tokens : int
+        Completion reservation and per-call cap, default ``4096``. An explicit
+        smaller ``max_tokens`` lowers this reservation.
+    context_safety_margin_tokens : int
+        Additional reserved space for protocol overhead, default ``512``.
     parallel_tool_calls : bool, optional
         Forwarded as the LLM config's ``parallel_tool_calls`` (sent to the
         provider only when set).
@@ -180,6 +188,9 @@ class ReActAgentOperator(AbstractOperator, CPUOperator):
         target_top_k: int = 10,
         mode: Literal["select", "answer"] = "select",
         max_steps: int = 200,
+        context_window_tokens: Optional[int] = None,
+        context_output_tokens: int = 4096,
+        context_safety_margin_tokens: int = 512,
         num_concurrent: int = 8,
         api_key: Optional[str] = None,
         max_tokens: Optional[int] = None,
@@ -199,6 +210,12 @@ class ReActAgentOperator(AbstractOperator, CPUOperator):
         if mode not in ("select", "answer"):
             raise ValueError(f"mode must be 'select' or 'answer', got {mode!r}.")
         self._mode = mode
+        from nemo_retriever._agentic.nemo_agent.context_budget import validate_context_budget
+
+        validate_context_budget(context_window_tokens, context_output_tokens, context_safety_margin_tokens)
+        self._context_window_tokens = context_window_tokens
+        self._context_output_tokens = context_output_tokens
+        self._context_safety_margin_tokens = context_safety_margin_tokens
         self._max_steps = max_steps
         self._num_concurrent = num_concurrent
         self._api_key = api_key
@@ -282,6 +299,9 @@ class ReActAgentOperator(AbstractOperator, CPUOperator):
                     ensure_new_docs=True,
                     end_tool_with_msg=False,
                     max_steps=int(self._max_steps),
+                    context_window_tokens=self._context_window_tokens,
+                    context_output_tokens=self._context_output_tokens,
+                    context_safety_margin_tokens=self._context_safety_margin_tokens,
                     on_error="never_raise",
                 ),
                 llm=self._build_llm(),

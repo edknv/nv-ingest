@@ -84,6 +84,71 @@ The following options apply only with `--agentic`. For the full flag list, refer
 
 Embedding credentials use `NVIDIA_API_KEY` or `NGC_API_KEY` when you call a remote embedding endpoint. The CLI also reuses `--embed-invoke-url`, `--top-k`, `--lancedb-uri`, and `--table-name` from standard retrieval.
 
+## Budget the native ReAct context in Python { #budget-react-context }
+
+Enable context budgeting when repeated retrieval calls can exceed your agent
+LLM's context window. Configure `QueryAgenticOptions` in the Python query
+workflow, or set the same fields on `AgenticRetrievalConfig` when constructing
+an `AgenticRetriever` directly. Budgeting applies to the native ReAct loop in
+both selection and answer modes, with local or remote LLMs.
+
+For a chat-completions endpoint configured with a 65,536-token window, create
+these options and pass them as `QueryRequest.agentic`:
+
+```python
+from nemo_retriever.query.options import QueryAgenticOptions
+
+agentic_options = QueryAgenticOptions(
+    enabled=True,
+    llm_model="your-served-model-id",
+    invoke_url="http://localhost:9000/v1/chat/completions",
+    context_window_tokens=65536,
+    context_output_tokens=4096,
+    context_safety_margin_tokens=512,
+)
+```
+
+Set `context_window_tokens` to your endpoint's actual limit. This setting does
+not increase the server's context capacity. The available prompt budget is the
+context window minus the output reservation and safety margin. If an explicit
+`AgenticRetrievalConfig.max_tokens` value is smaller than the output reservation,
+the loop reserves that smaller value instead. The reserved output count also
+caps the next ReAct LLM response.
+
+The following fields control the budget:
+
+| Field | Default | Behavior |
+|---|---|---|
+| `context_window_tokens` | `None` | Enables budgeting when set to a positive token count. `None` preserves the existing behavior without budgeting. |
+| `context_output_tokens` | `4096` | Reserves room for and caps the next ReAct LLM response. |
+| `context_safety_margin_tokens` | `512` | Reserves additional room for prompt framing and estimation differences. |
+
+Use a positive output reservation and a nonnegative safety margin. The context
+window must exceed their sum.
+
+Before each ReAct LLM call, the loop preserves the system instructions, original
+question, and newest tool-call transaction. It removes the oldest complete turns
+first. If needed, it then shortens lower-priority retrieved document text and
+marks the omitted text explicitly. If an evidence block still cannot fit with
+empty text, the loop discards that block. Retained documents keep their IDs and
+scores. Tool calls, call IDs, and response messages stay together.
+
+The loop does not summarize evidence or invoke an alternative answer-generation
+path. When budgeting is enabled, retrieving a document again can restore its
+evidence after a turn or evidence block was removed.
+
+The default counter conservatively estimates prompt size from UTF-8 bytes and
+message and tool framing. It is not an exact model tokenizer. Custom LLM
+backends can override `BaseLLMBackend.count_prompt_tokens()` for model-specific
+counting. The default estimator does not support image or video content blocks;
+use a custom counter for those inputs.
+
+If the protected instructions, question, tool schemas, and latest tool-call
+metadata cannot fit, the loop returns a `context_limit` error before sending an
+oversized request. Context budgeting does not guarantee answer correctness or
+prevent generation-length
+and ReAct step-limit failures.
+
 ## Self-hosted Helm Nemotron 3.5 Lightning { #self-hosted-helm-lightning }
 
 Use this path when the agent LLM is the Helm-deployed Nemotron 3.5 Lightning NIM rather than local in-process vLLM or an NVIDIA-hosted Build endpoint.
