@@ -99,6 +99,20 @@ def _refresh_references(history):
             block["text"] = json.dumps(document, ensure_ascii=False)
 
 
+def _without_blocks(history, blocks):
+    """Copy retained content in one pass, keeping empty tool responses valid."""
+    discarded_ids = {id(block) for block in blocks}
+    retained = []
+    for message in history:
+        message = dict(message)
+        if isinstance(message.get("content"), list):
+            message["content"] = [block for block in message["content"] if id(block) not in discarded_ids]
+            if not message["content"] and message.get("role") == "tool":
+                message["content"] = [{"type": "text", "text": _BUDGET_NOTE}]
+        retained.append(message)
+    return deepcopy(retained)
+
+
 def fit_context(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]],
@@ -125,9 +139,8 @@ def fit_context(
             else:
                 seen.add(identity)
     while count_tokens(history, tools) > budget:
-        protected = deepcopy(history)
-        for message, block, _, _ in list(retrieval_blocks(protected)):
-            _remove_block(message, block)
+        candidates = list(retrieval_blocks(history))
+        protected = _without_blocks(history, [block for _, block, _, _ in candidates])
         if count_tokens(protected, tools) > budget:
             starts = [i for i, message in enumerate(history) if message.get("role") == "assistant"]
             if len(starts) >= 2:
@@ -140,18 +153,42 @@ def fit_context(
                 "tool schemas, and latest tool-call metadata. Increase context_window_tokens "
                 "or reduce the request; no oversized completion was sent."
             )
-        candidates = list(retrieval_blocks(history))
         if not candidates:
             raise ContextLimitError("The protected request cannot fit the context budget.")
         # Bootstrap evidence is expendable once research starts. Within tool
         # results, remove lower-ranked blocks before any turn's leading evidence.
-        message, block, document, rank = min(
-            candidates, key=lambda item: (item[0].get("role") != "user", item[3] == 0, -item[3])
-        )
+        candidates.sort(key=lambda item: (item[0].get("role") != "user", item[3] == 0, -item[3]))
+        message, block, document, rank = candidates[0]
         original = document.get("text", "")
         if rank > 0 or not original:
-            _remove_block(message, block)
-            discarded += 1
+            # Batch evictions in the same priority order. Stop before leading
+            # evidence that needs shortening instead of discarding.
+            disposable = []
+            for _, candidate_block, candidate_document, candidate_rank in candidates:
+                if candidate_rank == 0 and candidate_document.get("text"):
+                    break
+                disposable.append(candidate_block)
+
+            def discard_prefix(length):
+                trial = _without_blocks(history, disposable[:length])
+                _refresh_references(trial)
+                return trial
+
+            fitted = discard_prefix(len(disposable))
+            length = len(disposable)
+            if count_tokens(fitted, tools) <= budget:
+                low, high = 1, length
+                while low < high:
+                    middle = (low + high) // 2
+                    trial = discard_prefix(middle)
+                    if count_tokens(trial, tools) <= budget:
+                        high = middle
+                        fitted = trial
+                    else:
+                        low = middle + 1
+                length = low
+            history = fitted
+            discarded += length
         else:
             document["note"] = _BUDGET_NOTE
 

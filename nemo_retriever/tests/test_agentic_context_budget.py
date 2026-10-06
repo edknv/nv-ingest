@@ -269,7 +269,16 @@ def test_large_retrieval_batch_discards_lower_ranked_blocks_without_orphaning_to
         {"role": "assistant", "tool_calls": [{"id": "retrieve"}], "content": ""},
         {"role": "tool", "tool_call_id": "retrieve", "content": documents},
     ]
-    fitted, metrics = fit_context(history, [], 4000, estimate_prompt_tokens)
+    count_calls = 0
+
+    def count(messages, tools):
+        nonlocal count_calls
+        count_calls += 1
+        return estimate_prompt_tokens(messages, tools)
+
+    fitted, metrics = fit_context(history, [], 4000, count)
+    # Full-history token counting must not happen once per discarded document.
+    assert count_calls < 40
     assert estimate_prompt_tokens(fitted, []) <= 4000
     assert fitted[:3] == history[:3]
     assert fitted[-1]["tool_call_id"] == "retrieve"
