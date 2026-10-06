@@ -231,3 +231,85 @@ def test_large_retrieval_batch_discards_lower_ranked_blocks_without_orphaning_to
     assert [doc["id"] for doc in kept] == [f"d{i}" for i in range(len(kept))]
     assert metrics["discarded_documents"] == 500 - len(kept)
     assert len(history[-1]["content"]) == 500
+
+
+def test_bootstrap_reduction_keeps_prior_year_evidence_and_tool_history():
+    history = [
+        {"role": "system", "content": "instructions"},
+        {"role": "user", "content": [{"type": "text", "text": "question"}, _document("bootstrap", "B" * 30000)]},
+        {"role": "assistant", "tool_calls": [{"id": "old"}]},
+        {"role": "tool", "tool_call_id": "old", "content": [_document("1952", "E" * 20000)]},
+        {"role": "assistant", "tool_calls": [{"id": "new"}]},
+        {"role": "tool", "tool_call_id": "new", "content": [_document("1954", "F" * 20000)]},
+    ]
+    fitted, metrics = fit_context(history, [], 60928, estimate_prompt_tokens)
+    assert metrics["removed_turns"] == 0
+    assert fitted[2:] == history[2:]
+    assert estimate_prompt_tokens(fitted, []) <= 60928
+
+
+def test_visible_repeat_is_not_resent_but_trace_keeps_evicted_transactions():
+    seen = []
+
+    def completion(**kwargs):
+        seen.append(deepcopy(kwargs))
+        if len(seen) < 4:
+            response = _response("retrieve", {"query": "again", "top_k": 1})
+            response["choices"][0]["message"]["content"] = "reasoning " * 900
+            response["choices"][0]["message"]["tool_calls"][0]["id"] = f"call-{len(seen)}"
+            return response
+        return _response("log_answer", {"answer": "42", "citations": ["d"]})
+
+    agent = Agent(
+        config=AgentConfig(
+            mode="answer",
+            user_msg_type="with_results",
+            end_tool_with_msg=False,
+            context_window_tokens=20000,
+            context_output_tokens=256,
+            context_safety_margin_tokens=128,
+            max_steps=4,
+        ),
+        llm=create_llm(create_llm_config("callable", model="test"), completion_fn=completion),
+        retrieve_tool=create_retrieve_tool(
+            "default", lambda q, k: [{"id": "d", "score": 1, "text": "original evidence"}]
+        ),
+    )
+    result = agent.run_sync("question", query_id="trace")
+    assert result.succeeded
+    assert "This document is retrieved before" in seen[1]["messages"][-1]["content"]
+    assert sum(m["removed_turns"] for m in result.extra_data["context_budget"]) > 0
+    assert result.atif_trace["final_metrics"]["extra"]["llm_call_count"] == len(seen) == 4
+    assert result.atif_trace["final_metrics"]["total_prompt_tokens"] == 40
+    assert result.atif_trace["final_metrics"]["total_completion_tokens"] == 8
+
+
+def test_length_failure_is_audited_with_its_usage():
+    response = {
+        "choices": [{"message": {"role": "assistant", "content": "partial reasoning"}, "finish_reason": "length"}],
+        "usage": {"prompt_tokens": 123, "completion_tokens": 16384},
+    }
+    agent = Agent(
+        config=AgentConfig(mode="answer", user_msg_type="simple"),
+        llm=create_llm(create_llm_config("callable", model="test"), completion_fn=lambda **kwargs: response),
+        retrieve_tool=create_retrieve_tool("default", lambda q, k: []),
+    )
+    result = agent.run_sync("question")
+    assert result.error.category == "bad_finish_reason"
+    assert result.atif_trace["final_metrics"]["extra"]["llm_call_count"] == 1
+    assert result.atif_trace["final_metrics"]["total_completion_tokens"] == 16384
+
+
+def test_deduplicated_tool_response_remains_valid_text_content():
+    history = [
+        {"role": "system", "content": "instructions"},
+        {"role": "user", "content": [{"type": "text", "text": "question"}, _document("d", "evidence" * 500)]},
+        {"role": "assistant", "tool_calls": [{"id": "repeat"}]},
+        {"role": "tool", "tool_call_id": "repeat", "content": [_document("d", "evidence" * 500)]},
+    ]
+    fitted, metrics = fit_context(history, [], 6000, estimate_prompt_tokens)
+    assert metrics["deduplicated_documents"] == 1
+    assert fitted[-1]["content"]
+    assert fitted[-1]["content"][0]["text"]
+    assert fitted[-1]["tool_call_id"] == "repeat"
+    assert estimate_prompt_tokens(fitted, []) <= 6000

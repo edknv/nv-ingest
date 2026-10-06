@@ -127,15 +127,24 @@ Use a positive output reservation and a nonnegative safety margin. The context
 window must exceed their sum.
 
 Before each ReAct LLM call, the loop preserves the system instructions, original
-question, and newest tool-call transaction. It removes the oldest complete turns
-first. If needed, it then shortens lower-priority retrieved document text and
-marks the omitted text explicitly. If an evidence block still cannot fit with
-empty text, the loop discards that block. Retained documents keep their IDs and
-scores. Tool calls, call IDs, and response messages stay together.
+question, and newest tool-call transaction. When the prompt exceeds its budget,
+the loop removes duplicate retrieval blocks first. It then discards lower-priority
+evidence blocks or shortens document text, marking omitted text explicitly.
+Retained documents keep their IDs and scores.
+
+The loop preserves assistant reasoning and tool history while reducing evidence.
+It evicts the oldest complete turns only when their non-document content cannot
+fit. Tool calls, call IDs, and response messages stay together.
 
 The loop does not summarize evidence or invoke an alternative answer-generation
-path. When budgeting is enabled, retrieving a document again can restore its
-evidence after a turn or evidence block was removed.
+path. Repeated retrieval references earlier evidence when the same full document
+text remains in the retained prompt. If that text is missing or truncated,
+retrieval supplies the full evidence again.
+
+Context compaction affects the next model prompt. The run retains a separate
+history for its Agent Trajectory Interchange Format (ATIF) trace, including turns
+removed from the prompt. Existing trace content limits still apply. Usage totals
+continue to include all completed LLM calls, even when their turns are evicted.
 
 The default counter conservatively estimates prompt size from UTF-8 bytes and
 message and tool framing. It is not an exact model tokenizer. Custom LLM
@@ -146,8 +155,7 @@ use a custom counter for those inputs.
 If the protected instructions, question, tool schemas, and latest tool-call
 metadata cannot fit, the loop returns a `context_limit` error before sending an
 oversized request. Context budgeting does not guarantee answer correctness or
-prevent generation-length
-and ReAct step-limit failures.
+prevent generation-length and ReAct step-limit failures.
 
 ## Self-hosted Helm Nemotron 3.5 Lightning { #self-hosted-helm-lightning }
 

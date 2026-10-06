@@ -43,84 +43,132 @@ def estimate_prompt_tokens(messages: list[dict[str, Any]], tools: list[dict[str,
     )
 
 
+def retrieval_blocks(messages):
+    """Yield structured retrieval blocks, excluding instructions and plain text."""
+    for message in messages:
+        if message.get("role") == "system" or not isinstance(message.get("content"), list):
+            continue
+        rank = 0
+        for block in message["content"]:
+            if not isinstance(block, dict) or block.get("type") != "text":
+                continue
+            try:
+                document = json.loads(block.get("text", ""))
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(document, dict) or "id" not in document or "score" not in document:
+                continue
+            if "text" in document and not isinstance(document["text"], str):
+                continue
+            yield message, block, document, rank
+            rank += 1
+
+
+def visible_document_texts(messages):
+    """Full evidence still visible to the next completion, keyed by identity/text."""
+    return {
+        (doc["id"], doc["text"])
+        for _, _, doc, _ in retrieval_blocks(messages)
+        if doc.get("text") and "truncated" not in str(doc.get("note", "")).lower()
+    }
+
+
+def _remove_block(message, block):
+    message["content"].remove(block)
+    if not message["content"] and message.get("role") == "tool":
+        message["content"] = [{"type": "text", "text": _BUDGET_NOTE}]
+
+
+def _refresh_references(history):
+    full_ids = {identifier for identifier, _ in visible_document_texts(history)}
+    for _, block, document, _ in retrieval_blocks(history):
+        if "text" not in document and document["id"] not in full_ids:
+            document["note"] = _BUDGET_NOTE
+            block["text"] = json.dumps(document, ensure_ascii=False)
+
+
 def fit_context(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]],
     budget: int,
     count_tokens: Callable[[list[dict[str, Any]], list[dict[str, Any]]], int],
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    """Keep the original instructions/question and the latest complete tool transaction.
+    """Reduce redundant/lower-ranked evidence before evicting conversation turns.
 
-    Remove older assistant turns together with every tool response and auto-continue
-    message belonging to them. Retrieved document JSON is shortened only in its text
-    field; identifiers and scores of retained documents stay intact. If even an
-    empty document cannot fit, discard its block. Tool schemas and tool-call
-    arguments always remain intact.
+    Preserve the question, instructions and tool transactions. Evict whole older
+    turns only when their protected non-document content itself cannot fit.
     """
     history = deepcopy(messages)
     before = count_tokens(history, tools)
-    removed = shortened = discarded = 0
+    removed = shortened = discarded = deduplicated = 0
+    if before > budget:
+        seen = set()
+        full_ids = {identifier for identifier, _ in visible_document_texts(history)}
+        for message, block, document, _ in list(retrieval_blocks(history)):
+            identity = (document["id"], document.get("text"))
+            duplicate = identity in seen or ("text" not in document and document["id"] in full_ids)
+            if duplicate:
+                _remove_block(message, block)
+                deduplicated += 1
+            else:
+                seen.add(identity)
     while count_tokens(history, tools) > budget:
-        starts = [index for index, message in enumerate(history) if message.get("role") == "assistant"]
-        if len(starts) < 2:
-            break
-        del history[starts[0] : starts[1]]
-        removed += 1
-    while count_tokens(history, tools) > budget:
-        candidates = []
-        for message in history:
-            if message.get("role") == "system":
+        protected = deepcopy(history)
+        for message, block, _, _ in list(retrieval_blocks(protected)):
+            _remove_block(message, block)
+        if count_tokens(protected, tools) > budget:
+            starts = [i for i, message in enumerate(history) if message.get("role") == "assistant"]
+            if len(starts) >= 2:
+                del history[starts[0] : starts[1]]
+                removed += 1
+                _refresh_references(history)
                 continue
-            content = message.get("content")
-            if not isinstance(content, list):
-                continue
-            for block in reversed(content):
-                if not isinstance(block, dict) or block.get("type") != "text":
-                    continue
-                try:
-                    document = json.loads(block.get("text", ""))
-                except (ValueError, TypeError):
-                    continue
-                if (
-                    isinstance(document, dict)
-                    and "id" in document
-                    and "score" in document
-                    and isinstance(document.get("text"), str)
-                ):
-                    candidates.append((content, block, document))
-        if not candidates:
             raise ContextLimitError(
                 "The context budget cannot fit the protected instructions, original question, "
                 "tool schemas, and latest tool-call metadata. Increase context_window_tokens "
                 "or reduce the request; no oversized completion was sent."
             )
-        content, block, document = candidates[0]
-        original = document["text"]
-        document["note"] = _BUDGET_NOTE
-
-        def set_prefix(length: int) -> None:
-            document["text"] = original[:length]
-            block["text"] = json.dumps(document, ensure_ascii=False)
-
-        set_prefix(0)
-        if count_tokens(history, tools) <= budget:
-            low, high = 0, len(original)
-            while low < high:
-                middle = (low + high + 1) // 2
-                set_prefix(middle)
-                if count_tokens(history, tools) <= budget:
-                    low = middle
-                else:
-                    high = middle - 1
-            set_prefix(low)
-        else:
-            content.remove(block)
+        candidates = list(retrieval_blocks(history))
+        if not candidates:
+            raise ContextLimitError("The protected request cannot fit the context budget.")
+        # Bootstrap evidence is expendable once research starts. Within tool
+        # results, remove lower-ranked blocks before any turn's leading evidence.
+        message, block, document, rank = min(
+            candidates, key=lambda item: (item[0].get("role") != "user", item[3] == 0, -item[3])
+        )
+        original = document.get("text", "")
+        if rank > 0 or not original:
+            _remove_block(message, block)
             discarded += 1
-        shortened += 1
+        else:
+            document["note"] = _BUDGET_NOTE
+
+            def set_prefix(length):
+                document["text"] = original[:length]
+                block["text"] = json.dumps(document, ensure_ascii=False)
+
+            set_prefix(0)
+            _refresh_references(history)
+            if count_tokens(history, tools) <= budget:
+                low, high = 0, len(original)
+                while low < high:
+                    middle = (low + high + 1) // 2
+                    set_prefix(middle)
+                    if count_tokens(history, tools) <= budget:
+                        low = middle
+                    else:
+                        high = middle - 1
+                set_prefix(low)
+                shortened += 1
+            else:
+                _remove_block(message, block)
+                discarded += 1
+        _refresh_references(history)
     return history, {
         "estimated_prompt_tokens_before": before,
         "estimated_prompt_tokens_after": count_tokens(history, tools),
         "removed_turns": removed,
-        "shortened_documents": shortened - discarded,
+        "shortened_documents": shortened,
         "discarded_documents": discarded,
+        "deduplicated_documents": deduplicated,
     }
