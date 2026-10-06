@@ -75,6 +75,9 @@ class QueryAgenticOptions:
     # Accepted for service-layer compatibility only. The agent derives its own
     # per-hop retrieval depth from ``top_k``, so this value is never read.
     backend_top_k: int | None = None
+    context_window_tokens: int | None = None
+    context_output_tokens: int = 4096
+    context_safety_margin_tokens: int = 512
 
 
 @dataclass(frozen=True)

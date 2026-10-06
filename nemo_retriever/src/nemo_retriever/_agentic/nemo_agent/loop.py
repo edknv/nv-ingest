@@ -26,14 +26,16 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, Set, Tuple, Union
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from .atif import build_atif_trajectory, llm_trace_record
 from .cache_propagation import PropagationPacer
+from .context_budget import fit_context, validate_context_budget
 from .llm import (
     BaseLLMBackend,
     CompletionResult,
@@ -101,6 +103,13 @@ class BaseAgentLoopConfig(BaseModel):
 
     Attributes
     ----------
+    context_window_tokens:
+        Total server context window; ``None`` disables budgeting.
+    context_output_tokens:
+        Completion reservation and cap, reduced by a smaller configured
+        completion limit. Defaults to ``4096``.
+    context_safety_margin_tokens:
+        Additional protocol overhead reservation. Defaults to ``512``.
     max_steps:
         Maximum number of LLM calls per run; ``None`` = unlimited (callers set
         their own limit). An end-tool call made on the last allowed step still
@@ -125,6 +134,21 @@ class BaseAgentLoopConfig(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
+
+    context_window_tokens: Optional[int] = None
+    context_output_tokens: int = 4096
+    context_safety_margin_tokens: int = 512
+
+    @model_validator(mode="before")
+    @classmethod
+    def _validate_context_budget(cls, values: Any) -> Any:
+        if isinstance(values, dict):
+            validate_context_budget(
+                values.get("context_window_tokens"),
+                values.get("context_output_tokens", 4096),
+                values.get("context_safety_margin_tokens", 512),
+            )
+        return values
 
     max_steps: Optional[int] = None
     on_error: Literal["never_raise", "raise_unknown", "raise_all"] = "raise_unknown"
@@ -158,6 +182,8 @@ class _RunState:
     # attempts, whose retry loop must inspect the typed result.
     record_context_limit: bool = False
     message_history: List[Dict[str, Any]] = field(default_factory=list)
+    trace_history: Optional[List[Dict[str, Any]]] = None
+    trace_cursor: int = 0
     steps: int = 0
     retrieved_docs: Set[str] = field(default_factory=set)
     retrieval_log: List[Dict[str, Any]] = field(default_factory=list)
@@ -247,9 +273,27 @@ class _BaseAgentLoop:
 
     async def _step(self, state: _RunState) -> None:
         """One LLM call: append the assistant message or record a terminal error."""
+        overrides: Dict[str, Any] = {}
+        if self.config.context_window_tokens is not None:
+            if state.trace_history is None:
+                state.trace_history = []
+            state.trace_history.extend(deepcopy(state.message_history[state.trace_cursor :]))
+            state.trace_cursor = len(state.message_history)
+            output_tokens = self.config.context_output_tokens
+            configured_output = self.llm.config.max_completion_tokens
+            if configured_output is not None:
+                output_tokens = min(output_tokens, configured_output)
+            prompt_budget = self.config.context_window_tokens - output_tokens - self.config.context_safety_margin_tokens
+            state.message_history, metrics = fit_context(
+                state.message_history, state.tool_specs, prompt_budget, self.llm.count_prompt_tokens
+            )
+            state.trace_cursor = len(state.message_history)
+            metrics.update(prompt_budget_tokens=prompt_budget, reserved_output_tokens=output_tokens)
+            state.extra_data.setdefault("context_budget", []).append(metrics)
+            overrides["max_completion_tokens"] = output_tokens
         await state.pacer.await_propagation()
         with bind_stage(state.stage):
-            result = await self.llm.acompletion(messages=state.message_history, tools=state.tool_specs)
+            result = await self.llm.acompletion(messages=state.message_history, tools=state.tool_specs, **overrides)
         state.pacer.mark()
         step_idx = state.steps
         state.steps += 1
@@ -261,6 +305,12 @@ class _BaseAgentLoop:
         # so stale reasoning never leaks into the next retrieve.
         state.last_reasoning = result.reasoning
 
+        message = dict(result.message)
+        if result.reasoning is not None:
+            message["__reasoning__"] = result.reasoning  # backends strip __-prefixed keys
+        state.message_history.append(message)
+        state.llm_trace_records.append(llm_trace_record(result.usage))
+
         if result.finish_reason not in ("stop", "tool_calls"):
             self._record_error(
                 state,
@@ -270,11 +320,6 @@ class _BaseAgentLoop:
                 ),
             )
             return
-        message = dict(result.message)
-        if result.reasoning is not None:
-            message["__reasoning__"] = result.reasoning  # backends strip __-prefixed keys
-        state.message_history.append(message)
-        state.llm_trace_records.append(llm_trace_record(result.usage))
 
     async def _process_tool_calls(self, state: _RunState) -> bool:
         """Execute the last assistant message's tool calls; True when the run ended."""
@@ -467,7 +512,11 @@ class _BaseAgentLoop:
                 query_id=get_query_id(),
                 stage=state.stage,
                 model_name=str(self.llm.config.model),
-                message_history=state.message_history,
+                message_history=(
+                    state.trace_history + deepcopy(state.message_history[state.trace_cursor :])
+                    if state.trace_history is not None
+                    else state.message_history
+                ),
                 llm_records=state.llm_trace_records,
                 retrieval_log=state.retrieval_log,
                 error=error_payload,

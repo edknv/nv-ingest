@@ -179,6 +179,18 @@ class BaseLLMBackend(ABC):
         self._record_usage(result.usage)
         return result
 
+    def count_prompt_tokens(self, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]]) -> int:
+        """Size a context-budget request; override for model-specific tokenization.
+
+        The default is a conservative UTF-8 byte estimate for text-only requests.
+        Counting must include chat framing and tool schemas, and must not call the
+        completion endpoint or mutate messages. This hook is used only when the
+        agent's context budget is enabled.
+        """
+        from ..context_budget import estimate_prompt_tokens
+
+        return estimate_prompt_tokens(messages, tools)
+
     async def acompletion(
         self,
         messages: List[Dict[str, Any]],

@@ -221,8 +221,17 @@ class AgenticRetrievalConfig:
     top_k: int = AGENTIC_TARGET_TOP_K
     # Wider pre-filter and pre-rerank candidate pool for each retrieval hop.
     candidate_k: Optional[int] = None
+    # Opt-in ReAct prompt budgeting; use the actual endpoint context limit.
+    context_window_tokens: Optional[int] = None
+    context_output_tokens: int = 4096
+    context_safety_margin_tokens: int = 512
 
     def __post_init__(self) -> None:
+        from nemo_retriever._agentic.nemo_agent.context_budget import validate_context_budget
+
+        validate_context_budget(
+            self.context_window_tokens, self.context_output_tokens, self.context_safety_margin_tokens
+        )
         invoke_url = _none_if_empty(self.invoke_url)
         object.__setattr__(self, "invoke_url", invoke_url)
 
@@ -472,6 +481,9 @@ class AgenticRetriever:
             target_top_k=target_top_k,
             mode=mode,
             max_steps=int(self._cfg.react_max_steps),
+            context_window_tokens=self._cfg.context_window_tokens,
+            context_output_tokens=self._cfg.context_output_tokens,
+            context_safety_margin_tokens=self._cfg.context_safety_margin_tokens,
             api_key=_none_if_empty(self._cfg.api_key),
             parallel_tool_calls=AGENTIC_PARALLEL_TOOL_CALLS,
             num_concurrent=int(self._cfg.num_concurrent),
