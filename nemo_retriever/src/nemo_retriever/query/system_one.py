@@ -83,16 +83,29 @@ class Decision:
 
 
 class SystemOneClient:
-    """Score an action Choice and evidence-sufficiency Noul in one request."""
+    """Score an action Choice and evidence-sufficiency Noul in one request.
+
+    The Choice routes search actions. The independent Noul checks whether the
+    supplied evidence supports a complete answer.
+    """
 
     def __init__(self, config: SystemOneConfig) -> None:
         self.config = config
 
     def decide(self, state: dict[str, Any], actions: list[str]) -> Decision:
         descriptions = {
-            "expand": "Generate new search queries to find missing supporting evidence.",
-            "think": "Reason over the current evidence and identify unresolved gaps before searching.",
-            "finish": "Stop searching and send the retained candidates to final selection.",
+            "expand": (
+                "Generate queries for facts or connections missing from `evidence` that are needed for `query`. "
+                "Use `searches` to avoid repeating attempted searches."
+            ),
+            "think": (
+                "Examine `evidence` in relation to `query` and update `notes` with unresolved gaps "
+                "or conflicts to guide the next search."
+            ),
+            "finish": (
+                "The supplied `evidence` supports every part of `query`; stop searching "
+                "and send the retained candidates to final selection."
+            ),
         }
         payload = {
             "model": self.config.model,
@@ -100,12 +113,30 @@ class SystemOneClient:
             "questions": {
                 "action": {
                     "type": "choice",
-                    "instructions": "Which allowed action best advances retrieval for the original query?",
+                    "instructions": (
+                        "Which allowed search action best advances `query`, given `evidence`, `searches`, "
+                        "`notes`, and the remaining budgets? Judge from the supplied state without assuming "
+                        "the answer to the companion sufficiency question."
+                    ),
                     "criteria": {action: descriptions[action] for action in actions},
                 },
                 "sufficient": {
                     "type": "noul",
-                    "instructions": "Does the retrieved evidence support all requirements of the original query?",
+                    "instructions": (
+                        "Using only `evidence`, is there support for a complete answer to every part of `query`? "
+                        "Treat `notes` as search guidance, not source evidence. "
+                        "Judge independently of which search action is selected."
+                    ),
+                    "criteria": {
+                        "true": (
+                            "The supplied passages explicitly support, or jointly imply, a complete answer "
+                            "covering all facts and connections required by the query."
+                        ),
+                        "false": (
+                            "The passages are absent, merely related, or support only a partial answer; "
+                            "a required fact or connection is unsupported."
+                        ),
+                    },
                 },
             },
         }

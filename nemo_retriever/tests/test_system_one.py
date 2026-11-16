@@ -271,3 +271,39 @@ def test_new_evidence_reaches_controller_after_expansion():
     state = op._decision_client.decide.call_args.args[0]
     assert "new" in [item["doc_id"] for item in state["evidence"]]
     assert state["candidate_count"] == 11
+
+
+@pytest.mark.parametrize("sufficiency,expected_stop,search_count", [(0.69, "action_budget", 2), (0.7, "sufficient", 1)])
+def test_companion_noul_controls_stopping_independently_of_choice(sufficiency, expected_stop, search_count):
+    """Exercise the prompt payload and stop gate together through the HTTP adapter."""
+    requests = []
+
+    def handle(request):
+        payload = json.loads(request.content)
+        requests.append(payload)
+        assert set(payload["questions"]) == {"action", "sufficient"}
+        # The Choice routes search actions.
+        assert set(payload["questions"]["action"]["criteria"]) == {"expand", "finish"}
+        noul = payload["questions"]["sufficient"]
+        assert noul["type"] == "noul"
+        assert set(noul["criteria"]) == {"true", "false"}
+        body = _body()
+        body["answers"]["sufficient"]["noul"] = sufficiency
+        return httpx.Response(200, json=body)
+
+    op = _operator(
+        config=replace(CFG, max_actions=1, max_expansions=1, max_thinks=0),
+        outputs=[{"queries": []}, {"queries": ["missing connection"]}],
+    )
+    op._decision_client = SystemOneClient(op._config)
+    real_client = httpx.Client
+    with patch(
+        "nemo_retriever.query.system_one.httpx.Client",
+        side_effect=lambda **kw: real_client(transport=httpx.MockTransport(handle), **kw),
+    ):
+        _run(op)
+    trace = op.pop_query_trace("customer")
+    assert trace["stop_reason"] == expected_stop
+    assert len(trace["searches"]) == search_count
+    assert len(requests) == 1
+    assert trace["decisions"][0]["action"] == "finish"

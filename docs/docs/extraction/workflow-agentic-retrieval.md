@@ -138,6 +138,17 @@ asks for both an action and an evidence-sufficiency score. A `finish` decision
 stops searching only when the score reaches `sufficiency_threshold`, which
 defaults to `0.7`. Budgets also bound the search loop.
 
+The controller combines a `Choice` over `expand`, `think`, and `finish` with
+an independent `Noul` check for complete answer support in one request.
+Both questions refer to the query and supplied evidence in the search state.
+The sufficiency check requires passages that explicitly support or jointly
+imply a complete answer. Search notes guide the next steps but do not count as
+source evidence. Missing evidence, partial answers, and topical similarity do
+not meet the criterion. The action probabilities and sufficiency score remain
+separate inputs to the stopping rule above.
+
+Final selection uses the existing selection agent prompts.
+
 The following settings belong to `SystemOneConfig`.
 
 | Setting | Default | Purpose |
