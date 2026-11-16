@@ -84,6 +84,89 @@ The following options apply only with `--agentic`. For the full flag list, refer
 
 Embedding credentials use `NVIDIA_API_KEY` or `NGC_API_KEY` when you call a remote embedding endpoint. The CLI also reuses `--embed-invoke-url`, `--top-k`, `--lancedb-uri`, and `--table-name` from standard retrieval.
 
+## Experimental System One controller in Python { #system-one-controller }
+
+Use the experimental System One controller to separate search decisions from
+LLM content generation. The decision model chooses `expand`, `think`, or
+`finish`. The existing agent LLM writes subqueries and notes, and selects the
+final document ranking.
+
+This controller is opt-in through the Python `AgenticRetrievalConfig.system_one`
+setting. Omitting it retains the ReAct workflow. The controller supports
+`retrieve()` and `retrieve_with_usage()` only. Calling `answer()` or
+`answer_with_usage()` with this setting raises `ValueError`.
+The CLI and service do not expose System One configuration.
+
+Start with an existing agentic retrieval configuration that matches your
+ingested table and agent LLM. Add the controller with `dataclasses.replace`.
+Set the environment variables below to your decision server's full POST URL,
+model ID, and API key before running this example.
+The server must accept SystemOne requests with `state` and `questions`, and
+return typed `choice` and `noul` answers under `answers`. This endpoint is
+separate from the agent LLM's chat-completions URL.
+
+```python
+import os
+from dataclasses import replace
+
+from nemo_retriever.query.agentic import AgenticRetriever
+from nemo_retriever.query.system_one import SystemOneConfig
+
+# existing_config is your AgenticRetrievalConfig for the ingested table.
+config = replace(
+    existing_config,
+    system_one=SystemOneConfig(
+        endpoint=os.environ["SYSTEM_ONE_ENDPOINT"],
+        model=os.environ["SYSTEM_ONE_MODEL"],
+        api_key=os.environ.get("SYSTEM_ONE_API_KEY"),
+    ),
+)
+retriever = AgenticRetriever(config)
+try:
+    result = retriever.retrieve_with_usage(
+        ["q1"], ["Find documents that explain parser behavior."]
+    )
+    print(result.documents[["doc_id", "rank", "result_source"]])
+    print(result.traces["q1"])
+finally:
+    retriever.unload()
+```
+
+The controller searches the original query, requests a plan of up to four
+subqueries, and executes pending searches sequentially. Each decision request
+asks for both an action and an evidence-sufficiency score. A `finish` decision
+stops searching only when the score reaches `sufficiency_threshold`, which
+defaults to `0.7`. Budgets also bound the search loop.
+
+The following settings belong to `SystemOneConfig`.
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `max_actions` | `12` | Maximum controller decisions. |
+| `max_expansions` | `2` | Maximum additional query-generation rounds. |
+| `max_thinks` | `1` | Maximum note-generation rounds. |
+| `max_subqueries` | `4` | Maximum subqueries per generated plan. |
+| `evidence_chars` | `4000` | Total evidence characters shown to the controller. |
+| `selection_pool_k` | `None` | Optional candidate limit after reciprocal rank fusion. Must be at least the final `top_k`. |
+| `timeout` | `30.0` | Decision request timeout in seconds. |
+
+The compact controller view does not truncate the candidate text retained for
+selection. This path ignores `AgenticRetrievalConfig.text_truncation` and
+processes queries sequentially, regardless of `num_concurrent`.
+`selection_pool_k=None` keeps the fused pool without an explicit
+candidate limit. The existing selection agent can still shrink that pool when
+its context window overflows. Increasing the candidate limit or search budgets
+can increase latency and token use. Evaluate final ranking and answer quality
+on your own queries before adopting a configuration.
+
+`retrieve_with_usage()` returns a `traces` mapping keyed by your query IDs.
+Inspect `stop_reason`, controller decisions, searched queries, and candidate
+counts to distinguish evidence-based stopping from budget exhaustion. Decision
+or content-generation failures stop searching and send retained candidates to
+selection. Retrieval failures propagate to the caller.
+System One search traces are returned in memory rather than persisted as ATIF
+files.
+
 ## Self-hosted Helm Nemotron 3.5 Lightning { #self-hosted-helm-lightning }
 
 Use this path when the agent LLM is the Helm-deployed Nemotron 3.5 Lightning NIM rather than local in-process vLLM or an NVIDIA-hosted Build endpoint.
@@ -298,7 +381,7 @@ The block must show `enabled: true`. For chart keys, refer to [Service configura
 
 ## Result contract { #result-contract }
 
-Every agentic Retriever run writes a lightweight Agent Trajectory Interchange
+Every ReAct Retriever run writes a lightweight Agent Trajectory Interchange
 Format (ATIF) JSON trajectory under `./agentic-traces` by default. The
 trajectory bounds observation content to keep the file lightweight. These
 traces are not added to HTTP responses. If a trace cannot be persisted,
