@@ -5,6 +5,8 @@
 
 from dataclasses import replace
 import json
+from contextvars import ContextVar
+from threading import Barrier, Event, Lock
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -239,6 +241,71 @@ def test_selection_pool_cannot_be_smaller_than_final_count():
 
     with pytest.raises(ValueError, match="selection_pool_k must be >= top_k"):
         AgenticRetrievalConfig(top_k=10, system_one=replace(CFG, selection_pool_k=5))
+
+
+def test_concurrent_search_bounds_workers_preserves_order_and_query_context():
+    from nemo_retriever._agentic.nemo_agent.llm.usage import get_query_id
+
+    request_context = ContextVar("system_one_test_request")
+    request_context.set("request-budget")
+    barrier, lock = Barrier(2), Lock()
+    active = peak = 0
+    observed = []
+
+    def retrieve(text, top_k, *, query_id):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+            observed.append((query_id, get_query_id(), request_context.get()))
+        try:
+            barrier.wait(timeout=5)
+            return [{"doc_id": query_id, "text": text}]
+        finally:
+            with lock:
+                active -= 1
+
+    llm = MagicMock()
+    llm.completion.side_effect = lambda **kw: SimpleNamespace(
+        message={"content": '{"queries": []}'}, finish_reason="stop"
+    )
+    llm.pop_query_usage.return_value = {}
+    client = MagicMock()
+    client.decide.side_effect = lambda *args: _decision()
+    op = SystemOneSearchOperator(
+        config=CFG, retriever_fn=retrieve, llm=llm, decision_client=client, num_concurrent=2
+    )
+    ids = ["b", "a", "d", "c"]
+    result = op.run(pd.DataFrame({"query_id": ids, "query_text": ids}))
+    assert peak == 2 and active == 0
+    assert result.query_id.tolist() == result.doc_id.tolist() == ids
+    assert sorted(observed) == sorted((qid, qid, "request-budget") for qid in ids)
+    for qid in ids:
+        assert op.pop_query_trace(qid)["searches"][0]["query"] == qid
+        assert op.pop_query_usage(qid)["system_one_decision"]["input_tokens"] == 5
+
+
+@pytest.mark.parametrize("num_concurrent", [0, -1, True, 1.5])
+def test_search_rejects_invalid_concurrency(num_concurrent):
+    with pytest.raises(ValueError, match="num_concurrent"):
+        SystemOneSearchOperator(config=CFG, retriever_fn=MagicMock(), llm=MagicMock(),
+                                num_concurrent=num_concurrent)
+
+
+def test_concurrent_retrieval_error_waits_for_other_query_before_propagating():
+    barrier, finished = Barrier(2), Event()
+
+    def retrieve(text, top_k, *, query_id):
+        barrier.wait(timeout=5)
+        if query_id == "broken":
+            raise ValueError("broken index")
+        finished.set()
+        return []
+
+    op = SystemOneSearchOperator(config=CFG, retriever_fn=retrieve, llm=MagicMock(), num_concurrent=2)
+    with pytest.raises(ValueError, match="broken index"):
+        op.run(pd.DataFrame({"query_id": ["broken", "peer"], "query_text": ["a", "b"]}))
+    assert finished.is_set()
 
 
 def test_empty_search_emits_rrf_schema_and_trace():

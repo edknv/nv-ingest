@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from typing import Any, Callable
 
 import httpx
@@ -35,10 +37,10 @@ def _provider_call(fn: Callable[..., Any], *args: Any) -> Any:
 
 
 class SystemOneSearchOperator(AbstractOperator):
-    """Execute queries sequentially within each round and retain all evidence.
+    """Overlap independent queries while retaining each query's action order.
 
     Decision and generation failures end search with the candidates already
-    retrieved. Retrieval failures propagate. Runs are sequential across queries.
+    retrieved. Retrieval failures propagate after active workers finish.
     """
 
     def __init__(
@@ -49,8 +51,12 @@ class SystemOneSearchOperator(AbstractOperator):
         llm: Any,
         retriever_top_k: int = 10,
         decision_client: Any = None,
+        num_concurrent: int = 1,
     ) -> None:
         super().__init__()
+        if type(num_concurrent) is not int or num_concurrent < 1:
+            raise ValueError("num_concurrent must be a positive integer")
+        self._num_concurrent = num_concurrent
         self._config = config
         self._retriever_fn = retriever_fn
         self._llm = llm
@@ -65,10 +71,22 @@ class SystemOneSearchOperator(AbstractOperator):
         return data.copy()
 
     def process(self, data: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
-        rows = []
-        for query_id, query_text in data[["query_id", "query_text"]].itertuples(index=False, name=None):
+        queries = list(data[["query_id", "query_text"]].itertuples(index=False, name=None))
+
+        def search(query: tuple[Any, Any]) -> list[dict[str, Any]]:
+            query_id, query_text = query
             with bind_query_id(str(query_id)):
-                rows.extend(self._search(str(query_id), str(query_text)))
+                return self._search(str(query_id), str(query_text))
+
+        if self._num_concurrent == 1 or len(queries) < 2:
+            results = [search(query) for query in queries]
+        else:
+            # Request deadlines and transport/usage instrumentation use ContextVars.
+            # Give each worker its own copy, then bind the query inside that copy.
+            tasks = [(copy_context(), query) for query in queries]
+            with ThreadPoolExecutor(max_workers=min(self._num_concurrent, len(queries))) as pool:
+                results = list(pool.map(lambda task: task[0].run(search, task[1]), tasks))
+        rows = [row for result in results for row in result]
         return pd.DataFrame(rows, columns=_COLUMNS)
 
     def postprocess(self, data: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:

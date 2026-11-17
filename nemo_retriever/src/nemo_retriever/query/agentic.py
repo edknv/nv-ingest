@@ -684,6 +684,7 @@ class AgenticRetriever:
             )
             react_operator = SystemOneSearchOperator(
                 config=self._cfg.system_one,
+                num_concurrent=self._cfg.num_concurrent,
                 retriever_fn=self._retrieve_for_agent,
                 llm=create_llm(llm_config, **llm_kwargs),
                 retriever_top_k=max(AGENTIC_RETRIEVER_TOP_K, target_top_k),

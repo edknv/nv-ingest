@@ -115,6 +115,7 @@ from nemo_retriever.query.system_one import SystemOneConfig
 # existing_config is your AgenticRetrievalConfig for the ingested table.
 config = replace(
     existing_config,
+    num_concurrent=4,
     system_one=SystemOneConfig(
         endpoint=os.environ["SYSTEM_ONE_ENDPOINT"],
         model=os.environ["SYSTEM_ONE_MODEL"],
@@ -124,7 +125,11 @@ config = replace(
 retriever = AgenticRetriever(config)
 try:
     result = retriever.retrieve_with_usage(
-        ["q1"], ["Find documents that explain parser behavior."]
+        ["q1", "q2"],
+        [
+            "Find documents that explain parser behavior.",
+            "Find documents about supported file types.",
+        ],
     )
     print(result.documents[["doc_id", "rank", "result_source"]])
     print(result.traces["q1"])
@@ -162,8 +167,17 @@ The following settings belong to `SystemOneConfig`.
 | `timeout` | `30.0` | Decision request timeout in seconds. |
 
 The compact controller view does not truncate the candidate text retained for
-selection. This path ignores `AgenticRetrievalConfig.text_truncation` and
-processes queries sequentially, regardless of `num_concurrent`.
+selection. This path ignores `AgenticRetrievalConfig.text_truncation`.
+
+For Python batches, `AgenticRetrievalConfig.num_concurrent` bounds the number
+of independent queries executing the System One search stage concurrently.
+The ReAct search stage uses the same setting. Set a positive integer that fits
+your decision, generation, and retrieval endpoint capacity. Each query retains
+its own action order, search state, trace, and usage attribution. Subqueries
+within a query still execute sequentially, and results retain input query
+order. The native final selection stage processes query groups sequentially;
+the search concurrency setting does not parallelize that stage.
+
 `selection_pool_k=None` keeps the fused pool without an explicit
 candidate limit. The existing selection agent can still shrink that pool when
 its context window overflows. Increasing the candidate limit or search budgets
