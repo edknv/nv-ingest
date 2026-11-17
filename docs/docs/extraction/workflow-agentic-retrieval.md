@@ -384,6 +384,19 @@ document ranking rather than an answer.
 
 Operational failures from the agent LLM or retrieval tool, including embedding, vector database, and reranker endpoint failures, terminate the query with an error instead of returning a successful empty result.
 
+For Python retrieval configured with `controller="jev"`, LLM responses for
+planning, expansion, and thinking must finish with `stop` or `tool_calls`.
+Other finish reasons produce an unsuccessful agent result with
+`bad_finish_reason`. Unusable output produces `invalid_llm_response`.
+A think response needs nonblank analysis or at least one new, valid subquery.
+Plain-text analysis remains supported when the
+requested tool call is absent. The controller adds no retry for these
+validation errors.
+
+Final selection can still rank candidates retrieved before a Jev agent error.
+Inspect `agent.extra.error` in the persisted ATIF trajectory rather than
+assuming a returned ranking means every controller step succeeded.
+
 An HTTP `400` from the chat-completions NIM with `"auto" tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set` means the self-hosted endpoint is not tool-call ready. Refer to [Self-hosted Helm Nemotron 3.5 Lightning](#self-hosted-helm-lightning). The CLI then exits with `Agentic retrieval failed (llm_call_failed)`.
 
 On the service:

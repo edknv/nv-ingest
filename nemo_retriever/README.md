@@ -571,6 +571,25 @@ Settings that matter most:
 - `jev_controller_options`: any `JevControllerConfig` field, for example
   `jev_stop_threshold`, `max_expansions`, `max_thinks`, or `batch_retrieve`.
 
+Jev validates the LLM responses used for `plan`, `expand`, and `think`. Only
+`stop` and `tool_calls` finish reasons are accepted. Other finish reasons,
+including `length` and `content_filter`, stop the agent run with
+`bad_finish_reason`. Unusable output stops the run with
+`invalid_llm_response`. These validation errors produce an unsuccessful agent
+result under every `on_error` policy.
+
+A think response must contain nonblank analysis or at least one new, valid
+subquery. Subqueries must be nonblank strings. An empty subquery list remains
+valid for planning and expansion. Plain-text analysis is supported when the
+requested tool call is absent; malformed arguments in that tool call do not
+fall back to accompanying text. The controller adds no LLM retry for these
+validation errors. Provider retry policies remain separate.
+
+Final selection can still rank candidates retrieved before an agent error.
+Inspect `agent.extra.error` in the persisted Agent Trajectory Interchange
+Format (ATIF) trajectory to distinguish an unsuccessful controller run from a
+successful one.
+
 ### Live RAG SDK (retrieve + answer in one call)
 
 The pattern above -- retrieve hits, build a prompt, call an LLM -- is baked into the SDK as `Retriever.answer()` so live applications can skip the boilerplate. The same `Retriever` instance powers three entry points:

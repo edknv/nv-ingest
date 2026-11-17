@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 # ``AgentRunResult.error.category``), never on error-message text.
 ERROR_MAX_STEPS = "max_steps"
 ERROR_BAD_FINISH_REASON = "bad_finish_reason"
+ERROR_INVALID_LLM_RESPONSE = "invalid_llm_response"
 ERROR_CONTEXT_LIMIT = "context_limit"
 ERROR_CONTENT_POLICY = "content_policy"
 ERROR_LLM_CALL_FAILED = "llm_call_failed"
@@ -31,8 +32,9 @@ class AgentError:
         Human-readable description (also appended to the trajectory as a
         ``role="agent_error"`` message). Do not branch on it.
     exception_class:
-        Class name of the underlying exception, or ``None`` for the two
-        normal terminations (``max_steps``, ``bad_finish_reason``).
+        Class name of the underlying exception, or ``None`` for structured
+        terminations such as ``max_steps``, ``bad_finish_reason``, and
+        ``invalid_llm_response``.
     """
 
     category: str

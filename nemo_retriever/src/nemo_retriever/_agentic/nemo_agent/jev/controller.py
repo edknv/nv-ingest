@@ -39,7 +39,7 @@ from ..cache_propagation import PropagationPacer
 from ..llm import BaseLLMBackend, bind_query_id, bind_stage
 from ..loop import _RunState
 from ..prompts import render_system_prompt
-from ..results import AgentRunResult
+from ..results import ERROR_BAD_FINISH_REASON, ERROR_INVALID_LLM_RESPONSE, AgentError, AgentRunResult
 from ..tools import BaseRetrieveTool
 from .client import JevCallError, JevClient, JevContextLengthError, choice, noul
 
@@ -58,6 +58,11 @@ ACTION_FINISH = "finish"
 # Context-overflow retries for a controller decision, halving the evidence budget each time.
 _CONTEXT_RETRIES = 2
 _FALLBACK_EVIDENCE_BUDGET = 2000
+
+
+class _GenerationStopped(Exception):
+    """Exit the nested controller actions after recording a generation error."""
+
 
 _PROPOSE_SUBQUERIES_TOOL = {
     "type": "function",
@@ -242,6 +247,8 @@ class JevControlledAgent(Agent):
                 await self._retrieve(state, progress, str(query), query_type="main")
                 await self._plan(state, progress)
                 await self._control(state, progress)
+            except _GenerationStopped:
+                pass
             except Exception as e:
                 if not self._handle_run_exception(state, e):
                     raise
@@ -387,6 +394,8 @@ class JevControlledAgent(Agent):
         if analysis:
             progress.notes.append(analysis)
         added = self._add_subqueries(progress, args.get("subqueries"), self.jev_config.expand_subqueries)
+        if not analysis and not added:
+            self._invalid_response(state, STAGE_THINK, "think produced no analysis or new subqueries")
         self._append_trace(state, ACTION_THINK, {"analysis": analysis, "subqueries": added}, None)
 
     async def _llm_tool_call(
@@ -397,7 +406,7 @@ class JevControlledAgent(Agent):
         user_text: str,
         tool_spec: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """One LLM completion offering a single tool; returns that tool's parsed arguments (``{}`` if absent)."""
+        """Accept a complete, usable tool response or a nonempty text fallback."""
         messages = [
             {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
             {"role": "user", "content": [{"type": "text", "text": user_text}]},
@@ -405,21 +414,61 @@ class JevControlledAgent(Agent):
         with bind_stage(stage):
             result = await self.llm.acompletion(messages=messages, tools=[tool_spec])
         state.steps += 1
+        if result.finish_reason not in ("stop", "tool_calls"):
+            self._record_error(
+                state,
+                AgentError(
+                    category=ERROR_BAD_FINISH_REASON,
+                    message=f"{stage}: LLM failed with finish_reason '{result.finish_reason}'",
+                ),
+            )
+            raise _GenerationStopped()
         name = tool_spec["function"]["name"]
-        for call in result.message.get("tool_calls") or []:
+        calls = result.message.get("tool_calls") or []
+        if not isinstance(calls, list) or any(not isinstance(call, dict) for call in calls):
+            self._invalid_response(state, stage, "tool_calls must be a list of objects")
+        matched = False
+        for call in calls:
             function = call.get("function") or {}
+            if not isinstance(function, dict):
+                self._invalid_response(state, stage, "tool call function must be an object")
             if function.get("name") != name:
                 continue
+            matched = True
             try:
                 args = json.loads(function.get("arguments") or "{}")
             except (TypeError, ValueError):
                 continue
-            if isinstance(args, dict):
+            if self._usable_args(args, analysis=tool_spec is _RECORD_ANALYSIS_TOOL):
                 return args
-        content = str(result.message.get("content") or "")
+        if matched:
+            self._invalid_response(state, stage, f"invalid arguments for {name}")
+        content = str(result.message.get("content") or "").strip()
+        if not content:
+            self._invalid_response(state, stage, f"no usable {name} call or text")
         if tool_spec is _RECORD_ANALYSIS_TOOL:
             return {"analysis": content}
-        return _subqueries_from_text(content)
+        args = _subqueries_from_text(content)
+        if not self._usable_args(args, analysis=False):
+            self._invalid_response(state, stage, "invalid subqueries in text response")
+        return args
+
+    @staticmethod
+    def _usable_args(args: Any, *, analysis: bool) -> bool:
+        if not isinstance(args, dict):
+            return False
+        queries = args.get("subqueries", [])
+        if not isinstance(queries, list) or any(not isinstance(q, str) or not q.strip() for q in queries):
+            return False
+        if analysis:
+            note = args.get("analysis", "")
+            return isinstance(note, str) and bool(note.strip() or queries)
+        # An explicit empty list is valid when planning found no new searches.
+        return "subqueries" in args
+
+    def _invalid_response(self, state: _RunState, stage: str, reason: str) -> None:
+        self._record_error(state, AgentError(category=ERROR_INVALID_LLM_RESPONSE, message=f"{stage}: {reason}"))
+        raise _GenerationStopped()
 
     # ------------------------------------------------------------------
     # State rendering and bookkeeping.

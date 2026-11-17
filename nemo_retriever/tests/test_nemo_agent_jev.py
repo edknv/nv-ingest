@@ -120,6 +120,109 @@ def _plan(*subqueries: str) -> Dict[str, Any]:
     return _tool_call_reply("propose_subqueries", {"subqueries": list(subqueries)})
 
 
+def _text_reply(content: str, finish_reason: str = "stop") -> Dict[str, Any]:
+    return {
+        "choices": [{"message": {"role": "assistant", "content": content}, "finish_reason": finish_reason}],
+        "usage": {"prompt_tokens": 20, "completion_tokens": 10},
+    }
+
+
+class TestJevGenerationValidation:
+    @pytest.mark.parametrize("stage", ["plan", "expand", "think"])
+    @pytest.mark.parametrize("finish_reason", ["length", "content_filter", "error"])
+    @pytest.mark.parametrize("policy", ["never_raise", "raise_unknown", "raise_all"])
+    def test_abnormal_finish_stops_with_structured_error(self, stage, finish_reason, policy):
+        calls: List[str] = []
+        bad = _tool_call_reply("record_analysis", {"analysis": "complete-looking content"})
+        bad["choices"][0]["finish_reason"] = finish_reason
+        replies = [bad] if stage == "plan" else [_plan("alpha facts"), bad]
+        jev = _ScriptedJev([] if stage == "plan" else [_decision(stage, 0.1)])
+        agent = JevControlledAgent(
+            config=JevControllerConfig(mode="select", on_error=policy),
+            llm=_scripted_llm(replies),
+            retrieve_tool=_retriever(calls),
+            jev=jev.client(),
+        )
+        result = agent.run_sync("Original question?", query_id="q1")
+        assert not result.succeeded
+        assert result.error.category == "bad_finish_reason"
+        assert f"jev_{stage}" in result.error.message and finish_reason in result.error.message
+        assert result.error.exception_class is None
+        assert len(jev.payloads) == (0 if stage == "plan" else 1)
+        assert calls == (["Original question?"] if stage == "plan" else ["Original question?", "alpha facts"])
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            {},
+            {"analysis": None},
+            {"analysis": ["gap"]},
+            {"analysis": 1},
+            {"analysis": " "},
+            {"analysis": "", "subqueries": []},
+            {"analysis": "gap", "subqueries": "new search"},
+            {"analysis": "gap", "subqueries": [None]},
+            {"analysis": "gap", "subqueries": [" "]},
+            {"analysis": "", "subqueries": ["alpha facts"]},
+        ],
+    )
+    def test_invalid_or_noop_think_is_not_successful(self, args):
+        agent = _agent(
+            _ScriptedJev([_decision("think", 0.1)]),
+            [_plan("alpha facts"), _tool_call_reply("record_analysis", args)],
+            [],
+            max_expansions=0,
+        )
+        result = agent.run_sync("Original question?", query_id="q1")
+        assert not result.succeeded
+        assert result.error.category == "invalid_llm_response"
+        assert "jev_think" in result.error.message
+
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            _text_reply(""),
+            _text_reply("  \n"),
+            _tool_call_reply("record_analysis", {}),
+        ],
+    )
+    def test_empty_think_stops(self, reply):
+        agent = _agent(
+            _ScriptedJev([_decision("think", 0.1)]), [_plan(), reply], [], max_expansions=0, min_retrievals=0
+        )
+        result = agent.run_sync("Original question?", query_id="q1")
+        assert not result.succeeded and result.error.category == "invalid_llm_response"
+
+    def test_malformed_matching_tool_arguments_cannot_fall_back_to_text(self):
+        reply = _tool_call_reply("record_analysis", {"analysis": "placeholder"})
+        reply["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = '{"analysis":'
+        reply["choices"][0]["message"]["content"] = "Do not hide the invalid tool call"
+        agent = _agent(
+            _ScriptedJev([_decision("think", 0.1)]), [_plan(), reply], [], max_expansions=0, min_retrievals=0
+        )
+        result = agent.run_sync("Original question?", query_id="q1")
+        assert not result.succeeded and result.error.category == "invalid_llm_response"
+
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            _text_reply("The date is missing"),
+            _text_reply('```json\n{"notes":"The date is missing"}\n```'),
+            _tool_call_reply("record_analysis", {"analysis": "The date is missing"}),
+            _tool_call_reply("record_analysis", {"analysis": "", "subqueries": ["find the date"]}),
+        ],
+    )
+    def test_usable_think_and_plain_text_fallback_remain_supported(self, reply):
+        agent = _agent(
+            _ScriptedJev([_decision("think", 0.1)]), [_plan(), reply], [], max_expansions=0, min_retrievals=0
+        )
+        assert agent.run_sync("Original question?", query_id="q1").succeeded
+
+    def test_explicit_empty_expansion_is_valid(self):
+        agent = _agent(_ScriptedJev([_decision("expand", 0.1)]), [_plan(), _plan()], [], max_thinks=0, min_retrievals=0)
+        assert agent.run_sync("Original question?", query_id="q1").succeeded
+
+
 class TestJevClient:
     def test_answers_and_usage_are_attributed_to_query_and_stage(self):
         jev = _ScriptedJev([lambda p: _jev_body({"q": {"type": "noul", "noul": 0.8}}, input_tokens=42)])
