@@ -397,6 +397,15 @@ Final selection can still rank candidates retrieved before a Jev agent error.
 Inspect `agent.extra.error` in the persisted ATIF trajectory rather than
 assuming a returned ranking means every controller step succeeded.
 
+For Python select-mode retrieval, `selection_length_retry_extra_body` enables
+one final-selection retry when the LLM returns `finish_reason="length"`.
+The retry uses the same candidate documents and priority scores, with the
+configured provider fields merged over `selection_extra_body`.
+Other finish reasons, including `content_filter`, do not trigger this retry.
+If selection remains unsuccessful, the workflow returns the reciprocal rank
+fusion ranking with `result_source="rrf"`.
+This retry applies to final selection, not Jev planning, expansion, or thinking.
+
 An HTTP `400` from the chat-completions NIM with `"auto" tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set` means the self-hosted endpoint is not tool-call ready. Refer to [Self-hosted Helm Nemotron 3.5 Lightning](#self-hosted-helm-lightning). The CLI then exits with `Agentic retrieval failed (llm_call_failed)`.
 
 On the service:

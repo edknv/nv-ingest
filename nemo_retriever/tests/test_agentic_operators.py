@@ -370,6 +370,29 @@ class TestReActAgentOperator:
 
 
 class TestSelectionAgentOperator:
+    @pytest.mark.parametrize("reason", ["length", "content_filter", "unknown", None])
+    def test_output_limit_retry_is_bounded_and_preserves_candidates(self, reason):
+        from nemo_retriever.operators.graph_ops.selection_agent_operator import SelectionAgentOperator
+
+        op = SelectionAgentOperator(llm_model="test", length_retry_extra_body={"max_tokens": 32768})
+        first = MagicMock()
+        retry = MagicMock()
+        failure = _agent_result(
+            error_category="bad_finish_reason", error_message=f"LLM failed with finish_reason '{reason}'"
+        )
+        first.select_sync.return_value = failure
+        retry.select_sync.return_value = failure
+        documents = [{"id": "d1", "text": "evidence"}]
+        scores = {"d1": 1.0}
+        with patch.object(op, "_ensure_agent", return_value=first), patch.object(
+            op, "_ensure_retry_agent", return_value=retry
+        ):
+            assert op._run_selection("query", documents, scores, "q1") is failure
+        assert first.select_sync.call_count == 1
+        assert retry.select_sync.call_count == int(reason == "length")
+        if reason == "length":
+            assert retry.select_sync.call_args == first.select_sync.call_args
+
     def _op(self, **kwargs):
         from nemo_retriever.operators.graph_ops.selection_agent_operator import SelectionAgentOperator
 
