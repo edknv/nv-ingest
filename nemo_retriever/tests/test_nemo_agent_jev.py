@@ -129,6 +129,63 @@ def _text_reply(content: str, finish_reason: str = "stop") -> Dict[str, Any]:
 
 class TestJevGenerationValidation:
     @pytest.mark.parametrize("stage", ["plan", "expand", "think"])
+    @pytest.mark.parametrize("retry_finish", ["tool_calls", "length", "content_filter"])
+    def test_length_recovery_preserves_request_and_accounts_for_both_calls(self, stage, retry_finish):
+        seen = []
+        recovered = (
+            _tool_call_reply("record_analysis", {"analysis": "Useful evidence analysis"})
+            if stage == "think"
+            else _plan()
+        )
+        recovered["choices"][0]["finish_reason"] = retry_finish
+        replies = ([] if stage == "plan" else [_plan("alpha facts")]) + [
+            _text_reply("partial reasoning", "length"),
+            recovered,
+        ]
+        jev = _ScriptedJev([] if stage == "plan" else [_decision(stage, 0.1)])
+        agent = JevControlledAgent(
+            config=JevControllerConfig(
+                mode="select",
+                max_expansions=int(stage == "expand"),
+                max_thinks=int(stage == "think"),
+                llm_length_retry_max_tokens=32768,
+                llm_length_retry_reasoning_effort="low",
+            ),
+            llm=_scripted_llm(replies, seen),
+            retrieve_tool=_retriever([]),
+            jev=jev.client(),
+        )
+        result = agent.run_sync("Question", query_id="original-id")
+        assert result.succeeded is (retry_finish == "tool_calls")
+        assert len(seen) == (2 if stage == "plan" else 3)
+        assert seen[-1]["messages"] == seen[-2]["messages"]
+        assert seen[-1]["tools"] == seen[-2]["tools"]
+        assert seen[-1]["max_tokens"] == 32768
+        assert seen[-1]["extra_body"]["reasoning_effort"] == "low"
+        assert agent.llm.config.max_completion_tokens is None
+        assert agent.llm.config.reasoning_effort is None
+        usage = agent.llm.pop_query_usage("original-id")
+        assert usage[f"jev_{stage}"]["completion_tokens"] == 10
+        assert usage[f"jev_{stage}_length_retry"]["completion_tokens"] == 10
+        attempts = [a for a in result.extra_data["jev_generation_attempts"] if a["stage"] == f"jev_{stage}"]
+        assert [a["attempt"] for a in attempts] == [1, 2]
+        assert attempts[-1]["finish_reason"] == retry_finish
+        if retry_finish != "tool_calls":
+            assert result.error.category == "bad_finish_reason"
+
+    @pytest.mark.parametrize("finish", ["content_filter", "error"])
+    def test_length_recovery_does_not_retry_other_finish_reasons(self, finish):
+        seen = []
+        agent = JevControlledAgent(
+            config=JevControllerConfig(mode="select", llm_length_retry_max_tokens=32768),
+            llm=_scripted_llm([_text_reply("", finish)], seen),
+            retrieve_tool=_retriever([]),
+            jev=_ScriptedJev([]).client(),
+        )
+        assert not agent.run_sync("Question").succeeded
+        assert len(seen) == 1
+
+    @pytest.mark.parametrize("stage", ["plan", "expand", "think"])
     @pytest.mark.parametrize("finish_reason", ["length", "content_filter", "error"])
     @pytest.mark.parametrize("policy", ["never_raise", "raise_unknown", "raise_all"])
     def test_abnormal_finish_stops_with_structured_error(self, stage, finish_reason, policy):

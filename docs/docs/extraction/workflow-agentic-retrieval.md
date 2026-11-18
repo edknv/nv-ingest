@@ -390,8 +390,25 @@ Other finish reasons produce an unsuccessful agent result with
 `bad_finish_reason`. Unusable output produces `invalid_llm_response`.
 A think response needs nonblank analysis or at least one new, valid subquery.
 Plain-text analysis remains supported when the
-requested tool call is absent. The controller adds no retry for these
-validation errors.
+requested tool call is absent. The controller does not retry these validation
+errors by default.
+
+To retry an output-limited planning, expansion, or thinking call, set
+`llm_length_retry_max_tokens` in `jev_controller_options` to a positive integer.
+The controller retries a call once only when its finish reason is `length`.
+The retry uses identical messages and tools with the specified completion-token
+budget. You can also set `llm_length_retry_reasoning_effort` to a value your
+provider supports; this option requires `llm_length_retry_max_tokens`.
+Both options are unset by default.
+
+The initial call retains its `jev_plan`, `jev_expand`, or `jev_think` usage
+stage. Retry usage is recorded under the corresponding stage with the
+`_length_retry` suffix. The agent result's
+`extra_data["jev_generation_attempts"]` records attempt numbers, finish reasons,
+input fingerprints, and request budgets and reasoning settings without raw prompts.
+If the retry also returns `length`, the run fails with `bad_finish_reason`.
+Other abnormal finish reasons and malformed or empty output do not trigger
+this retry.
 
 Final selection can still rank candidates retrieved before a Jev agent error.
 Inspect `agent.extra.error` in the persisted ATIF trajectory rather than

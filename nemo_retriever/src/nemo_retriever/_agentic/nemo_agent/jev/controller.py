@@ -27,12 +27,15 @@ the retrieved candidates, so loop savings and selection savings stay separable.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Union
+
+from pydantic import Field, model_validator
 
 from ..agent import Agent, AgentConfig
 from ..cache_propagation import PropagationPacer
@@ -155,6 +158,11 @@ class JevControllerConfig(AgentConfig):
         Run all pending sub-queries without asking Jev, so Jev decides only
         between rounds (``expand`` / ``think`` / ``finish``). ``False`` lets Jev
         pick each search.
+    llm_length_retry_max_tokens:
+        Optional output budget for one retry of a plan, expand, or think
+        generation that finishes with ``length``. ``None`` disables recovery.
+    llm_length_retry_reasoning_effort:
+        Optional reasoning effort for that retry; requires its output budget.
     """
 
     jev_stop_threshold: float = 0.7
@@ -168,9 +176,20 @@ class JevControllerConfig(AgentConfig):
     evidence_chars: int = 500
     evidence_char_budget: int = 4000
     batch_retrieve: bool = True
+    llm_length_retry_max_tokens: Optional[int] = Field(default=None, ge=1)
+    llm_length_retry_reasoning_effort: Optional[str] = None
     plan_prompt: str = "jev/plan_v0.j2"
     expand_prompt: str = "jev/expand_v0.j2"
     think_prompt: str = "jev/think_v0.j2"
+
+    @model_validator(mode="after")
+    def _validate_length_retry(self) -> "JevControllerConfig":
+        if self.llm_length_retry_reasoning_effort is not None:
+            if not self.llm_length_retry_reasoning_effort.strip():
+                raise ValueError("llm_length_retry_reasoning_effort must be nonempty")
+            if self.llm_length_retry_max_tokens is None:
+                raise ValueError("llm_length_retry_reasoning_effort requires llm_length_retry_max_tokens")
+        return self
 
 
 @dataclass
@@ -411,9 +430,43 @@ class JevControlledAgent(Agent):
             {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
             {"role": "user", "content": [{"type": "text", "text": user_text}]},
         ]
+        input_sha256 = hashlib.sha256(
+            json.dumps({"messages": messages, "tools": [tool_spec]}, sort_keys=True).encode()
+        ).hexdigest()
         with bind_stage(stage):
             result = await self.llm.acompletion(messages=messages, tools=[tool_spec])
         state.steps += 1
+        backend_config = getattr(self.llm, "config", None)
+        attempts = state.extra_data.setdefault("jev_generation_attempts", [])
+        attempts.append(
+            {
+                "stage": stage,
+                "attempt": 1,
+                "finish_reason": result.finish_reason,
+                "input_sha256": input_sha256,
+                "max_completion_tokens": getattr(backend_config, "max_completion_tokens", None),
+                "reasoning_effort": getattr(backend_config, "reasoning_effort", None),
+            }
+        )
+        cfg = self.jev_config
+        if result.finish_reason == "length" and cfg.llm_length_retry_max_tokens is not None:
+            overrides: Dict[str, Any] = {"max_completion_tokens": cfg.llm_length_retry_max_tokens}
+            if cfg.llm_length_retry_reasoning_effort is not None:
+                overrides["reasoning_effort"] = cfg.llm_length_retry_reasoning_effort
+            with bind_stage(f"{stage}_length_retry"):
+                result = await self.llm.acompletion(messages=messages, tools=[tool_spec], **overrides)
+            state.steps += 1
+            attempts.append(
+                {
+                    "stage": stage,
+                    "attempt": 2,
+                    "finish_reason": result.finish_reason,
+                    "input_sha256": input_sha256,
+                    "max_completion_tokens": cfg.llm_length_retry_max_tokens,
+                    "reasoning_effort": cfg.llm_length_retry_reasoning_effort
+                    or getattr(backend_config, "reasoning_effort", None),
+                }
+            )
         if result.finish_reason not in ("stop", "tool_calls"):
             self._record_error(
                 state,
