@@ -167,6 +167,9 @@ class ReActAgentOperator(AbstractOperator, CPUOperator):
     jev_controller_options : dict, optional
         Extra :class:`~nemo_retriever._agentic.nemo_agent.jev.JevControllerConfig`
         fields (thresholds and budgets).
+    selection_text_policy : {"first", "all_retrieved"}
+        Preserve the first excerpt (default), or retain distinct retrieved
+        excerpts for standalone selection without changing loop messages.
 
     Notes
     -----
@@ -204,8 +207,12 @@ class ReActAgentOperator(AbstractOperator, CPUOperator):
         controller: Literal["llm", "jev"] = "llm",
         jev_client: Optional[Dict[str, Any]] = None,
         jev_controller_options: Optional[Dict[str, Any]] = None,
+        selection_text_policy: Literal["first", "all_retrieved"] = "first",
     ) -> None:
         super().__init__()
+        if selection_text_policy not in ("first", "all_retrieved"):
+            raise ValueError("selection_text_policy must be 'first' or 'all_retrieved'")
+        self._selection_text_policy = selection_text_policy
         if controller not in ("llm", "jev"):
             raise ValueError(f"controller must be 'llm' or 'jev', got {controller!r}.")
         if controller == "jev":
@@ -288,6 +295,10 @@ class ReActAgentOperator(AbstractOperator, CPUOperator):
                     "text": str(doc.get("text", "")),
                 }
             )
+            if self._mode == "select" and self._selection_text_policy == "all_retrieved":
+                # The agent suppresses visible text for repeated document IDs.
+                # Preserve the raw excerpt for downstream selection only.
+                out[-1]["_selection_text"] = str(doc.get("text", ""))
         return out
 
     def _ensure_agent(self) -> Agent:
@@ -507,7 +518,7 @@ def _build_output_rows(
                     "query_text": query_text,
                     "step_idx": step_idx,
                     "doc_id": str(doc.get("id", doc.get("doc_id", ""))),
-                    "text": str(doc.get("text", "")),
+                    "text": str(doc.get("_selection_text", doc.get("text", ""))),
                     "has_valid_final_results": final_doc_ids is not None,
                     "is_final_result": False,
                     "rank": rank,

@@ -235,6 +235,8 @@ class AgenticRetrievalConfig:
     jev_controller_options: dict[str, Any] = field(default_factory=dict)
     # Only the best N RRF candidates reach the selection agent (None = all).
     selection_max_candidates: Optional[int] = None
+    # Text supplied to standalone final selection; loop observations stay unchanged.
+    selection_text_policy: Literal["first", "all_retrieved"] = "first"
     # Provider fields merged into every selection-agent request body, e.g.
     # {"chat_template_kwargs": {"enable_thinking": False}}.
     selection_extra_body: dict[str, Any] = field(default_factory=dict)
@@ -340,6 +342,8 @@ class AgenticRetrievalConfig:
                 raise ValueError(f"candidate_k ({candidate_k}) must be greater than or equal to top_k ({self.top_k}).")
             object.__setattr__(self, "candidate_k", candidate_k)
 
+        if self.selection_text_policy not in ("first", "all_retrieved"):
+            raise ValueError("selection_text_policy must be 'first' or 'all_retrieved'")
         if self.selection_max_candidates is not None:
             max_candidates_error = agentic_int_min_error(
                 self.selection_max_candidates, field_name="selection_max_candidates", min_value=int(self.top_k)
@@ -506,6 +510,7 @@ class AgenticRetriever:
             retriever_fn_accepts_query_id=True,
             retriever_top_k=max(AGENTIC_RETRIEVER_TOP_K, target_top_k),
             target_top_k=target_top_k,
+            selection_text_policy=self._cfg.selection_text_policy if mode == "select" else "first",
             mode=mode,
             max_steps=int(self._cfg.react_max_steps),
             api_key=_none_if_empty(self._cfg.api_key),
@@ -709,7 +714,7 @@ class AgenticRetriever:
         pipeline = (
             AgenticQueryInputOperator()
             >> react_operator
-            >> RRFAggregatorOperator(k=AGENTIC_RRF_K)
+            >> RRFAggregatorOperator(k=AGENTIC_RRF_K, text_policy=self._cfg.selection_text_policy)
             >> selection_operator
             >> AgenticSelectionOutputOperator()
         )

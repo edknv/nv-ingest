@@ -380,6 +380,37 @@ Answer mode terminates inside the ReAct loop and intentionally bypasses
 reciprocal rank fusion and the selection agent, because those stages produce a
 document ranking rather than an answer.
 
+## Configure final-selection text in Python { #configure-final-selection-text }
+
+When successive retrieval calls return different excerpts from one document,
+`AgenticRetrievalConfig.selection_text_policy` controls the text supplied to the
+standalone final-selection agent. The default, `"first"`, keeps the first
+retrieved excerpt for each document. Set `"all_retrieved"` to concatenate its
+distinct retrieved excerpts.
+
+To opt in, update your existing `AgenticRetrievalConfig` before constructing
+`AgenticRetriever`:
+
+```python
+from dataclasses import replace
+
+config = replace(config, selection_text_policy="all_retrieved")
+```
+
+Only excerpts retrieved during the run are included. The policy does not load
+missing portions of source documents. Retrieval-loop messages, Jev controller
+state and evidence compaction, searches, and reciprocal rank fusion scores
+retain their existing behavior. ReAct final-ID rankings still pass through
+without standalone selection.
+
+Returned hits retain their original retrieval text and metadata. The
+concatenated text is used only for final selection. A positive
+`text_truncation` still caps each retrieved excerpt and each document's
+concatenated selection text. Set it to `0` to disable that text cap.
+
+More selection text can increase prompt token usage, and existing
+context-overflow handling can still reduce the candidate set.
+
 ## Failure and retry behavior { #failure-and-retry-behavior }
 
 Operational failures from the agent LLM or retrieval tool, including embedding, vector database, and reranker endpoint failures, terminate the query with an error instead of returning a successful empty result.

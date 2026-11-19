@@ -44,7 +44,7 @@ class RRFAggregatorOperator(AbstractOperator, CPUOperator):
     query_text: str   — original query text (first occurrence per query)
     doc_id    : str   — document identifier
     rrf_score : float — fused RRF score (higher = more relevant)
-    text      : str   — document text (first occurrence per ``doc_id``)
+    text      : str   — first excerpt, or distinct excerpts when opted in
     Rows are sorted by ``rrf_score`` descending within each ``query_id``.
 
     Parameters
@@ -52,6 +52,10 @@ class RRFAggregatorOperator(AbstractOperator, CPUOperator):
     k : int
         RRF damping factor.  The standard value is ``60`` (default).
         Larger values reduce the influence of top-ranked documents.
+    text_policy : {"first", "all_retrieved"}
+        Keep the first excerpt (default), or concatenate distinct nonempty
+        retrieved excerpts in encounter order. Synthetic final-result rows
+        do not contribute additional excerpts. Scores and order are unchanged.
 
     Examples
     --------
@@ -73,9 +77,12 @@ class RRFAggregatorOperator(AbstractOperator, CPUOperator):
         # d1 appears in both steps at rank 1 → highest RRF score
     """
 
-    def __init__(self, *, k: int = 60) -> None:
+    def __init__(self, *, k: int = 60, text_policy: str = "first") -> None:
         super().__init__()
+        if text_policy not in ("first", "all_retrieved"):
+            raise ValueError("text_policy must be 'first' or 'all_retrieved'")
         self._k = k
+        self._text_policy = text_policy
 
     # ------------------------------------------------------------------
     # AbstractOperator interface
@@ -102,6 +109,7 @@ class RRFAggregatorOperator(AbstractOperator, CPUOperator):
 
             rrf_scores: Dict[str, float] = defaultdict(float)
             first_text: Dict[str, str] = {}
+            text_chunks: Dict[str, List[str]] = defaultdict(list)
             react_final_rank: Dict[str, int] = {}
             has_valid_final_results = (
                 bool(qgroup.get("has_valid_final_results", False).astype(bool).any())
@@ -123,6 +131,10 @@ class RRFAggregatorOperator(AbstractOperator, CPUOperator):
                         rrf_scores[doc_id] += 1.0 / (rank + k)
                     if doc_id not in first_text:
                         first_text[doc_id] = str(row["text"])
+                    if self._text_policy == "all_retrieved" and not is_final:
+                        text = str(row["text"]).strip()
+                        if text and text not in text_chunks[doc_id]:
+                            text_chunks[doc_id].append(text)
                     if is_final:
                         previous = react_final_rank.get(doc_id)
                         if previous is None or rank < previous:
@@ -141,7 +153,11 @@ class RRFAggregatorOperator(AbstractOperator, CPUOperator):
                         "query_text": query_text,
                         "doc_id": doc_id,
                         "rrf_score": rrf_scores.get(doc_id, 0.0),
-                        "text": first_text.get(doc_id, ""),
+                        "text": (
+                            "\n\n[Additional retrieved excerpt]\n\n".join(text_chunks[doc_id])
+                            if self._text_policy == "all_retrieved" and text_chunks[doc_id]
+                            else first_text.get(doc_id, "")
+                        ),
                         "has_valid_final_results": has_valid_final_results,
                         "react_final_rank": react_final_rank.get(doc_id),
                     }
