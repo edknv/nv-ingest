@@ -306,8 +306,8 @@ class LogSelectedDocs(BaseEndTool):
         desc = (
             "Records the selected documents and signals the end of the task.\n\n"
             "Use this tool when you have carefully considered the candidate "
-            f"documents and have selected exactly {self.top_k} of the most "
-            "relevant documents to the query.\n\n"
+            f"documents and have selected exactly {self.top_k} distinct documents "
+            "that are most relevant to the query.\n\n"
         )
         if self.include_msg:
             desc += (
@@ -336,7 +336,7 @@ class LogSelectedDocs(BaseEndTool):
             "type": "array",
             "items": {"type": "string"},
             "description": (
-                f"The IDs of the {self.top_k} most relevant documents to the given query. "
+                f"The distinct IDs of the {self.top_k} most relevant documents to the given query. "
                 "The IDs must be sorted in the decreasing "
                 "level of relevance. I.e., the first document must be the "
                 "most relevant to the query."
@@ -374,6 +374,8 @@ class LogSelectedDocs(BaseEndTool):
         for i in doc_ids:
             if i not in self.allowed_doc_ids:
                 raise ToolError(f"Document with ID `{i}` is not among the candidate documents.")
+        if len(set(doc_ids)) != len(doc_ids):
+            raise ToolError(f"You must select {self.top_k} distinct documents; duplicate document IDs are not allowed.")
         payload: Dict[str, Any] = {"doc_ids": list(doc_ids)}
         if message is not None:
             payload["message"] = message

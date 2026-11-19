@@ -414,6 +414,10 @@ Final selection can still rank candidates retrieved before a Jev agent error.
 Inspect `agent.extra.error` in the persisted ATIF trajectory rather than
 assuming a returned ranking means every controller step succeeded.
 
+The final-selection tool requires distinct candidate document IDs. A response
+with duplicate IDs is rejected with tool feedback so the LLM can correct the
+list within the existing selection step budget.
+
 For Python select-mode retrieval, `selection_length_retry_extra_body` enables
 one final-selection retry when the LLM returns `finish_reason="length"`.
 The retry uses the same candidate documents and priority scores, with the
