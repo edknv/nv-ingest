@@ -149,7 +149,6 @@ class TestJevGenerationValidation:
                 max_expansions=int(stage == "expand"),
                 max_thinks=int(stage == "think"),
                 llm_length_retry_max_tokens=32768,
-                llm_length_retry_reasoning_effort="low",
             ),
             llm=_scripted_llm(replies, seen),
             retrieve_tool=_retriever([]),
@@ -161,7 +160,9 @@ class TestJevGenerationValidation:
         assert seen[-1]["messages"] == seen[-2]["messages"]
         assert seen[-1]["tools"] == seen[-2]["tools"]
         assert seen[-1]["max_tokens"] == 32768
-        assert seen[-1]["extra_body"]["reasoning_effort"] == "low"
+        assert (seen[-1].get("extra_body") or {}).get("reasoning_effort") == (seen[-2].get("extra_body") or {}).get(
+            "reasoning_effort"
+        )
         assert agent.llm.config.max_completion_tokens is None
         assert agent.llm.config.reasoning_effort is None
         usage = agent.llm.pop_query_usage("original-id")

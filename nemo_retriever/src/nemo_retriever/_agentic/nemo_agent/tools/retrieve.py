@@ -251,8 +251,6 @@ def retrieve_output_to_msg_content(output: List[Dict[str, Any]]) -> List[Dict[st
     content_list: List[Dict[str, Any]] = []
     for doc_in in output:
         doc = {**doc_in}
-        # Internal evidence for final selection must not change loop messages.
-        doc.pop("_selection_text", None)
         if str(doc.get("text") or "").strip() == "":
             doc.pop("text", None)
         img = doc.pop("image", None)
