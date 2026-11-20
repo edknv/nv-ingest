@@ -453,6 +453,7 @@ class JevControlledAgent(Agent):
                 AgentError(
                     category=ERROR_BAD_FINISH_REASON,
                     message=f"{stage}: LLM failed with finish_reason '{result.finish_reason}'",
+                    finish_reason=result.finish_reason,
                 ),
             )
             raise _GenerationStopped()

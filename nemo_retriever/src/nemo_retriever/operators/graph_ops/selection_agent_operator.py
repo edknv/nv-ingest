@@ -433,7 +433,7 @@ class SelectionAgentOperator(AbstractOperator, CPUOperator):
                 and not result.succeeded
                 and result.error is not None
                 and result.error.category == ERROR_BAD_FINISH_REASON
-                and result.error.message == "LLM failed with finish_reason 'length'"
+                and result.error.finish_reason == "length"
             ):
                 logger.info("SelectionAgentOperator: query=%s length_retry", query_id)
                 result = self._ensure_retry_agent().select_sync(

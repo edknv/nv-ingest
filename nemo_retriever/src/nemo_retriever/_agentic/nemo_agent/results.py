@@ -35,11 +35,14 @@ class AgentError:
         Class name of the underlying exception, or ``None`` for structured
         terminations such as ``max_steps``, ``bad_finish_reason``, and
         ``invalid_llm_response``.
+    finish_reason:
+        Provider finish reason for a completion that terminated abnormally.
     """
 
     category: str
     message: str
     exception_class: Optional[str] = None
+    finish_reason: Optional[str] = None
 
 
 @dataclass

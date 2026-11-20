@@ -267,6 +267,7 @@ class _BaseAgentLoop:
                 AgentError(
                     category=ERROR_BAD_FINISH_REASON,
                     message=f"LLM failed with finish_reason '{result.finish_reason}'",
+                    finish_reason=result.finish_reason,
                 ),
             )
             return

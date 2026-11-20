@@ -378,8 +378,10 @@ class TestSelectionAgentOperator:
         first = MagicMock()
         retry = MagicMock()
         failure = _agent_result(
-            error_category="bad_finish_reason", error_message=f"LLM failed with finish_reason '{reason}'"
+            error_category="bad_finish_reason",
+            error_message="Output budget exceeded" if reason == "length" else "LLM failed with finish_reason 'length'",
         )
+        failure.error.finish_reason = reason
         first.select_sync.return_value = failure
         retry.select_sync.return_value = failure
         documents = [{"id": "d1", "text": "evidence"}]
@@ -392,6 +394,39 @@ class TestSelectionAgentOperator:
         assert retry.select_sync.call_count == int(reason == "length")
         if reason == "length":
             assert retry.select_sync.call_args == first.select_sync.call_args
+
+    @pytest.mark.parametrize("reason", ["length", "content_filter"])
+    def test_provider_finish_reason_controls_retry_and_rrf_fallback(self, reason, monkeypatch, tmp_path):
+        from nemo_retriever.operators.graph_ops.selection_agent_operator import SelectionAgentOperator
+
+        monkeypatch.chdir(tmp_path)
+        requests = []
+
+        def complete(**kwargs):
+            requests.append(kwargs)
+            return {"choices": [{"message": {"content": ""}, "finish_reason": reason}]}
+
+        op = SelectionAgentOperator(
+            llm_model="test-model",
+            top_k=1,
+            max_tokens=16,
+            length_retry_extra_body={"max_tokens": 32},
+            chat_completion_fn=complete,
+        )
+        result = op.run(
+            pd.DataFrame(
+                {
+                    "query_id": ["q", "q"],
+                    "query_text": ["query", "query"],
+                    "doc_id": ["first", "second"],
+                    "text": ["first excerpt", "second excerpt"],
+                    "rrf_score": [0.8, 0.2],
+                }
+            )
+        )
+        assert len(requests) == (2 if reason == "length" else 1)
+        assert result["doc_id"].tolist() == ["first"]
+        assert result["result_source"].tolist() == ["rrf"]
 
     def _op(self, **kwargs):
         from nemo_retriever.operators.graph_ops.selection_agent_operator import SelectionAgentOperator
